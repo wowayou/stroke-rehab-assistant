@@ -1,0 +1,12 @@
+{
+  "name": "脑梗康复助手",
+  "short_name": "康复助手",
+  "description": "脑梗恢复期家庭康复工具：康复训练、血压记录、用药核对、健康知识",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#F6F3EC",
+  "theme_color": "#2E6FE0",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

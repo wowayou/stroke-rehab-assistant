@@ -1,0 +1,966 @@
+/* ============================================================
+   主应用：视图渲染 / 训练引导 / 弹窗 / 设置
+   ============================================================ */
+
+const App = (() => {
+  let currentView = 'today';
+  let recTab = 'bp';      // 记录页当前标签
+  let catTab = 'limb';    // 训练页当前分类
+  let trainerTimer = null;
+
+  const $view = () => document.getElementById('view');
+
+  /* ---------- 工具 ---------- */
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+  }
+  function toast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(t._tid);
+    t._tid = setTimeout(() => t.classList.remove('show'), 2200);
+  }
+  function beep() {
+    try {
+      const ac = new (window.AudioContext || window.webkitAudioContext)();
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.connect(g); g.connect(ac.destination);
+      o.frequency.value = 880; g.gain.value = 0.12;
+      o.start();
+      setTimeout(() => { o.stop(); ac.close(); }, 350);
+    } catch (e) { /* 忽略 */ }
+    if (navigator.vibrate) navigator.vibrate(300);
+  }
+
+  /* ---------- 弹窗 ---------- */
+  function openModal(title, contentNode, { center = false } = {}) {
+    const mask = document.createElement('div');
+    mask.className = 'modal-mask' + (center ? ' center' : '');
+    const panel = document.createElement('div');
+    panel.className = 'modal-panel';
+    const head = document.createElement('div');
+    head.className = 'modal-head';
+    head.innerHTML = `<div class="m-title">${esc(title)}</div>`;
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'modal-close';
+    closeBtn.textContent = '✕';
+    closeBtn.setAttribute('aria-label', '关闭');
+    head.appendChild(closeBtn);
+    panel.appendChild(head);
+    panel.appendChild(contentNode);
+    mask.appendChild(panel);
+    document.getElementById('modal-root').appendChild(mask);
+    const close = () => mask.remove();
+    closeBtn.onclick = close;
+    mask.addEventListener('click', e => { if (e.target === mask) close(); });
+    return close;
+  }
+  function nodeFromHTML(html) {
+    const d = document.createElement('div');
+    d.innerHTML = html;
+    return d;
+  }
+
+  /* ============================================================
+     今日页
+     ============================================================ */
+  function renderToday() {
+    const p = Store.data.profile;
+    const now = new Date();
+    const h = now.getHours();
+    const greet = h < 5 ? '夜深了' : h < 11 ? '早上好' : h < 13 ? '中午好' : h < 18 ? '下午好' : '晚上好';
+    const name = p.name ? `，${esc(p.name)}` : '';
+    const rd = Store.rehabDay();
+    const streak = Store.streak();
+
+    const plan = (DAILY_PLAN[p.stage] || DAILY_PLAN.sitting)
+      .map(id => EXERCISES.find(e => e.id === id)).filter(Boolean);
+    const doneIds = Store.exercisesDoneToday();
+    const planDone = plan.filter(e => doneIds.includes(e.id)).length;
+    const mp = Store.medProgressToday();
+    const bpDone = Store.bpToday();
+
+    const stageName = (STAGES.find(s => s.key === p.stage) || {}).name || '';
+
+    let html = `
+    <div class="today-hero">
+      <div class="date-line">${now.getMonth() + 1}月${now.getDate()}日 ${Store.weekdayCN(now)}</div>
+      <div class="greet">${greet}${name} 🌱</div>
+      ${rd ? `<div class="rehab-day">今天是康复第 <b>${rd}</b> 天，每一天都算数</div>`
+           : `<div class="rehab-day">坚持康复，每一天都算数</div>`}
+      ${streak > 0 ? `<div class="streak-chip">🔥 已连续坚持训练 ${streak} 天</div>` : ''}
+    </div>
+
+    <div class="card">
+      <div class="card-title">📋 今日三件事</div>
+      <div class="check-item ${bpDone ? 'done' : ''}">
+        <div class="ci-icon">🩺</div>
+        <div class="ci-body">
+          <div class="ci-name">测量血压</div>
+          <div class="ci-sub">${bpDone ? '今天已记录 ✓' : '每天固定时间测量并记录'}</div>
+        </div>
+        <button class="ci-action ${bpDone ? 'done' : ''}" data-go="records" data-rec="bp">${bpDone ? '已完成' : '去记录'}</button>
+      </div>
+      <div class="check-item ${mp.total > 0 && mp.done >= mp.total ? 'done' : ''}">
+        <div class="ci-icon">💊</div>
+        <div class="ci-body">
+          <div class="ci-name">按时服药</div>
+          <div class="ci-sub">${mp.total ? `今日已核对 ${mp.done} / ${mp.total} 次` : '先到「用药」页登记药物'}</div>
+        </div>
+        <button class="ci-action ${mp.total > 0 && mp.done >= mp.total ? 'done' : ''}" data-go="meds">${mp.total > 0 && mp.done >= mp.total ? '已完成' : '去核对'}</button>
+      </div>
+      <div class="check-item ${planDone >= plan.length ? 'done' : ''}">
+        <div class="ci-icon">💪</div>
+        <div class="ci-body">
+          <div class="ci-name">康复训练</div>
+          <div class="ci-sub">今日推荐 ${plan.length} 项，已完成 ${planDone} 项</div>
+          <div class="progress-bar"><div style="width:${plan.length ? Math.round(planDone / plan.length * 100) : 0}%"></div></div>
+        </div>
+        <button class="ci-action ${planDone >= plan.length ? 'done' : ''}" data-go="train">${planDone >= plan.length ? '已完成' : '去训练'}</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">🎯 今日推荐训练 <span class="muted" style="font-weight:400">（${esc(stageName)}）</span></div>
+      ${plan.map(e => exItemHTML(e, doneIds.includes(e.id))).join('')}
+      <div class="muted" style="margin-top:0.5rem">阶段不符？到「训练」页可切换康复阶段。</div>
+    </div>
+
+    <div class="disclaimer">本应用是家庭康复辅助工具，不能替代医生的诊断和治疗。<br>训练内容请经康复医生评估后进行，身体不适立即停止并就医。</div>`;
+
+    $view().innerHTML = html;
+
+    $view().querySelectorAll('[data-go]').forEach(b => b.onclick = () => {
+      if (b.dataset.rec) recTab = b.dataset.rec;
+      go(b.dataset.go);
+    });
+    bindExItems($view());
+  }
+
+  /* 训练条目公共 HTML（今日推荐 & 训练库共用） */
+  function exItemHTML(e, done) {
+    return `
+    <div class="ex-item" style="box-shadow:none;padding:0.6rem 0;margin-bottom:0;border-bottom:1px solid var(--border);border-radius:0">
+      <div class="ex-icon">${e.icon}</div>
+      <div class="ex-body">
+        <div class="ex-name">${e.name}</div>
+        <div class="ex-dose">${e.dose}</div>
+        ${done ? '<div class="ex-done-mark">✓ 今日已完成</div>' : ''}
+      </div>
+      <button class="ex-start ${done ? 'done' : ''}" data-ex="${e.id}">${done ? '再练一次' : '开始'}</button>
+    </div>`;
+  }
+  function bindExItems(root) {
+    root.querySelectorAll('[data-ex]').forEach(b => b.onclick = () => {
+      const ex = EXERCISES.find(x => x.id === b.dataset.ex);
+      if (ex) openTrainer(ex);
+    });
+  }
+
+  /* ============================================================
+     训练页
+     ============================================================ */
+  function renderTrain() {
+    const p = Store.data.profile;
+    const doneIds = Store.exercisesDoneToday();
+
+    let html = `
+    <div class="card" style="margin-bottom:0.9rem">
+      <div class="card-title">🧭 当前康复阶段</div>
+      <div class="stage-picker" style="margin-bottom:0.3rem">
+        ${STAGES.map(s => `<button class="stage-chip ${p.stage === s.key ? 'active' : ''}" data-stage="${s.key}">${s.name}</button>`).join('')}
+      </div>
+      <div class="muted">${esc((STAGES.find(s => s.key === p.stage) || {}).desc || '')}。阶段影响「肢体运动」列表和今日推荐。</div>
+    </div>
+
+    <div class="cat-tabs">
+      ${EX_CATS.map(c => `<button class="cat-tab ${catTab === c.key ? 'active' : ''}" data-cat="${c.key}">${c.icon} ${c.name}</button>`).join('')}
+    </div>
+    <div id="ex-list"></div>
+    <div class="disclaimer">训练动作应经康复医生/治疗师评估后进行；站立、步行类训练必须有家属保护。</div>`;
+
+    $view().innerHTML = html;
+
+    $view().querySelectorAll('[data-stage]').forEach(b => b.onclick = () => {
+      Store.data.profile.stage = b.dataset.stage;
+      Store.save();
+      renderTrain();
+    });
+    $view().querySelectorAll('[data-cat]').forEach(b => b.onclick = () => {
+      catTab = b.dataset.cat;
+      renderTrain();
+    });
+
+    let list = EXERCISES.filter(e => e.cat === catTab);
+    if (catTab === 'limb') {
+      const mine = list.filter(e => e.stage === p.stage);
+      const others = list.filter(e => e.stage !== p.stage);
+      const stageName = k => (STAGES.find(s => s.key === k) || {}).name || '';
+      document.getElementById('ex-list').innerHTML =
+        `<div class="muted" style="margin-bottom:0.4rem">适合当前阶段（${esc(stageName(p.stage))}）：</div>`
+        + mine.map(e => exCardHTML(e, doneIds.includes(e.id))).join('')
+        + `<div class="muted" style="margin:0.7rem 0 0.4rem">其他阶段动作（量力选做）：</div>`
+        + others.map(e => exCardHTML(e, doneIds.includes(e.id), stageName(e.stage))).join('');
+    } else {
+      document.getElementById('ex-list').innerHTML =
+        list.map(e => exCardHTML(e, doneIds.includes(e.id))).join('');
+    }
+    bindExItems($view());
+  }
+
+  function exCardHTML(e, done, stageTag) {
+    return `
+    <div class="ex-item">
+      <div class="ex-icon">${e.icon}</div>
+      <div class="ex-body">
+        <div class="ex-name">${e.name}${stageTag ? ` <span class="badge info" style="font-size:0.75rem">${stageTag}</span>` : ''}</div>
+        <div class="ex-dose">${e.dose}</div>
+        ${done ? '<div class="ex-done-mark">✓ 今日已完成</div>' : ''}
+      </div>
+      <button class="ex-start ${done ? 'done' : ''}" data-ex="${e.id}">${done ? '再练' : '开始'}</button>
+    </div>`;
+  }
+
+  /* ============================================================
+     训练引导器（全屏）
+     ============================================================ */
+  function openTrainer(ex) {
+    closeTrainer();
+    const wrap = document.createElement('div');
+    wrap.className = 'trainer';
+    wrap.id = 'trainer';
+
+    let modeHTML = '';
+    if (ex.mode.type === 'reps') {
+      modeHTML = `
+      <div class="timer-wrap">
+        <div class="timer-label">目标 ${ex.mode.target} 次 · 做完一次点一下大按钮</div>
+        <button class="rep-btn" id="rep-btn"><span class="rep-count" id="rep-count">0</span><span>点我计数</span></button>
+      </div>`;
+    } else if (ex.mode.type === 'timer') {
+      const m = Math.floor(ex.mode.seconds / 60), s = ex.mode.seconds % 60;
+      modeHTML = `
+      <div class="timer-wrap">
+        <div class="timer-label">建议时长</div>
+        <div class="timer-num" id="timer-num">${m}:${String(s).padStart(2, '0')}</div>
+        <div class="btn-row" style="max-width:340px;margin:0.6rem auto 0">
+          <button class="btn" id="timer-toggle">▶ 开始计时</button>
+          <button class="btn outline" id="timer-reset">重置</button>
+        </div>
+      </div>`;
+    } else if (ex.mode.type === 'game') {
+      modeHTML = `<div id="game-box"></div>`;
+    }
+
+    wrap.innerHTML = `
+      <div class="trainer-head">
+        <button class="modal-close" id="trainer-back" aria-label="返回">←</button>
+        <div class="t-name">${ex.name}</div>
+      </div>
+      <div class="trainer-body">
+        <div class="trainer-icon-big">${ex.icon}</div>
+        <div class="trainer-goal">${ex.goal}</div>
+        <div class="trainer-steps">
+          <div class="card-title" style="margin-bottom:0.4rem">动作要领</div>
+          <ol>${ex.steps.map(s => `<li>${s}</li>`).join('')}</ol>
+          <div class="muted" style="margin-top:0.4rem">建议量：${ex.dose}</div>
+        </div>
+        ${ex.caution ? `<div class="trainer-caution">⚠️ ${ex.caution}</div>` : ''}
+        ${modeHTML}
+        ${ex.mode.type !== 'game' ? `<button class="btn green block huge" id="trainer-done" style="margin-top:0.8rem">✓ 完成训练，打卡</button>` : ''}
+      </div>`;
+
+    document.body.appendChild(wrap);
+
+    const finish = () => {
+      Store.logExercise(ex.id);
+      closeTrainer();
+      toast('已打卡：' + ex.name);
+      render(currentView);
+    };
+
+    wrap.querySelector('#trainer-back').onclick = () => { closeTrainer(); };
+    const doneBtn = wrap.querySelector('#trainer-done');
+    if (doneBtn) doneBtn.onclick = finish;
+
+    if (ex.mode.type === 'reps') {
+      let count = 0;
+      const btn = wrap.querySelector('#rep-btn');
+      const cnt = wrap.querySelector('#rep-count');
+      btn.onclick = () => {
+        count++;
+        cnt.textContent = count;
+        if (navigator.vibrate) navigator.vibrate(30);
+        if (count === ex.mode.target) {
+          beep();
+          toast('达到目标次数，真棒！');
+        }
+      };
+    } else if (ex.mode.type === 'timer') {
+      let remain = ex.mode.seconds, running = false;
+      const num = wrap.querySelector('#timer-num');
+      const tog = wrap.querySelector('#timer-toggle');
+      const rst = wrap.querySelector('#timer-reset');
+      const show = () => {
+        num.textContent = `${Math.floor(remain / 60)}:${String(remain % 60).padStart(2, '0')}`;
+      };
+      const stopT = () => { if (trainerTimer) { clearInterval(trainerTimer); trainerTimer = null; } running = false; tog.textContent = '▶ 继续'; };
+      tog.onclick = () => {
+        if (running) { stopT(); return; }
+        running = true; tog.textContent = '⏸ 暂停';
+        trainerTimer = setInterval(() => {
+          remain--;
+          if (remain <= 0) {
+            remain = 0; show(); stopT(); beep(); toast('时间到！可以点下方按钮打卡');
+            tog.textContent = '▶ 开始计时';
+            return;
+          }
+          show();
+        }, 1000);
+      };
+      rst.onclick = () => { stopT(); remain = ex.mode.seconds; show(); tog.textContent = '▶ 开始计时'; };
+    } else if (ex.mode.type === 'game') {
+      Games.start(ex.mode.game, wrap.querySelector('#game-box'), (score, detail) => {
+        Store.logGame(ex.mode.game, score, detail);
+        finish();
+      });
+    }
+  }
+
+  function closeTrainer() {
+    if (trainerTimer) { clearInterval(trainerTimer); trainerTimer = null; }
+    Games.stop();
+    const t = document.getElementById('trainer');
+    if (t) t.remove();
+  }
+
+  /* ============================================================
+     记录页
+     ============================================================ */
+  const REC_KINDS = {
+    bp: { name: '血压', icon: '🩺' },
+    glucose: { name: '血糖', icon: '🩸' },
+    weight: { name: '体重', icon: '⚖️' },
+  };
+
+  function bpBadge(sys, dia) {
+    if (sys >= 180 || dia >= 110) return ['bad', '血压很高，尽快联系医生'];
+    if (sys >= 140 || dia >= 90) return ['warn', '偏高（超过140/90提示线）'];
+    if (sys < 90 || dia < 60) return ['warn', '偏低，注意头晕跌倒'];
+    return ['ok', '在一般范围内'];
+  }
+  function gluBadge(gtype, v) {
+    if (v < 3.9) return ['bad', '偏低，警惕低血糖'];
+    if (gtype === '空腹') {
+      if (v <= 7.0) return ['ok', '空腹一般目标内'];
+      if (v <= 10) return ['warn', '空腹偏高'];
+      return ['bad', '明显偏高，联系医生'];
+    }
+    if (v <= 10) return ['ok', '一般目标内'];
+    if (v < 13.9) return ['warn', '偏高'];
+    return ['bad', '明显偏高，联系医生'];
+  }
+  function bmiBadge(bmi) {
+    if (bmi < 18.5) return ['warn', '偏瘦，注意营养'];
+    if (bmi < 24) return ['ok', '体重适中'];
+    if (bmi < 28) return ['warn', '超重'];
+    return ['bad', '肥胖，建议咨询医生'];
+  }
+
+  function renderRecords() {
+    let html = `
+    <div class="rec-tabs">
+      ${Object.entries(REC_KINDS).map(([k, v]) =>
+        `<button class="rec-tab ${recTab === k ? 'active' : ''}" data-rectab="${k}">${v.icon} ${v.name}</button>`).join('')}
+    </div>
+    <div id="rec-body"></div>
+    <button class="btn ghost block" id="btn-export" style="margin-top:0.2rem">📤 导出记录给医生看</button>
+    <div class="disclaimer">图中 140/90 为提示线；指南建议多数患者在能耐受时降至 130/80 以下（部分情况例外），你的控制目标以医生要求为准。</div>`;
+    $view().innerHTML = html;
+
+    $view().querySelectorAll('[data-rectab]').forEach(b => b.onclick = () => {
+      recTab = b.dataset.rectab;
+      renderRecords();
+    });
+    document.getElementById('btn-export').onclick = openExport;
+
+    const body = document.getElementById('rec-body');
+    if (recTab === 'bp') renderBP(body);
+    else if (recTab === 'glucose') renderGlucose(body);
+    else renderWeight(body);
+  }
+
+  function formDefaults() {
+    return { d: Store.today(), t: Store.timeStr() };
+  }
+
+  function renderBP(body) {
+    const { d, t } = formDefaults();
+    const sorted = Store.vitalsSorted('bp');
+    const latest = sorted[sorted.length - 1];
+    let latestHTML = '<div class="empty-tip">还没有血压记录，从今天开始吧</div>';
+    if (latest) {
+      const [cls, txt] = bpBadge(+latest.sys, +latest.dia);
+      latestHTML = `
+      <div class="latest-value">
+        <span class="big">${esc(latest.sys)}/${esc(latest.dia)}</span><span class="muted">mmHg</span>
+        <span class="badge ${cls}">${txt}</span>
+      </div>
+      <div class="muted">最近记录：${esc(latest.date)} ${esc(latest.time || '')}${latest.pulse ? ' · 脉搏 ' + esc(latest.pulse) + ' 次/分' : ''}</div>`;
+    }
+
+    body.innerHTML = `
+    <div class="card">
+      <div class="card-title">➕ 记一次血压</div>
+      <div class="vital-form">
+        <div class="form-row">
+          <div class="field"><label>高压（收缩压）</label><input id="bp-sys" type="number" inputmode="numeric" placeholder="如 135"></div>
+          <div class="field"><label>低压（舒张压）</label><input id="bp-dia" type="number" inputmode="numeric" placeholder="如 85"></div>
+        </div>
+        <div class="form-row">
+          <div class="field"><label>脉搏（可不填）</label><input id="bp-pulse" type="number" inputmode="numeric" placeholder="次/分"></div>
+          <div class="field"><label>日期</label><input id="bp-date" type="date" value="${d}"></div>
+          <div class="field"><label>时间</label><input id="bp-time" type="time" value="${t}"></div>
+        </div>
+        <button class="btn block" id="bp-save">保存血压记录</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">🩺 最近血压</div>
+      ${latestHTML}
+      ${sorted.length >= 2 ? '<div class="chart-box"><canvas id="bp-chart"></canvas></div><div class="muted" style="text-align:center">—— 高压　—— 低压　（虚线为 140/90 提示线）</div>' : ''}
+    </div>
+    ${listCard('bp', sorted, v => `${v.sys}/${v.dia} mmHg${v.pulse ? ' · ' + v.pulse : ''}`)}`;
+
+    document.getElementById('bp-save').onclick = () => {
+      const sys = +document.getElementById('bp-sys').value;
+      const dia = +document.getElementById('bp-dia').value;
+      const pulse = document.getElementById('bp-pulse').value;
+      const date = document.getElementById('bp-date').value;
+      const time = document.getElementById('bp-time').value;
+      if (!sys || !dia || sys < 50 || sys > 300 || dia < 30 || dia > 200) { toast('请输入有效的血压数值'); return; }
+      if (!date) { toast('请选择日期'); return; }
+      Store.addVital('bp', { date, time, sys, dia, pulse: pulse ? +pulse : '' });
+      const [cls, txt] = bpBadge(sys, dia);
+      toast(cls === 'bad' ? '已保存。' + txt : '已保存 ✓');
+      renderRecords();
+    };
+    bindDelete(body, 'bp');
+
+    if (sorted.length >= 2) {
+      const recent = sorted.slice(-14);
+      Charts.line(document.getElementById('bp-chart'), [
+        { label: '高压', color: '#D93A3A', values: recent.map(v => ({ x: v.date.slice(5), y: +v.sys })) },
+        { label: '低压', color: '#2E6FE0', values: recent.map(v => ({ x: v.date.slice(5), y: +v.dia })) },
+      ], { refLines: [{ y: 140, color: '#D97706' }, { y: 90, color: '#D97706' }], yFloor: 0 });
+    }
+  }
+
+  function renderGlucose(body) {
+    const { d, t } = formDefaults();
+    const sorted = Store.vitalsSorted('glucose');
+    const latest = sorted[sorted.length - 1];
+    let latestHTML = '<div class="empty-tip">还没有血糖记录（没有糖尿病也可偶尔测测）</div>';
+    if (latest) {
+      const [cls, txt] = gluBadge(latest.gtype, +latest.value);
+      latestHTML = `
+      <div class="latest-value">
+        <span class="big">${esc(latest.value)}</span><span class="muted">mmol/L（${esc(latest.gtype)}）</span>
+        <span class="badge ${cls}">${txt}</span>
+      </div>
+      <div class="muted">最近记录：${esc(latest.date)} ${esc(latest.time || '')}</div>`;
+    }
+
+    body.innerHTML = `
+    <div class="card">
+      <div class="card-title">➕ 记一次血糖</div>
+      <div class="vital-form">
+        <div class="form-row">
+          <div class="field"><label>测量类型</label>
+            <select id="glu-type"><option>空腹</option><option>餐后2小时</option><option>随机</option></select>
+          </div>
+          <div class="field"><label>数值 mmol/L</label><input id="glu-val" type="number" step="0.1" inputmode="decimal" placeholder="如 6.2"></div>
+        </div>
+        <div class="form-row">
+          <div class="field"><label>日期</label><input id="glu-date" type="date" value="${d}"></div>
+          <div class="field"><label>时间</label><input id="glu-time" type="time" value="${t}"></div>
+        </div>
+        <button class="btn block" id="glu-save">保存血糖记录</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">🩸 最近血糖</div>
+      ${latestHTML}
+      ${sorted.length >= 2 ? '<div class="chart-box"><canvas id="glu-chart"></canvas></div>' : ''}
+    </div>
+    ${listCard('glucose', sorted, v => `${v.value} mmol/L · ${v.gtype}`)}`;
+
+    document.getElementById('glu-save').onclick = () => {
+      const gtype = document.getElementById('glu-type').value;
+      const value = +document.getElementById('glu-val').value;
+      const date = document.getElementById('glu-date').value;
+      const time = document.getElementById('glu-time').value;
+      if (!value || value < 1 || value > 40) { toast('请输入有效的血糖数值'); return; }
+      if (!date) { toast('请选择日期'); return; }
+      Store.addVital('glucose', { date, time, gtype, value });
+      toast('已保存 ✓');
+      renderRecords();
+    };
+    bindDelete(body, 'glucose');
+
+    if (sorted.length >= 2) {
+      const recent = sorted.slice(-14);
+      Charts.line(document.getElementById('glu-chart'), [
+        { label: '血糖', color: '#1E8E5A', values: recent.map(v => ({ x: v.date.slice(5), y: +v.value })) },
+      ], { refLines: [{ y: 7.0, color: '#D97706', label: '空腹参考7.0' }], yFloor: 0 });
+    }
+  }
+
+  function renderWeight(body) {
+    const { d } = formDefaults();
+    const sorted = Store.vitalsSorted('weight');
+    const latest = sorted[sorted.length - 1];
+    const height = +Store.data.profile.height;
+    let latestHTML = '<div class="empty-tip">还没有体重记录，每周记 1～2 次即可</div>';
+    if (latest) {
+      let bmiHTML = '';
+      if (height) {
+        const bmi = +latest.value / Math.pow(height / 100, 2);
+        const [cls, txt] = bmiBadge(bmi);
+        bmiHTML = `<span class="badge ${cls}">BMI ${bmi.toFixed(1)} · ${txt}</span>`;
+      } else {
+        bmiHTML = '<span class="muted">在「设置」里填身高可算BMI</span>';
+      }
+      latestHTML = `
+      <div class="latest-value">
+        <span class="big">${esc(latest.value)}</span><span class="muted">公斤</span>
+        ${bmiHTML}
+      </div>
+      <div class="muted">最近记录：${esc(latest.date)}</div>`;
+    }
+
+    body.innerHTML = `
+    <div class="card">
+      <div class="card-title">➕ 记一次体重</div>
+      <div class="vital-form">
+        <div class="form-row">
+          <div class="field"><label>体重（公斤）</label><input id="wt-val" type="number" step="0.1" inputmode="decimal" placeholder="如 62.5"></div>
+          <div class="field"><label>日期</label><input id="wt-date" type="date" value="${d}"></div>
+        </div>
+        <button class="btn block" id="wt-save">保存体重记录</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">⚖️ 最近体重</div>
+      ${latestHTML}
+      ${sorted.length >= 2 ? '<div class="chart-box"><canvas id="wt-chart"></canvas></div>' : ''}
+    </div>
+    ${listCard('weight', sorted, v => `${v.value} 公斤`)}`;
+
+    document.getElementById('wt-save').onclick = () => {
+      const value = +document.getElementById('wt-val').value;
+      const date = document.getElementById('wt-date').value;
+      if (!value || value < 20 || value > 300) { toast('请输入有效的体重'); return; }
+      if (!date) { toast('请选择日期'); return; }
+      Store.addVital('weight', { date, value });
+      toast('已保存 ✓');
+      renderRecords();
+    };
+    bindDelete(body, 'weight');
+
+    if (sorted.length >= 2) {
+      const recent = sorted.slice(-14);
+      Charts.line(document.getElementById('wt-chart'), [
+        { label: '体重', color: '#7C5CD9', values: recent.map(v => ({ x: v.date.slice(5), y: +v.value })) },
+      ], {});
+    }
+  }
+
+  function listCard(kind, sorted, fmt) {
+    if (!sorted.length) return '';
+    const rows = [...sorted].reverse().slice(0, 20).map(v => `
+      <div class="rec-row">
+        <span class="rec-date">${esc(v.date)}<br>${esc(v.time || '')}</span>
+        <span class="rec-val">${fmt(v)}</span>
+        <button class="rec-del" data-del="${v.id}" aria-label="删除">🗑</button>
+      </div>`).join('');
+    return `<div class="card"><div class="card-title">📄 历史记录（近20条）</div><div class="rec-list">${rows}</div></div>`;
+  }
+  function bindDelete(body, kind) {
+    body.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+      if (confirm('删除这条记录？')) {
+        Store.removeVital(kind, b.dataset.del);
+        renderRecords();
+      }
+    });
+  }
+
+  function openExport() {
+    const text = Store.exportReport();
+    const node = nodeFromHTML(`
+      <p class="muted" style="margin-bottom:0.5rem">复诊时把这份记录给医生看，或复制后发给家人打印。</p>
+      <textarea id="export-text" style="width:100%;height:45vh;border:1.5px solid var(--border);border-radius:12px;padding:0.7rem;font-size:0.9rem;line-height:1.5" readonly></textarea>
+      <button class="btn block" id="copy-export" style="margin-top:0.7rem">📋 复制全部内容</button>`);
+    node.querySelector('#export-text').value = text;
+    openModal('导出健康记录', node);
+    node.querySelector('#copy-export').onclick = async () => {
+      const ta = node.querySelector('#export-text');
+      try {
+        await navigator.clipboard.writeText(ta.value);
+        toast('已复制，可粘贴到微信发给家人');
+      } catch (e) {
+        ta.focus(); ta.select();
+        document.execCommand && document.execCommand('copy');
+        toast('已选中内容，长按可复制');
+      }
+    };
+  }
+
+  /* ============================================================
+     用药页
+     ============================================================ */
+  function renderMeds() {
+    const meds = Store.data.meds;
+    const ad = Store.adherence7d();
+
+    /* 按时间分组的今日核对表 */
+    const slots = {};
+    meds.forEach(m => (m.times || []).forEach(t => {
+      if (!slots[t]) slots[t] = [];
+      slots[t].push(m);
+    }));
+    const times = Object.keys(slots).sort();
+
+    let checkHTML;
+    if (!meds.length) {
+      checkHTML = '<div class="empty-tip">还没有登记药物。<br>请按医生处方，点下方按钮添加。</div>';
+    } else {
+      checkHTML = times.map(t => `
+        <div class="med-time-group">
+          <div class="med-time-label">🕐 ${t}</div>
+          ${slots[t].map(m => {
+            const taken = Store.isMedTaken(m.id, t);
+            return `
+            <div class="med-check ${taken ? 'checked' : ''}" data-med="${m.id}" data-time="${t}" role="button" tabindex="0">
+              <div class="mc-box">${taken ? '✓' : ''}</div>
+              <div>
+                <div class="mc-name">${esc(m.name)}</div>
+                <div class="mc-dose">${esc(m.dose || '')}${m.note ? ' · ' + esc(m.note) : ''}</div>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>`).join('');
+    }
+
+    let html = `
+    <div class="card">
+      <div class="card-title">✅ 今日服药核对 <span class="muted" style="font-weight:400">（吃完点一下）</span></div>
+      ${checkHTML}
+    </div>
+    ${ad !== null ? `
+    <div class="card">
+      <div class="card-title">📊 近7天服药完成率</div>
+      <div class="adherence-ring">
+        <div class="ring-num">${ad}%</div>
+        <div class="muted">${ad >= 90 ? '非常好，请保持！' : ad >= 70 ? '还不错，争取一次不落。' : '漏服较多。研究显示：坚持服药的患者，复发和死亡风险只有不坚持者的约三分之一。可设手机闹钟配合本页核对。'}</div>
+      </div>
+    </div>` : ''}
+    <div class="card">
+      <div class="card-title">💊 我的药物清单</div>
+      ${meds.length ? meds.map(m => `
+        <div class="med-item">
+          <div class="mi-body">
+            <div class="mi-name">${esc(m.name)}</div>
+            <div class="mi-sub">${esc(m.dose || '')} · 每日${(m.times || []).length}次（${(m.times || []).join('、')}）${m.note ? ' · ' + esc(m.note) : ''}</div>
+          </div>
+          <button class="btn small outline" data-edit-med="${m.id}">修改</button>
+        </div>`).join('') : ''}
+      <button class="btn ghost block" id="btn-add-med" style="margin-top:0.7rem">＋ 添加药物</button>
+      <div class="muted" style="margin-top:0.5rem">请严格按医生处方登记。任何加药、减药、停药都要先问医生。</div>
+    </div>`;
+
+    $view().innerHTML = html;
+
+    $view().querySelectorAll('.med-check').forEach(elm => {
+      const act = () => {
+        Store.toggleMed(elm.dataset.med, elm.dataset.time);
+        renderMeds();
+      };
+      elm.onclick = act;
+      elm.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } };
+    });
+    document.getElementById('btn-add-med').onclick = () => openMedForm();
+    $view().querySelectorAll('[data-edit-med]').forEach(b => b.onclick = () => {
+      const m = Store.data.meds.find(x => x.id === b.dataset.editMed);
+      if (m) openMedForm(m);
+    });
+  }
+
+  const COMMON_TIMES = ['06:30', '07:30', '08:00', '11:30', '12:00', '17:30', '18:00', '20:00', '21:00'];
+  const COMMON_MEDS = ['阿司匹林肠溶片', '硫酸氢氯吡格雷片', '阿托伐他汀钙片', '瑞舒伐他汀钙片'];
+
+  function openMedForm(med) {
+    const isEdit = !!med;
+    const sel = new Set(isEdit ? med.times : ['08:00']);
+
+    const node = nodeFromHTML(`
+      <div class="vital-form">
+        <div class="field" style="margin-bottom:0.7rem">
+          <label>药物名称（按处方填写）</label>
+          <input id="med-name" type="text" placeholder="如 阿司匹林肠溶片" value="${isEdit ? esc(med.name) : ''}">
+          <div class="time-chip-row" style="margin-top:0.4rem">
+            ${COMMON_MEDS.map(n => `<button class="time-chip" data-preset="${esc(n)}" style="min-height:42px;font-size:0.88rem">${esc(n)}</button>`).join('')}
+          </div>
+        </div>
+        <div class="field" style="margin-bottom:0.7rem">
+          <label>每次用量</label>
+          <input id="med-dose" type="text" placeholder="如 100mg，1片" value="${isEdit ? esc(med.dose || '') : ''}">
+        </div>
+        <div class="field" style="margin-bottom:0.7rem">
+          <label>每天服药时间（可多选）</label>
+          <div class="time-chip-row" id="time-chips">
+            ${COMMON_TIMES.map(t => `<button class="time-chip ${sel.has(t) ? 'active' : ''}" data-t="${t}">${t}</button>`).join('')}
+          </div>
+          <div style="display:flex;gap:0.5rem;margin-top:0.5rem;align-items:center">
+            <input id="custom-time" type="time" style="flex:1">
+            <button class="btn small outline" id="add-custom-time">添加自定时间</button>
+          </div>
+          <div class="muted" style="margin-top:0.3rem">已选：<span id="sel-times">${[...sel].sort().join('、') || '无'}</span></div>
+        </div>
+        <div class="field" style="margin-bottom:0.9rem">
+          <label>备注（可不填）</label>
+          <input id="med-note" type="text" placeholder="如 饭后服、别嚼碎" value="${isEdit ? esc(med.note || '') : ''}">
+        </div>
+        <button class="btn block" id="med-save">${isEdit ? '保存修改' : '添加药物'}</button>
+        ${isEdit ? '<button class="btn red block" id="med-del" style="margin-top:0.6rem">删除这个药物</button>' : ''}
+      </div>`);
+
+    const close = openModal(isEdit ? '修改药物' : '添加药物', node);
+
+    const refreshSel = () => {
+      node.querySelector('#sel-times').textContent = [...sel].sort().join('、') || '无';
+      node.querySelectorAll('#time-chips .time-chip').forEach(c =>
+        c.classList.toggle('active', sel.has(c.dataset.t)));
+    };
+    node.querySelectorAll('[data-preset]').forEach(b => b.onclick = () => {
+      node.querySelector('#med-name').value = b.dataset.preset;
+    });
+    node.querySelectorAll('#time-chips .time-chip').forEach(c => c.onclick = () => {
+      const t = c.dataset.t;
+      if (sel.has(t)) sel.delete(t); else sel.add(t);
+      refreshSel();
+    });
+    node.querySelector('#add-custom-time').onclick = () => {
+      const v = node.querySelector('#custom-time').value;
+      if (v) { sel.add(v); refreshSel(); }
+    };
+    node.querySelector('#med-save').onclick = () => {
+      const name = node.querySelector('#med-name').value.trim();
+      const dose = node.querySelector('#med-dose').value.trim();
+      const note = node.querySelector('#med-note').value.trim();
+      if (!name) { toast('请填写药物名称'); return; }
+      if (!sel.size) { toast('请至少选择一个服药时间'); return; }
+      const payload = { name, dose, note, times: [...sel].sort() };
+      if (isEdit) Store.updateMed(med.id, payload);
+      else Store.addMed(payload);
+      close();
+      toast(isEdit ? '已保存修改' : '已添加药物');
+      renderMeds();
+    };
+    if (isEdit) node.querySelector('#med-del').onclick = () => {
+      if (confirm(`确定删除「${med.name}」？\n（如果是遵医嘱停药才删除）`)) {
+        Store.removeMed(med.id);
+        close();
+        toast('已删除');
+        renderMeds();
+      }
+    };
+  }
+
+  /* ============================================================
+     知识页
+     ============================================================ */
+  function renderLearn() {
+    const groups = [];
+    ARTICLES.forEach(a => { if (!groups.includes(a.group)) groups.push(a.group); });
+
+    let html = `
+    <div class="card" style="border:2px solid var(--red)">
+      <div class="card-title" style="color:var(--red)">🚨 出现这些情况，立即拨打120</div>
+      <div class="muted" style="margin-bottom:0.5rem">口角歪斜 · 单侧肢体无力 · 说话不清 · 突然看不清 · 走不稳</div>
+      <button class="btn red block" id="btn-open-emergency">查看急救指引 + 拨打120</button>
+    </div>
+    ${groups.map(g => `
+      <div class="card-title" style="margin:0.9rem 0 0.5rem 0.2rem">${esc(g)}</div>
+      ${ARTICLES.filter(a => a.group === g).map(a => `
+        <div class="art-item" data-art="${a.id}" role="button" tabindex="0">
+          <div class="art-icon">${a.icon}</div>
+          <div class="art-body">
+            <div class="art-title">${a.title}</div>
+            <div class="art-sub">${a.sub}</div>
+          </div>
+          <div class="art-arrow">›</div>
+        </div>`).join('')}
+    `).join('')}
+    <div class="disclaimer">内容参考国内卒中防治与康复指南整理，仅作健康教育用途，<br>不能替代医生的诊断和治疗建议。</div>`;
+
+    $view().innerHTML = html;
+
+    document.getElementById('btn-open-emergency').onclick = openEmergency;
+    $view().querySelectorAll('[data-art]').forEach(elm => {
+      const open = () => {
+        const a = ARTICLES.find(x => x.id === elm.dataset.art);
+        if (a) {
+          const node = nodeFromHTML(`<div class="article-view">${a.body}</div>`);
+          openModal(a.title, node);
+        }
+      };
+      elm.onclick = open;
+      elm.onkeydown = e => { if (e.key === 'Enter') open(); };
+    });
+  }
+
+  /* ============================================================
+     紧急弹窗
+     ============================================================ */
+  function openEmergency() {
+    const node = nodeFromHTML(`
+      <div class="emergency-view">
+        <div class="ev-title">疑似中风，立即行动！</div>
+        <div class="card" style="margin-bottom:0.8rem">
+          ${BEFAST.map(b => `
+            <div class="befast-item">
+              <div class="bf-letter">${b.letter}</div>
+              <div><div class="bf-name">${b.name}</div><div class="bf-desc">${b.desc}</div></div>
+            </div>`).join('')}
+        </div>
+        <div class="card">
+          <div class="card-title">同时要做的事</div>
+          <ul style="padding-left:1.3rem">
+            <li><b>记下发病时间</b>（最后一次看起来正常是几点）</li>
+            <li>让患者平卧，头偏向一侧，解开衣领</li>
+            <li><b>不要喂水、喂药、喂任何东西</b></li>
+            <li>症状缓解了也要就医，不要"再观察观察"</li>
+          </ul>
+        </div>
+        <a class="call-120" href="tel:120">📞 立即拨打 120</a>
+      </div>`);
+    openModal('紧急识别', node, { center: false });
+  }
+
+  /* ============================================================
+     设置弹窗
+     ============================================================ */
+  function openSettings() {
+    const p = Store.data.profile;
+    const node = nodeFromHTML(`
+      <div class="card">
+        <div class="setting-row">
+          <div class="sr-label">怎么称呼您</div>
+          <input id="set-name" type="text" value="${esc(p.name)}" placeholder="如 王叔叔"
+            style="width:9em;min-height:48px;border:1.5px solid var(--border);border-radius:10px;padding:0 0.6rem;font-size:1rem">
+        </div>
+        <div class="setting-row">
+          <div class="sr-label">发病日期</div>
+          <input id="set-stroke-date" type="date" value="${esc(p.strokeDate)}"
+            style="min-height:48px;border:1.5px solid var(--border);border-radius:10px;padding:0 0.6rem;font-size:1rem">
+        </div>
+        <div class="setting-row">
+          <div class="sr-label">身高(cm)</div>
+          <input id="set-height" type="number" inputmode="numeric" value="${esc(p.height)}" placeholder="算BMI用"
+            style="width:7em;min-height:48px;border:1.5px solid var(--border);border-radius:10px;padding:0 0.6rem;font-size:1rem">
+        </div>
+        <div class="setting-row">
+          <div class="sr-label">字体大小</div>
+          <div class="font-chips">
+            <button class="font-chip f1 ${p.font === 'normal' ? 'active' : ''}" data-font="normal">标准</button>
+            <button class="font-chip f2 ${p.font === 'large' ? 'active' : ''}" data-font="large">大</button>
+            <button class="font-chip f3 ${p.font === 'xlarge' ? 'active' : ''}" data-font="xlarge">特大</button>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <button class="btn ghost block" id="set-export">📤 导出健康记录</button>
+        <button class="btn outline block" id="set-reset" style="margin-top:0.6rem;color:var(--red)">清空全部数据</button>
+        <div class="muted" style="margin-top:0.6rem">所有数据只保存在这台手机/电脑的浏览器里，不会上传到任何服务器。清空浏览器缓存会丢失数据，重要记录请定期导出。</div>
+      </div>
+      <button class="btn block" id="set-save">保存设置</button>`);
+
+    const close = openModal('设置', node);
+
+    node.querySelectorAll('[data-font]').forEach(b => b.onclick = () => {
+      node.querySelectorAll('[data-font]').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      applyFont(b.dataset.font);
+    });
+    node.querySelector('#set-export').onclick = () => { close(); openExport(); };
+    node.querySelector('#set-reset').onclick = () => {
+      if (confirm('确定清空全部数据？此操作无法恢复！')) {
+        if (confirm('再次确认：血压记录、用药、训练打卡都会被删除。')) {
+          Store.resetAll();
+          close();
+          applyFont('normal');
+          render(currentView);
+          toast('已清空');
+        }
+      }
+    };
+    node.querySelector('#set-save').onclick = () => {
+      const p2 = Store.data.profile;
+      p2.name = node.querySelector('#set-name').value.trim();
+      p2.strokeDate = node.querySelector('#set-stroke-date').value;
+      p2.height = node.querySelector('#set-height').value;
+      const active = node.querySelector('[data-font].active');
+      p2.font = active ? active.dataset.font : 'normal';
+      Store.save();
+      close();
+      render(currentView);
+      toast('设置已保存');
+    };
+  }
+
+  function applyFont(f) {
+    if (f === 'large' || f === 'xlarge') document.documentElement.dataset.font = f;
+    else delete document.documentElement.dataset.font;
+  }
+
+  /* ============================================================
+     导航与初始化
+     ============================================================ */
+  const RENDERERS = {
+    today: renderToday,
+    train: renderTrain,
+    records: renderRecords,
+    meds: renderMeds,
+    learn: renderLearn,
+  };
+
+  function render(view) {
+    (RENDERERS[view] || renderToday)();
+    window.scrollTo(0, 0);
+  }
+
+  function go(view) {
+    currentView = view;
+    document.querySelectorAll('.nav-item').forEach(b =>
+      b.classList.toggle('active', b.dataset.view === view));
+    render(view);
+  }
+
+  function init() {
+    Store.load();
+    applyFont(Store.data.profile.font);
+    document.querySelectorAll('.nav-item').forEach(b => b.onclick = () => go(b.dataset.view));
+    document.getElementById('btn-emergency').onclick = openEmergency;
+    document.getElementById('btn-settings').onclick = openSettings;
+    const urlView = new URLSearchParams(location.search).get('view');
+    go(RENDERERS[urlView] ? urlView : 'today');
+  }
+
+  return { init, go };
+})();
+
+document.addEventListener('DOMContentLoaded', App.init);
