@@ -208,6 +208,72 @@ const Store = (() => {
     return lines.join('\n');
   }
 
+  /* ---------- 备份导出 / 恢复导入 ---------- */
+  const isObj = x => x && typeof x === 'object' && !Array.isArray(x);
+
+  /* 生成全量备份 JSON 文本（带 schema 版本，便于将来兼容） */
+  function exportBackup() {
+    const snapshot = {
+      app: 'stroke-rehab-assistant',
+      schema: 1,
+      exportedAt: `${today()} ${timeStr()}`,
+      data,
+    };
+    return JSON.stringify(snapshot, null, 2);
+  }
+
+  /* 解析并校验备份文本，返回 { data, exportedAt }，不写入、不保存。
+     必须能识别为我们的数据结构，否则抛错——防止误选任意文件把数据清空。 */
+  function parseBackup(jsonText) {
+    let obj;
+    try { obj = JSON.parse(jsonText); } catch (e) { throw new Error('不是有效的 JSON 文件'); }
+    if (!isObj(obj)) throw new Error('不是本应用导出的备份文件');
+
+    const hasEnvelope = obj.app === 'stroke-rehab-assistant' && isObj(obj.data);
+    const incoming = hasEnvelope ? obj.data : obj;
+
+    const looksOurs = hasEnvelope
+      || ['profile', 'meds', 'medLog', 'vitals', 'exerciseLog', 'gameLog', 'ui'].some(k => {
+        const v = incoming[k];
+        return k === 'meds' ? Array.isArray(v) : isObj(v);
+      });
+    if (!looksOurs) throw new Error('不是本应用导出的备份文件（未识别到数据结构）');
+
+    /* 字段级类型守卫：只接受形状正确的字段，畸形内容回落默认 */
+    const d = defaults();
+    if (isObj(incoming.profile)) d.profile = Object.assign(defaults().profile, incoming.profile);
+    if (Array.isArray(incoming.meds)) d.meds = incoming.meds;
+    if (isObj(incoming.medLog)) d.medLog = incoming.medLog;
+    if (isObj(incoming.vitals)) {
+      d.vitals = defaults().vitals;
+      ['bp', 'glucose', 'weight'].forEach(k => {
+        if (Array.isArray(incoming.vitals[k])) d.vitals[k] = incoming.vitals[k];
+      });
+    }
+    if (isObj(incoming.exerciseLog)) d.exerciseLog = incoming.exerciseLog;
+    if (isObj(incoming.gameLog)) d.gameLog = incoming.gameLog;
+    if (isObj(incoming.ui)) d.ui = Object.assign(defaults().ui, incoming.ui);
+    return { data: d, exportedAt: obj.exportedAt || '' };
+  }
+
+  /* 用解析好的备份数据整体替换当前数据并保存 */
+  function applyBackup(state) {
+    data = state;
+    save();
+    return data;
+  }
+
+  /* 备份内容摘要（供恢复前预览） */
+  function backupSummary(d) {
+    return {
+      meds: d.meds.length,
+      bp: d.vitals.bp.length,
+      glucose: d.vitals.glucose.length,
+      weight: d.vitals.weight.length,
+      checkinDays: Object.keys(d.exerciseLog).filter(k => (d.exerciseLog[k] || []).length).length,
+    };
+  }
+
   /* ---------- 清空 ---------- */
   function resetAll() {
     data = defaults();
@@ -223,6 +289,7 @@ const Store = (() => {
     addMed, updateMed, removeMed, isMedTaken, toggleMed, medProgressToday, adherence7d,
     addVital, removeVital, vitalsSorted, bpToday,
     exportReport, resetAll,
+    exportBackup, parseBackup, applyBackup, backupSummary,
     guideSeen: () => !!data.ui.guideSeen,
     markGuideSeen: () => { data.ui.guideSeen = true; save(); },
   };

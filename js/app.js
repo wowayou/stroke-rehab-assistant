@@ -884,9 +884,12 @@ const App = (() => {
       </div>
       <div class="card">
         <button class="btn ghost block" id="set-guide">❓ 查看使用指引</button>
-        <button class="btn ghost block" id="set-export" style="margin-top:0.6rem">📤 导出健康记录</button>
+        <button class="btn ghost block" id="set-export" style="margin-top:0.6rem">📤 导出健康记录（给医生）</button>
+        <button class="btn ghost block" id="set-backup" style="margin-top:0.6rem">📦 备份全部数据（下载文件）</button>
+        <button class="btn ghost block" id="set-restore" style="margin-top:0.6rem">♻️ 从备份恢复</button>
+        <input type="file" id="set-restore-input" accept=".json,application/json" style="display:none">
         <button class="btn outline block" id="set-reset" style="margin-top:0.6rem;color:var(--red)">清空全部数据</button>
-        <div class="muted" style="margin-top:0.6rem">所有数据只保存在这台手机/电脑的浏览器里，不会上传到任何服务器。清空浏览器缓存会丢失数据，重要记录请定期导出。</div>
+        <div class="muted" style="margin-top:0.6rem">所有数据只保存在这台设备上，不会上传到任何地方。清空缓存或换手机会丢数据，请定期用「备份全部数据」下载保存；换新设备时用「从备份恢复」迁回。</div>
       </div>
       <button class="btn block" id="set-save">保存设置</button>`);
 
@@ -899,6 +902,39 @@ const App = (() => {
     });
     node.querySelector('#set-guide').onclick = () => { close(); openGuide(); };
     node.querySelector('#set-export').onclick = () => { close(); openExport(); };
+    node.querySelector('#set-backup').onclick = () => { close(); downloadBackup(); };
+    node.querySelector('#set-restore').onclick = () => { node.querySelector('#set-restore-input').click(); };
+    node.querySelector('#set-restore-input').onchange = () => {
+      const file = node.querySelector('#set-restore-input').files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        let parsed;
+        try { parsed = Store.parseBackup(String(reader.result)); }
+        catch (e) { toast('恢复失败：' + e.message); return; }
+        const s = Store.backupSummary(parsed.data);
+        const confirmNode = nodeFromHTML(`
+          <p class="muted" style="margin-bottom:0.5rem">备份文件：<b>${esc(file.name)}</b>${parsed.exportedAt ? '<br>导出时间：' + esc(parsed.exportedAt) : ''}</p>
+          <div class="card" style="margin-bottom:0.7rem">
+            <div class="card-title">恢复后将包含</div>
+            <div class="guide-line">💊 药物 ${s.meds} 种　·　🩺 血压 ${s.bp} 条</div>
+            <div class="guide-line">🩸 血糖 ${s.glucose} 条　·　⚖️ 体重 ${s.weight} 条</div>
+            <div class="guide-line">💪 训练打卡 ${s.checkinDays} 天</div>
+          </div>
+          <div class="disclaimer" style="padding:0.2rem 0 0.6rem">恢复会用备份<b>覆盖本机现有全部数据</b>，无法撤销。</div>
+          <button class="btn block" id="restore-confirm">确认恢复</button>`);
+        close();
+        const closeConfirm = openModal('从备份恢复', confirmNode, { center: true });
+        confirmNode.querySelector('#restore-confirm').onclick = () => {
+          Store.applyBackup(parsed.data);
+          applyFont(Store.data.profile.font);
+          closeConfirm();
+          render(currentView);
+          toast('已从备份恢复 ✓');
+        };
+      };
+      reader.readAsText(file);
+    };
     node.querySelector('#set-reset').onclick = () => {
       if (confirm('确定清空全部数据？此操作无法恢复！')) {
         if (confirm('再次确认：血压记录、用药、训练打卡都会被删除。')) {
@@ -958,6 +994,22 @@ const App = (() => {
       close();
       toast('可以开始了！按「今日」页的提示做就行');
     };
+  }
+
+  /* ============================================================
+     备份下载
+     ============================================================ */
+  function downloadBackup() {
+    const text = Store.exportBackup();
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `脑梗康复助手-备份-${Store.today()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
+    toast('备份已下载，请妥善保存该文件');
   }
 
   /* ============================================================

@@ -73,6 +73,31 @@ Store.save();
 Store.load();
 assert(Store.data.meds.length === 1 && Store.data.vitals.bp.length === 2, '持久化往返');
 
+/* --- 备份导出 / 恢复导入 --- */
+const backup = Store.exportBackup();
+assert(typeof backup === 'string' && backup.includes('"app": "stroke-rehab-assistant"'), '备份 JSON 应含应用标识');
+const parsed = Store.parseBackup(backup);
+assert(parsed.data.meds.length === 1 && parsed.data.vitals.bp.length === 2, '备份往返应保留全部数据');
+assert(parsed.data.exerciseLog && parsed.data.exerciseLog[t] && parsed.data.exerciseLog[t].includes('bobath'), '备份应含训练打卡');
+
+Store.addMed({ name: '临时药', dose: 'x', times: ['08:00'], note: '' });
+assert(Store.data.meds.length === 2, '恢复前应新增到2种药');
+Store.applyBackup(parsed.data);
+assert(Store.data.meds.length === 1, 'applyBackup 应整体覆盖回备份状态');
+assert(Store.data.vitals.bp.length === 2, 'applyBackup 后血压记录应保留');
+
+/* 畸形/非备份文件必须被拒绝，且不得破坏当前数据 */
+let rejected = 0;
+try { Store.parseBackup('not json'); } catch (e) { rejected++; }
+try { Store.parseBackup('{"foo":1}'); } catch (e) { rejected++; }
+try { Store.parseBackup('{"app":"别的应用","data":"oops"}'); } catch (e) { rejected++; }
+assert(rejected === 3, '3 种畸形备份都应抛错，实际拒绝 ' + rejected);
+assert(Store.data.meds.length === 1, '解析失败不得破坏现有数据');
+
+/* 部分字段备份：字段级守卫合并 */
+const partial = Store.parseBackup('{"app":"stroke-rehab-assistant","data":{"profile":{"name":"老王"}}}');
+assert(partial.data.profile.name === '老王' && partial.data.meds.length === 0, '部分备份按字段守卫合并');
+
 /* --- 损坏数据兜底 --- */
 localStorage.setItem('strokeRehab.v1', '{broken json');
 Store.load();
