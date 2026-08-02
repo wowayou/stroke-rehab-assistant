@@ -44,6 +44,8 @@ python3 -m http.server 8080
 
 方式三：部署到任意静态托管（Nginx / GitHub Pages / Cloudflare Pages 等），发链接给家人，手机浏览器"添加到主屏幕"即可当 App 用。
 
+> 📱 线上地址（Cloudflare Pages）：**https://stroke-rehab-assistant.pages.dev/** —— 重新部署用仓库根目录的 `deploy.sh`。
+
 > 注意：数据存在浏览器本地，**换设备/清缓存不互通**。重要记录请定期用「导出」功能备份。
 
 ## 技术说明
