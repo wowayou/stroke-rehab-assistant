@@ -22,6 +22,7 @@ const Store = (() => {
     },
     exerciseLog: {},     // 'YYYY-MM-DD' -> ['exId', ...]
     gameLog: {},         // 'YYYY-MM-DD' -> [{game, score, detail}]
+    ui: { guideSeen: false },  // 界面状态：是否已看过首次使用指引
   });
 
   let data = defaults();
@@ -34,6 +35,7 @@ const Store = (() => {
         data = Object.assign(defaults(), parsed);
         data.profile = Object.assign(defaults().profile, parsed.profile || {});
         data.vitals = Object.assign(defaults().vitals, parsed.vitals || {});
+        data.ui = Object.assign(defaults().ui, parsed.ui || {});
       }
     } catch (e) {
       console.warn('读取本地数据失败，使用空数据', e);
@@ -221,5 +223,7 @@ const Store = (() => {
     addMed, updateMed, removeMed, isMedTaken, toggleMed, medProgressToday, adherence7d,
     addVital, removeVital, vitalsSorted, bpToday,
     exportReport, resetAll,
+    guideSeen: () => !!data.ui.guideSeen,
+    markGuideSeen: () => { data.ui.guideSeen = true; save(); },
   };
 })();

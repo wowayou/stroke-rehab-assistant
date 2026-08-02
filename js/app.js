@@ -350,10 +350,10 @@ const App = (() => {
     if (sys >= 180 || dia >= 110) return ['bad', '血压很高，尽快联系医生'];
     if (sys >= 140 || dia >= 90) return ['warn', '偏高（超过140/90提示线）'];
     if (sys < 90 || dia < 60) return ['warn', '偏低，注意头晕跌倒'];
-    return ['ok', '在一般范围内'];
+    return ['ok', '未超过140/90提示线（目标遵医嘱）'];
   }
   function gluBadge(gtype, v) {
-    if (v < 3.9) return ['bad', '偏低，警惕低血糖'];
+    if (v <= 3.9) return ['bad', '偏低，警惕低血糖'];
     if (gtype === '空腹') {
       if (v <= 7.0) return ['ok', '空腹一般目标内'];
       if (v <= 10) return ['warn', '空腹偏高'];
@@ -494,7 +494,7 @@ const App = (() => {
     <div class="card">
       <div class="card-title">🩸 最近血糖</div>
       ${latestHTML}
-      ${sorted.length >= 2 ? '<div class="chart-box"><canvas id="glu-chart"></canvas></div>' : ''}
+      ${sorted.length >= 2 ? '<div class="chart-box"><canvas id="glu-chart"></canvas></div><div class="muted" style="text-align:center">虚线为参考线：空腹 7.0 · 餐后2小时 10.0（目标遵医嘱）</div>' : ''}
     </div>
     ${listCard('glucose', sorted, v => `${v.value} mmol/L · ${v.gtype}`)}`;
 
@@ -515,7 +515,7 @@ const App = (() => {
       const recent = sorted.slice(-14);
       Charts.line(document.getElementById('glu-chart'), [
         { label: '血糖', color: '#1E8E5A', values: recent.map(v => ({ x: v.date.slice(5), y: +v.value })) },
-      ], { refLines: [{ y: 7.0, color: '#D97706', label: '空腹参考7.0' }], yFloor: 0 });
+      ], { refLines: [{ y: 7.0, color: '#D97706', label: '空腹参考7.0' }, { y: 10.0, color: '#7C5CD9', label: '餐后参考10.0' }], yFloor: 0 });
     }
   }
 
@@ -665,7 +665,7 @@ const App = (() => {
       <div class="card-title">📊 近7天服药完成率</div>
       <div class="adherence-ring">
         <div class="ring-num">${ad}%</div>
-        <div class="muted">${ad >= 90 ? '非常好，请保持！' : ad >= 70 ? '还不错，争取一次不落。' : '漏服较多。研究显示：坚持服药的患者，复发和死亡风险只有不坚持者的约三分之一。可设手机闹钟配合本页核对。'}</div>
+        <div class="muted">${ad >= 90 ? '非常好，请保持！' : ad >= 70 ? '还不错，争取一次不落。' : '漏服较多。研究显示：坚持服药的患者，再次中风的风险只有不坚持者的约三分之一。可设手机闹钟配合本页核对。'}</div>
       </div>
     </div>` : ''}
     <div class="card">
@@ -883,7 +883,8 @@ const App = (() => {
         </div>
       </div>
       <div class="card">
-        <button class="btn ghost block" id="set-export">📤 导出健康记录</button>
+        <button class="btn ghost block" id="set-guide">❓ 查看使用指引</button>
+        <button class="btn ghost block" id="set-export" style="margin-top:0.6rem">📤 导出健康记录</button>
         <button class="btn outline block" id="set-reset" style="margin-top:0.6rem;color:var(--red)">清空全部数据</button>
         <div class="muted" style="margin-top:0.6rem">所有数据只保存在这台手机/电脑的浏览器里，不会上传到任何服务器。清空浏览器缓存会丢失数据，重要记录请定期导出。</div>
       </div>
@@ -896,6 +897,7 @@ const App = (() => {
       b.classList.add('active');
       applyFont(b.dataset.font);
     });
+    node.querySelector('#set-guide').onclick = () => { close(); openGuide(); };
     node.querySelector('#set-export').onclick = () => { close(); openExport(); };
     node.querySelector('#set-reset').onclick = () => {
       if (confirm('确定清空全部数据？此操作无法恢复！')) {
@@ -925,6 +927,37 @@ const App = (() => {
   function applyFont(f) {
     if (f === 'large' || f === 'xlarge') document.documentElement.dataset.font = f;
     else delete document.documentElement.dataset.font;
+  }
+
+  /* ============================================================
+     首次使用指引
+     ============================================================ */
+  function openGuide() {
+    const node = nodeFromHTML(`
+      <div class="guide">
+        <div class="guide-hero">🌱 欢迎使用<br>脑梗康复助手</div>
+        <p class="guide-sub">帮脑梗恢复期的家人一起坚持康复。<br><b>所有数据只保存在这台设备</b>，不会上传到任何地方。</p>
+        <div class="card">
+          <div class="card-title">📋 每天先做这三件事</div>
+          <div class="guide-step"><span class="gs-num">1</span><div><b>测血压</b><br><span class="muted">固定时间测量，「今日」页点「去记录」</span></div></div>
+          <div class="guide-step"><span class="gs-num">2</span><div><b>按时服药</b><br><span class="muted">按医嘱吃完，在「用药」页点一下核对</span></div></div>
+          <div class="guide-step"><span class="gs-num">3</span><div><b>康复训练</b><br><span class="muted">「训练」页按阶段选动作，做完点打卡</span></div></div>
+        </div>
+        <div class="card">
+          <div class="card-title">🔧 还要会用</div>
+          <div class="guide-line">📈 「记录」页：血压/血糖/体重，复诊时一键导出给医生</div>
+          <div class="guide-line">📚 「知识」页：防复发科普；🚨 急救卡，疑似中风立即拨 120</div>
+          <div class="guide-line">⚙️ 「设置」：填发病日期、身高，可调大字体</div>
+        </div>
+        <div class="disclaimer">本应用是家庭康复辅助工具，不能替代医生的诊断和治疗。<br>训练前请经康复医生评估，身体不适立即停止并就医。</div>
+        <button class="btn green block huge" id="guide-done" style="margin-top:0.7rem">我知道了，开始使用</button>
+      </div>`);
+    const close = openModal('首次使用指引', node, { center: true });
+    node.querySelector('#guide-done').onclick = () => {
+      Store.markGuideSeen();
+      close();
+      toast('可以开始了！按「今日」页的提示做就行');
+    };
   }
 
   /* ============================================================
@@ -958,6 +991,7 @@ const App = (() => {
     document.getElementById('btn-settings').onclick = openSettings;
     const urlView = new URLSearchParams(location.search).get('view');
     go(RENDERERS[urlView] ? urlView : 'today');
+    if (!Store.guideSeen()) openGuide();
   }
 
   return { init, go };

@@ -400,6 +400,24 @@ input, select, textarea { font-family: inherit; }
 .font-chip.active { background: var(--primary); color: #fff; border-color: var(--primary); font-weight: 700; }
 .font-chip.f1 { font-size: 0.9rem; } .font-chip.f2 { font-size: 1.05rem; } .font-chip.f3 { font-size: 1.2rem; }
 
+/* ---------- 首次使用指引 ---------- */
+.guide { padding: 0.1rem 0 0.3rem; }
+.guide-hero {
+  text-align: center; font-size: 1.65rem; font-weight: 800;
+  color: var(--primary-dark); line-height: 1.35; margin: 0.2rem 0 0.5rem;
+}
+.guide-sub { text-align: center; color: var(--text-2); margin-bottom: 0.8rem; font-size: 0.95rem; }
+.guide-step { display: flex; gap: 0.7rem; align-items: flex-start; padding: 0.55rem 0; border-bottom: 1px solid var(--border); }
+.guide-step:last-child { border-bottom: none; }
+.guide-step > div { flex: 1; }
+.gs-num {
+  width: 2.1rem; height: 2.1rem; border-radius: 50%; flex-shrink: 0;
+  background: var(--primary-soft); color: var(--primary);
+  font-weight: 800; font-size: 1.1rem;
+  display: flex; align-items: center; justify-content: center;
+}
+.guide-line { padding: 0.35rem 0; }
+
 /* ---------- Toast ---------- */
 .toast {
   position: fixed; left: 50%; bottom: calc(var(--nav-h) + 20px);
