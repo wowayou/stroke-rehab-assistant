@@ -25,7 +25,7 @@
 1. **没有在真实手机上手工测过**。`tel:120` 拨号唤起、震动反馈、剪贴板复制、微信内置浏览器行为、360px 小屏布局——都只有代码层面的合理性，没有真机验证。DEVELOPMENT.md §7 有完整手工回归清单。
 2. **版本管理——已解决（2026-08-01，经用户确认）**：本项目内已 `git init`（main 分支），首次提交即 v0.2.2 全量状态，远程为私有仓库 <https://github.com/wowayou/stroke-rehab-assistant>。上级目录遗留的空 `my-projects/.git` 未动（不影响本项目，相关坑见 §3）。
 3. **部署——已完成（2026-08-01）**：公开部署到 Cloudflare Pages <https://stroke-rehab-assistant.pages.dev/>。直传 10 个静态文件（仅应用运行时所需，不含 docs/、test/、源码 md、.git），线上验证通过：全部文件与本地逐字节一致、五页无头渲染冒烟全过、无 JS 报错。国内可达性已由用户真机确认可打开（速度/稳定性仍建议家人实测）。重新部署用仓库根目录的 `deploy.sh`。
-   - **部署账号**：Cloudflare 账号邮箱 **demoqqxu@gmail.com**（账号名 "Demoqqxu@gmail.com's Account"，ID 0e2703e9...），与 GitHub 账号（wowayou）**不是同一个账号**。管理入口：dash.cloudflare.com → Workers & Pages → Pages → stroke-rehab-assistant。本机 wrangler 登录凭证在 `~/.config/.wrangler/config/default.toml`。⚠️ 账号归属需用户确认该邮箱确为其本人所有。
+   - **部署账号**：Cloudflare 账号邮箱 **demoqqxu@gmail.com**（账号名 "Demoqqxu@gmail.com's Account"，ID 0e2703e9...），与 GitHub 账号（wowayou）**不是同一个账号**，已由用户确认归其本人所有（2026-08-02）。管理入口：dash.cloudflare.com → Workers & Pages → Pages → stroke-rehab-assistant。本机 wrangler 登录凭证在 `~/.config/.wrangler/config/default.toml`。
 4. 路线图功能多数未做：Service Worker 离线、语音朗读、双抗到期提醒、PHQ-9 情绪自评等仍是规划（见 DEVELOPMENT.md §9）；其中「数据 JSON 导出/导入（换机迁移）」已于 v0.2.6 落地（设置页「备份全部数据 / 从备份恢复」）。
 
 ### 1.3 没有已知 bug
