@@ -176,6 +176,8 @@ const App = (() => {
       <div class="muted">${esc((STAGES.find(s => s.key === p.stage) || {}).desc || '')}。阶段影响「肢体运动」列表和今日推荐。</div>
     </div>
 
+    ${trainHistoryCardHTML()}
+
     <div class="cat-tabs">
       ${EX_CATS.map(c => `<button class="cat-tab ${catTab === c.key ? 'active' : ''}" data-cat="${c.key}">${c.icon} ${c.name}</button>`).join('')}
     </div>
@@ -193,6 +195,8 @@ const App = (() => {
       catTab = b.dataset.cat;
       renderTrain();
     });
+    const histBtn = document.getElementById('btn-ex-hist');
+    if (histBtn) histBtn.onclick = openExerciseHistory;
 
     let list = EXERCISES.filter(e => e.cat === catTab);
     if (catTab === 'limb') {
@@ -222,6 +226,83 @@ const App = (() => {
       </div>
       <button class="ex-start ${done ? 'done' : ''}" data-ex="${e.id}">${done ? '再练' : '开始'}</button>
     </div>`;
+  }
+
+  /* ============================================================
+     训练打卡历史（日历 + 每日明细 + 游戏成绩）
+     ============================================================ */
+
+  /* 打卡日历：最近 n 天，按周几对齐，颜色深浅表示当天训练项数 */
+  function calendarHTML(n) {
+    const cells = Store.exerciseCalendar(n);
+    const t = Store.today();
+    const head = '日一二三四五六'.split('').map(w => `<div class="cal-head">${w}</div>`).join('');
+    const lead = '<div class="cal-cell blank"></div>'.repeat(new Date(cells[0].date + 'T00:00:00').getDay());
+    const body = cells.map(c => {
+      const lv = c.count >= 3 ? 'lv2' : c.count > 0 ? 'lv1' : '';
+      return `<div class="cal-cell ${lv}${c.date === t ? ' today' : ''}" aria-label="${c.date} 训练 ${c.count} 项">
+        <span class="cal-d">${+c.date.slice(8)}</span>
+        <span class="cal-n">${c.count || ''}</span>
+      </div>`;
+    }).join('');
+    return `<div class="cal-grid">${head}${lead}${body}</div>`;
+  }
+
+  function trainHistoryCardHTML() {
+    const total = Store.exerciseDaysTotal();
+    const streak = Store.streak();
+    const hasHistory = Store.activeDates().length > 0;
+    return `
+    <div class="card" style="margin-bottom:0.9rem">
+      <div class="card-title">📅 训练打卡记录</div>
+      ${total
+        ? `<div class="muted">累计打卡 <b>${total}</b> 天　·　当前连续 <b>${streak}</b> 天</div>`
+        : '<div class="muted">还没有打卡记录，今天做一个动作就开始了。</div>'}
+      ${calendarHTML(28)}
+      <div class="cal-legend">
+        <span>近 4 周</span>
+        <span class="cal-legend-scale">少 <i class="cal-dot"></i><i class="cal-dot lv1"></i><i class="cal-dot lv2"></i> 多</span>
+      </div>
+      ${hasHistory ? '<button class="btn ghost block" id="btn-ex-hist" style="margin-top:0.7rem">📄 查看每天练了什么</button>' : ''}
+    </div>`;
+  }
+
+  function exName(id) {
+    const e = EXERCISES.find(x => x.id === id);
+    return e ? e.name : id;
+  }
+  function gameName(key) {
+    const e = EXERCISES.find(x => x.mode && x.mode.type === 'game' && x.mode.game === key);
+    return e ? e.name : key;
+  }
+  function weekdayOf(date) {
+    return Store.weekdayCN(new Date(date + 'T00:00:00'));
+  }
+
+  function openExerciseHistory() {
+    const dates = Store.activeDates();
+    const days = dates.map(d => {
+      const ids = Store.exercisesOn(d);
+      const games = Store.gamesOn(d);
+      return `
+      <div class="hist-day">
+        <div class="hd-date">${esc(d)} ${weekdayOf(d)}<span class="hd-count">${ids.length} 项</span></div>
+        ${ids.length ? `<div class="chip-row">${ids.map(i => `<span class="chip">${esc(exName(i))}</span>`).join('')}</div>` : ''}
+        ${games.length ? `<div class="hd-games">🎮 ${games.map(g => `${esc(gameName(g.game))} ${esc(g.detail || g.score)}`).join('　·　')}</div>` : ''}
+      </div>`;
+    }).join('');
+
+    const node = nodeFromHTML(`
+      <div class="card">
+        <div class="card-title">📅 最近 4 周</div>
+        ${calendarHTML(28)}
+        <div class="cal-legend"><span>累计打卡 ${Store.exerciseDaysTotal()} 天 · 当前连续 ${Store.streak()} 天</span></div>
+      </div>
+      <div class="card">
+        <div class="card-title">📄 每天练了什么</div>
+        ${days || '<div class="empty-tip">还没有训练打卡记录</div>'}
+      </div>`);
+    openModal('训练历史', node);
   }
 
   /* ============================================================
@@ -370,6 +451,101 @@ const App = (() => {
     return ['bad', '肥胖，建议咨询医生'];
   }
 
+  /* 单条记录的显示文本与红黄绿状态（历史列表的小圆点用同一套判定） */
+  const VITAL_FMT = {
+    bp: v => `${esc(v.sys)}/${esc(v.dia)} mmHg${v.pulse ? ' · 脉搏 ' + esc(v.pulse) : ''}`,
+    glucose: v => `${esc(v.value)} mmol/L · ${esc(v.gtype)}`,
+    weight: v => `${esc(v.value)} 公斤`,
+  };
+  function vitalStatus(kind, v) {
+    if (kind === 'bp') return bpBadge(+v.sys, +v.dia);
+    if (kind === 'glucose') return gluBadge(v.gtype, +v.value);
+    const h = +Store.data.profile.height;
+    if (!h) return ['', ''];
+    const bmi = +v.value / Math.pow(h / 100, 2);
+    const [cls, txt] = bmiBadge(bmi);
+    return [cls, `BMI ${bmi.toFixed(1)} · ${txt}`];
+  }
+  const CHART_NOTE = {
+    bp: '—— 高压　—— 低压　（虚线为 140/90 提示线）',
+    glucose: '虚线为参考线：空腹 7.0 · 餐后2小时 10.0（目标遵医嘱）',
+    weight: '',
+  };
+  /* 趋势图（记录页与历史弹窗共用，只是取的条数不同） */
+  function drawVitalChart(kind, canvas, recent) {
+    if (!canvas || recent.length < 2) return;
+    const x = v => v.date.slice(5);
+    if (kind === 'bp') {
+      Charts.line(canvas, [
+        { label: '高压', color: '#D93A3A', values: recent.map(v => ({ x: x(v), y: +v.sys })) },
+        { label: '低压', color: '#2E6FE0', values: recent.map(v => ({ x: x(v), y: +v.dia })) },
+      ], { refLines: [{ y: 140, color: '#D97706' }, { y: 90, color: '#D97706' }], yFloor: 0 });
+    } else if (kind === 'glucose') {
+      Charts.line(canvas, [
+        { label: '血糖', color: '#1E8E5A', values: recent.map(v => ({ x: x(v), y: +v.value })) },
+      ], { refLines: [{ y: 7.0, color: '#D97706', label: '空腹参考7.0' }, { y: 10.0, color: '#7C5CD9', label: '餐后参考10.0' }], yFloor: 0 });
+    } else {
+      Charts.line(canvas, [
+        { label: '体重', color: '#7C5CD9', values: recent.map(v => ({ x: x(v), y: +v.value })) },
+      ], {});
+    }
+  }
+  function histBtnHTML(kind, count) {
+    if (!count) return '';
+    return `<button class="btn ghost block" data-hist="${kind}" style="margin-top:0.8rem">📄 查看全部历史记录（${count} 条）</button>`;
+  }
+  function bindHist(body) {
+    body.querySelectorAll('[data-hist]').forEach(b => b.onclick = () => openVitalHistory(b.dataset.hist));
+  }
+
+  /* 历史弹窗：趋势图 + 全部记录（每条带红黄绿状态点），可删除 */
+  function openVitalHistory(kind) {
+    const meta = REC_KINDS[kind];
+    const node = document.createElement('div');
+    openModal(`${meta.icon} ${meta.name}历史`, node);
+
+    const paint = () => {
+      const sorted = Store.vitalsSorted(kind);
+      if (!sorted.length) {
+        node.innerHTML = '<div class="empty-tip">没有记录了</div>';
+        return;
+      }
+      const recent = sorted.slice(-30);
+      const rows = [...sorted].reverse().map(v => {
+        const [cls, txt] = vitalStatus(kind, v);
+        return `
+        <div class="rec-row">
+          <span class="rec-dot ${cls}"></span>
+          <span class="rec-date">${esc(v.date)}<br>${esc(v.time || '')}</span>
+          <span class="rec-val">${VITAL_FMT[kind](v)}${txt ? `<br><span class="rec-note ${cls}">${txt}</span>` : ''}</span>
+          <button class="rec-del" data-del="${v.id}" aria-label="删除">🗑</button>
+        </div>`;
+      }).join('');
+
+      node.innerHTML = `
+      ${recent.length >= 2 ? `
+      <div class="card">
+        <div class="card-title">📈 趋势（近 ${recent.length} 条）</div>
+        <div class="chart-box"><canvas id="vh-chart"></canvas></div>
+        ${CHART_NOTE[kind] ? `<div class="muted" style="text-align:center">${CHART_NOTE[kind]}</div>` : ''}
+      </div>` : ''}
+      <div class="card">
+        <div class="card-title">📄 全部记录（${sorted.length} 条）</div>
+        <div class="rec-list">${rows}</div>
+      </div>`;
+
+      node.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+        if (confirm('删除这条记录？')) {
+          Store.removeVital(kind, b.dataset.del);
+          paint();
+          renderRecords();
+        }
+      });
+      drawVitalChart(kind, node.querySelector('#vh-chart'), recent);
+    };
+    paint();
+  }
+
   function renderRecords() {
     let html = `
     <div class="rec-tabs">
@@ -431,9 +607,9 @@ const App = (() => {
     <div class="card">
       <div class="card-title">🩺 最近血压</div>
       ${latestHTML}
-      ${sorted.length >= 2 ? '<div class="chart-box"><canvas id="bp-chart"></canvas></div><div class="muted" style="text-align:center">—— 高压　—— 低压　（虚线为 140/90 提示线）</div>' : ''}
-    </div>
-    ${listCard('bp', sorted, v => `${v.sys}/${v.dia} mmHg${v.pulse ? ' · ' + v.pulse : ''}`)}`;
+      ${sorted.length >= 2 ? `<div class="chart-box"><canvas id="bp-chart"></canvas></div><div class="muted" style="text-align:center">${CHART_NOTE.bp}</div>` : ''}
+      ${histBtnHTML('bp', sorted.length)}
+    </div>`;
 
     document.getElementById('bp-save').onclick = () => {
       const sys = +document.getElementById('bp-sys').value;
@@ -448,15 +624,8 @@ const App = (() => {
       toast(cls === 'bad' ? '已保存。' + txt : '已保存 ✓');
       renderRecords();
     };
-    bindDelete(body, 'bp');
-
-    if (sorted.length >= 2) {
-      const recent = sorted.slice(-14);
-      Charts.line(document.getElementById('bp-chart'), [
-        { label: '高压', color: '#D93A3A', values: recent.map(v => ({ x: v.date.slice(5), y: +v.sys })) },
-        { label: '低压', color: '#2E6FE0', values: recent.map(v => ({ x: v.date.slice(5), y: +v.dia })) },
-      ], { refLines: [{ y: 140, color: '#D97706' }, { y: 90, color: '#D97706' }], yFloor: 0 });
-    }
+    bindHist(body);
+    drawVitalChart('bp', document.getElementById('bp-chart'), sorted.slice(-14));
   }
 
   function renderGlucose(body) {
@@ -494,9 +663,9 @@ const App = (() => {
     <div class="card">
       <div class="card-title">🩸 最近血糖</div>
       ${latestHTML}
-      ${sorted.length >= 2 ? '<div class="chart-box"><canvas id="glu-chart"></canvas></div><div class="muted" style="text-align:center">虚线为参考线：空腹 7.0 · 餐后2小时 10.0（目标遵医嘱）</div>' : ''}
-    </div>
-    ${listCard('glucose', sorted, v => `${v.value} mmol/L · ${v.gtype}`)}`;
+      ${sorted.length >= 2 ? `<div class="chart-box"><canvas id="glu-chart"></canvas></div><div class="muted" style="text-align:center">${CHART_NOTE.glucose}</div>` : ''}
+      ${histBtnHTML('glucose', sorted.length)}
+    </div>`;
 
     document.getElementById('glu-save').onclick = () => {
       const gtype = document.getElementById('glu-type').value;
@@ -509,14 +678,8 @@ const App = (() => {
       toast('已保存 ✓');
       renderRecords();
     };
-    bindDelete(body, 'glucose');
-
-    if (sorted.length >= 2) {
-      const recent = sorted.slice(-14);
-      Charts.line(document.getElementById('glu-chart'), [
-        { label: '血糖', color: '#1E8E5A', values: recent.map(v => ({ x: v.date.slice(5), y: +v.value })) },
-      ], { refLines: [{ y: 7.0, color: '#D97706', label: '空腹参考7.0' }, { y: 10.0, color: '#7C5CD9', label: '餐后参考10.0' }], yFloor: 0 });
-    }
+    bindHist(body);
+    drawVitalChart('glucose', document.getElementById('glu-chart'), sorted.slice(-14));
   }
 
   function renderWeight(body) {
@@ -557,8 +720,8 @@ const App = (() => {
       <div class="card-title">⚖️ 最近体重</div>
       ${latestHTML}
       ${sorted.length >= 2 ? '<div class="chart-box"><canvas id="wt-chart"></canvas></div>' : ''}
-    </div>
-    ${listCard('weight', sorted, v => `${v.value} 公斤`)}`;
+      ${histBtnHTML('weight', sorted.length)}
+    </div>`;
 
     document.getElementById('wt-save').onclick = () => {
       const value = +document.getElementById('wt-val').value;
@@ -569,33 +732,8 @@ const App = (() => {
       toast('已保存 ✓');
       renderRecords();
     };
-    bindDelete(body, 'weight');
-
-    if (sorted.length >= 2) {
-      const recent = sorted.slice(-14);
-      Charts.line(document.getElementById('wt-chart'), [
-        { label: '体重', color: '#7C5CD9', values: recent.map(v => ({ x: v.date.slice(5), y: +v.value })) },
-      ], {});
-    }
-  }
-
-  function listCard(kind, sorted, fmt) {
-    if (!sorted.length) return '';
-    const rows = [...sorted].reverse().slice(0, 20).map(v => `
-      <div class="rec-row">
-        <span class="rec-date">${esc(v.date)}<br>${esc(v.time || '')}</span>
-        <span class="rec-val">${fmt(v)}</span>
-        <button class="rec-del" data-del="${v.id}" aria-label="删除">🗑</button>
-      </div>`).join('');
-    return `<div class="card"><div class="card-title">📄 历史记录（近20条）</div><div class="rec-list">${rows}</div></div>`;
-  }
-  function bindDelete(body, kind) {
-    body.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
-      if (confirm('删除这条记录？')) {
-        Store.removeVital(kind, b.dataset.del);
-        renderRecords();
-      }
-    });
+    bindHist(body);
+    drawVitalChart('weight', document.getElementById('wt-chart'), sorted.slice(-14));
   }
 
   function openExport() {
@@ -667,6 +805,7 @@ const App = (() => {
         <div class="ring-num">${ad}%</div>
         <div class="muted">${ad >= 90 ? '非常好，请保持！' : ad >= 70 ? '还不错，争取一次不落。' : '漏服较多。研究显示：坚持服药的患者，再次中风的风险只有不坚持者的约三分之一。可设手机闹钟配合本页核对。'}</div>
       </div>
+      <button class="btn ghost block" id="btn-med-hist" style="margin-top:0.7rem">📄 查看服药历史（近14天）</button>
     </div>` : ''}
     <div class="card">
       <div class="card-title">💊 我的药物清单</div>
@@ -697,6 +836,40 @@ const App = (() => {
       const m = Store.data.meds.find(x => x.id === b.dataset.editMed);
       if (m) openMedForm(m);
     });
+    const medHistBtn = document.getElementById('btn-med-hist');
+    if (medHistBtn) medHistBtn.onclick = openMedHistory;
+  }
+
+  /* 服药历史：每天一行，一个圆点代表一次应服的药 */
+  function openMedHistory() {
+    const days = Store.medHistory(14);
+    const sum = days.reduce((a, d) => ({ total: a.total + d.total, done: a.done + d.done }), { total: 0, done: 0 });
+    const pct = sum.total ? Math.round(sum.done / sum.total * 100) : 0;
+    const t = Store.today();
+
+    const rows = days.map(d => `
+      <div class="day-row">
+        <span class="day-date">${esc(d.date.slice(5))}${d.date === t ? '（今天）' : ''}<br>${weekdayOf(d.date)}</span>
+        <span class="dot-row">${d.items.map(i =>
+          `<i class="dose-dot ${i.taken ? 'taken' : ''}" aria-label="${esc(i.time)} ${esc(i.name)} ${i.taken ? '已服' : '未记录'}"></i>`).join('')}</span>
+        <span class="day-score ${d.total && d.done >= d.total ? 'ok' : ''}">${d.done}/${d.total}</span>
+      </div>`).join('');
+
+    const node = nodeFromHTML(`
+      <div class="card">
+        <div class="card-title">📊 近14天完成率</div>
+        <div class="adherence-ring">
+          <div class="ring-num">${pct}%</div>
+          <div class="muted">共 ${sum.total} 次应服，已核对 ${sum.done} 次</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">📄 每天核对情况</div>
+        <div class="day-legend"><i class="dose-dot taken"></i> 已核对　<i class="dose-dot"></i> 未记录</div>
+        ${rows}
+      </div>
+      <div class="disclaimer">应服次数按「当前药物清单」计算；如果最近改过处方，更早日期的次数会按新处方显示。漏服记录仅供自我提醒，用药调整请遵医嘱。</div>`);
+    openModal('服药历史', node);
   }
 
   const COMMON_TIMES = ['06:30', '07:30', '08:00', '11:30', '12:00', '17:30', '18:00', '20:00', '21:00'];

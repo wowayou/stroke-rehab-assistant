@@ -98,6 +98,37 @@ assert(Store.data.meds.length === 1, '解析失败不得破坏现有数据');
 const partial = Store.parseBackup('{"app":"stroke-rehab-assistant","data":{"profile":{"name":"老王"}}}');
 assert(partial.data.profile.name === '老王' && partial.data.meds.length === 0, '部分备份按字段守卫合并');
 
+/* --- 历史视图数据（训练日历 / 每日明细 / 服药历史） --- */
+const rd = Store.recentDates(3);
+assert(rd.length === 3 && rd[2] === t && rd[0] === Store.addDays(t, -2), 'recentDates 应旧→新且含今天');
+
+assert(Store.exerciseDaysTotal() === 3, '累计打卡天数应为3，实际 ' + Store.exerciseDaysTotal());
+assert(Store.exercisesOn(t).includes('bobath'), 'exercisesOn 应返回当天打卡项');
+assert(Store.exercisesOn('1999-01-01').length === 0, '无记录的日期应返回空数组');
+
+const act = Store.activeDates();
+assert(act[0] === t && act[act.length - 1] === Store.addDays(t, -2), 'activeDates 应新→旧');
+
+Store.logGame('memory', 18, '翻牌18次');
+assert(Store.gamesOn(t).length === 1 && Store.gamesOn(t)[0].game === 'memory', 'gamesOn 应返回当天游戏成绩');
+Store.data.gameLog[Store.addDays(t, -9)] = [{ game: 'math', score: 8, detail: '答对8/10' }];
+assert(Store.activeDates().includes(Store.addDays(t, -9)), '只有游戏成绩的日期也应算活跃日');
+assert(Store.exerciseDaysTotal() === 3, '游戏成绩不应计入训练打卡天数');
+
+const cal = Store.exerciseCalendar(28);
+assert(cal.length === 28 && cal[27].date === t, '日历应为28天且以今天结尾');
+assert(cal[27].count === 1 && cal[27].games === 1, '今天应有1项训练+1局游戏');
+assert(cal[0].count === 0, '4周前无记录应为0');
+
+const ms = Store.medStatusOn(t);
+assert(ms.total === 2 && ms.done === 1, '今日应服2次已服1次，实际 ' + ms.done + '/' + ms.total);
+assert(ms.items[0].time === '08:00' && ms.items[0].taken === true, '服药明细应按时间排序且带勾选状态');
+assert(ms.items[1].time === '20:00' && ms.items[1].taken === false, '未核对的次数 taken 应为 false');
+assert(Store.medStatusOn(Store.addDays(t, -3)).done === 0, '没核对过的日期 done 应为0');
+
+const mh = Store.medHistory(14);
+assert(mh.length === 14 && mh[0].date === t, 'medHistory 应新→旧且长度为14');
+
 /* --- 损坏数据兜底 --- */
 localStorage.setItem('strokeRehab.v1', '{broken json');
 Store.load();

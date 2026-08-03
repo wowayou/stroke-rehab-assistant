@@ -19,6 +19,7 @@
 | 五个页面均能被 JS 正常渲染 | `bash test/smoke.sh`（无头 Chromium dump 每个 `?view=` 并断言关键文案 + 8 项静态资源 200） | 全部 PASS，退出码 0 |
 | 有数据状态下的深度渲染 | 独立测试代理注入 10 条血压/血糖/体重 + 2 种药 + 训练打卡后重跑五页 | 图表/依从率/康复第 N 天/连续天数计算全部正确，0 JS 报错 |
 | 医学内容与指南对齐 | 后台调研（来源见 docs/RESEARCH.md §七），并按调研做了 v0.2 修订（修订清单见 RESEARCH.md §九）；2026-08-02 二次复核抓出 7 处遗留（0 高危/1 中/6 低）全部修正 | 已对照落地 |
+| 历史视图（v0.2.9，2026-08-03） | `node test/storage.test.js`（新增 14 条历史 API 断言）+ `bash test/smoke.sh` + 带数据的临时探针页无头打开三个历史弹窗 | 全部通过，0 JS 报错；日历/圆点/状态点计数与种子数据逐项核对一致。**真机未测** |
 | 真机实测（部分，2026-08-02） | 用户手机录屏 82s 自行操作（经 OCR 复核） | 首次指引、设置（含备份/恢复按钮）、保存血压 135/85、知识页、导出报告均正常；`tel:120`、360px 小屏、训练/用药完整流程**未验证** |
 
 ### 1.2 未做/未验证 ⚠️（接手后建议最先补的）
@@ -27,7 +28,7 @@
 2. **版本管理——已解决（2026-08-01，经用户确认）**：本项目内已 `git init`（main 分支），首次提交即 v0.2.2 全量状态，远程为私有仓库 <https://github.com/wowayou/stroke-rehab-assistant>。上级目录遗留的空 `my-projects/.git` 未动（不影响本项目，相关坑见 §3）。
 3. **部署——已完成（2026-08-01）**：公开部署到 Cloudflare Pages <https://stroke-rehab-assistant.pages.dev/>。直传 10 个静态文件（仅应用运行时所需，不含 docs/、test/、源码 md、.git），线上验证通过：全部文件与本地逐字节一致、五页无头渲染冒烟全过、无 JS 报错。国内可达性已由用户真机确认可打开（速度/稳定性仍建议家人实测）。重新部署用仓库根目录的 `deploy.sh`。
    - **部署账号**：Cloudflare 账号邮箱 **demoqqxu@gmail.com**（账号名 "Demoqqxu@gmail.com's Account"，ID 0e2703e9...），与 GitHub 账号（wowayou）**不是同一个账号**，已由用户确认归其本人所有（2026-08-02）。管理入口：dash.cloudflare.com → Workers & Pages → Pages → stroke-rehab-assistant。本机 wrangler 登录凭证在 `~/.config/.wrangler/config/default.toml`。
-4. 路线图功能多数未做：Service Worker 离线、语音朗读、双抗到期提醒、PHQ-9 情绪自评等仍是规划（见 DEVELOPMENT.md §9）；其中「数据 JSON 导出/导入（换机迁移）」已于 v0.2.6 落地（设置页「备份全部数据 / 从备份恢复」）。
+4. 路线图功能多数未做：Service Worker 离线、语音朗读、双抗到期提醒、PHQ-9 情绪自评等仍是规划（见 DEVELOPMENT.md §9）；已落地的两项：「数据 JSON 导出/导入（换机迁移）」v0.2.6（设置页「备份全部数据 / 从备份恢复」）、「训练/用药/游戏历史视图 + 记录页历史前置」v0.2.9（详见 DEVELOPMENT.md §10；**这两项原是本文档里的待决策项，现已关闭**）。v0.2.9 的历史视图**尚未真机手测**，清单见 DEVELOPMENT.md §7 末三条。
 
 ### 1.3 没有已知 bug
 
@@ -82,6 +83,7 @@ python3 -m http.server 8080   # 浏览器访问 http://localhost:8080
 4. 语音朗读训练要领（Web Speech API，失语/低视力患者受益大）
 5. 双抗 21 天到期提醒（调研认定的高价值低风险点）
 6. ~~数据 JSON 导出/导入（解决换机迁移）~~ ——已完成（v0.2.6）
+   ~~训练/用药/游戏历史视图、记录页历史前置~~ ——已完成（v0.2.9）
 7. PHQ-9 类卒中后抑郁自评 + 就医指引
 
 完整理由与更长的清单见 DEVELOPMENT.md §9 和 RESEARCH.md。

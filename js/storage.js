@@ -97,12 +97,42 @@ const Store = (() => {
     return n;
   }
 
+  /* 最近 n 天的日期，旧→新（含今天） */
+  function recentDates(n, from = today()) {
+    const out = [];
+    for (let i = n - 1; i >= 0; i--) out.push(addDays(from, -i));
+    return out;
+  }
+
   /* ---------- 游戏成绩 ---------- */
   function logGame(game, score, detail) {
     const t = today();
     if (!data.gameLog[t]) data.gameLog[t] = [];
     data.gameLog[t].push({ game, score, detail, time: timeStr() });
     save();
+  }
+
+  /* ---------- 训练/游戏历史 ---------- */
+  function exercisesOn(date) { return data.exerciseLog[date] || []; }
+  function gamesOn(date) { return data.gameLog[date] || []; }
+  /* 累计有训练打卡的天数 */
+  function exerciseDaysTotal() {
+    return Object.keys(data.exerciseLog).filter(d => (data.exerciseLog[d] || []).length).length;
+  }
+  /* 有训练打卡或游戏成绩的日期，新→旧 */
+  function activeDates() {
+    const set = new Set();
+    Object.keys(data.exerciseLog).forEach(d => { if ((data.exerciseLog[d] || []).length) set.add(d); });
+    Object.keys(data.gameLog).forEach(d => { if ((data.gameLog[d] || []).length) set.add(d); });
+    return [...set].sort().reverse();
+  }
+  /* 训练日历：最近 n 天，旧→新，count=当天训练项数，games=当天游戏局数 */
+  function exerciseCalendar(n = 28) {
+    return recentDates(n).map(d => ({
+      date: d,
+      count: exercisesOn(d).length,
+      games: gamesOn(d).length,
+    }));
   }
 
   /* ---------- 用药 ---------- */
@@ -149,6 +179,20 @@ const Store = (() => {
       }));
     }
     return total ? Math.round(done / total * 100) : null;
+  }
+  /* 某天的服药情况。注意：应服次数按「当前」药物清单计算——
+     改过处方后，历史天数的分母也会跟着变，这是本地无处方版本记录下的已知取舍。 */
+  function medStatusOn(date) {
+    const items = [];
+    data.meds.forEach(m => (m.times || []).forEach(t => {
+      items.push({ medId: m.id, name: m.name, dose: m.dose || '', time: t, taken: isMedTaken(m.id, t, date) });
+    }));
+    items.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+    return { date, total: items.length, done: items.filter(i => i.taken).length, items };
+  }
+  /* 最近 n 天服药情况，新→旧 */
+  function medHistory(n = 14) {
+    return recentDates(n).reverse().map(medStatusOn);
   }
 
   /* ---------- 健康记录 ---------- */
@@ -201,8 +245,7 @@ const Store = (() => {
     else lines.push('  （无记录）');
     lines.push('');
 
-    const exDays = Object.keys(data.exerciseLog).filter(d => data.exerciseLog[d].length).length;
-    lines.push(`■ 康复训练：累计打卡 ${exDays} 天，当前连续坚持 ${streak()} 天`);
+    lines.push(`■ 康复训练：累计打卡 ${exerciseDaysTotal()} 天，当前连续坚持 ${streak()} 天`);
     lines.push('');
     lines.push('（由"脑梗康复助手"导出，数据为患者自行记录，供医生参考）');
     return lines.join('\n');
@@ -283,10 +326,12 @@ const Store = (() => {
   return {
     load, save,
     get data() { return data; },
-    today, timeStr, addDays, weekdayCN, rehabDay,
+    today, timeStr, addDays, weekdayCN, rehabDay, recentDates,
     logExercise, exercisesDoneToday, isExDone, streak,
-    logGame,
+    exercisesOn, exerciseDaysTotal, activeDates, exerciseCalendar,
+    logGame, gamesOn,
     addMed, updateMed, removeMed, isMedTaken, toggleMed, medProgressToday, adherence7d,
+    medStatusOn, medHistory,
     addVital, removeVital, vitalsSorted, bpToday,
     exportReport, resetAll,
     exportBackup, parseBackup, applyBackup, backupSummary,
