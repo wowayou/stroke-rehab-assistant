@@ -428,21 +428,23 @@ const App = (() => {
   };
 
   function bpBadge(sys, dia) {
-    if (sys >= 180 || dia >= 110) return ['bad', '血压很高，尽快联系医生'];
-    if (sys >= 140 || dia >= 90) return ['warn', '偏高（超过140/90提示线）'];
+    const t = Store.data.profile.targets; // 个人目标值（遵医嘱）
+    if (sys >= 180 || dia >= 110) return ['bad', '血压很高，尽快联系医生'];   // 绝对安全线，不随目标变
     if (sys < 90 || dia < 60) return ['warn', '偏低，注意头晕跌倒'];
-    return ['ok', '未超过140/90提示线（目标遵医嘱）'];
+    if (sys > t.bpSys || dia > t.bpDia) return ['warn', '偏高（超过您的目标值）'];
+    return ['ok', '在您的目标值内（遵医嘱）'];
   }
   function gluBadge(gtype, v) {
-    if (v <= 3.9) return ['bad', '偏低，警惕低血糖'];
+    const t = Store.data.profile.targets;
+    if (v <= 3.9) return ['bad', '偏低，警惕低血糖'];   // 绝对安全线
     if (gtype === '空腹') {
-      if (v <= 7.0) return ['ok', '空腹一般目标内'];
-      if (v <= 10) return ['warn', '空腹偏高'];
-      return ['bad', '明显偏高，联系医生'];
+      if (v <= t.gluFast) return ['ok', '空腹在您的目标内（遵医嘱）'];
+      if (v <= 10) return ['warn', '空腹偏高（超过您的目标值）'];
+      return ['bad', '明显偏高，联系医生'];   // 绝对安全线，不随目标变
     }
-    if (v <= 10) return ['ok', '一般目标内'];
-    if (v < 13.9) return ['warn', '偏高'];
-    return ['bad', '明显偏高，联系医生'];
+    if (v <= t.gluPost) return ['ok', '在您的目标内（遵医嘱）'];
+    if (v < 13.9) return ['warn', '偏高（超过您的目标值）'];
+    return ['bad', '明显偏高，联系医生'];   // 绝对安全线，不随目标变
   }
   function bmiBadge(bmi) {
     if (bmi < 18.5) return ['warn', '偏瘦，注意营养'];
@@ -475,19 +477,11 @@ const App = (() => {
         { key: 'sys', label: '高压', color: '#D93A3A', marker: 'dot' },
         { key: 'dia', label: '低压', color: '#2E6FE0', marker: 'square' },
       ],
-      refs: [
-        { y: 140, color: '#D97706', label: '140', legend: '140/90 提示线' },
-        { y: 90, color: '#D97706' },
-      ],
       note: '',
     },
     glucose: {
       series: [
         { key: 'value', label: '血糖', color: '#1E8E5A', marker: 'dot' },
-      ],
-      refs: [
-        { y: 7.0, color: '#D97706', label: '空腹参考7.0', legend: '空腹参考 7.0' },
-        { y: 10.0, color: '#0E7490', label: '餐后参考10.0', legend: '餐后2小时参考 10.0' },
       ],
       note: '目标遵医嘱',
     },
@@ -495,33 +489,104 @@ const App = (() => {
       series: [
         { key: 'value', label: '体重', color: '#7C5CD9', marker: 'dot' },
       ],
-      refs: [],
       note: '',
     },
   };
-  /* 图例：一小段和图上完全一致的线（实线=数据、同色虚线=参考线）+ 深色标签，适老化保对比度 */
+  /* 由个人目标值生成参考线与目标区（目标值遵医嘱、用户可调）。
+     血压：目标区着色（低压~高压）；与默认 140/90 不同才补淡色 140/90 参考线。
+     血糖：空腹/餐后参考线用个人值。绝对安全线（180/110、3.9、13.9 等）不在此。 */
+  function targetConfig(kind) {
+    const t = Store.data.profile.targets;
+    const g = n => n.toFixed(1);
+    if (kind === 'bp') {
+      const isDefault = t.bpSys === 140 && t.bpDia === 90;
+      return {
+        zones: [{ from: t.bpDia, to: t.bpSys, color: 'rgba(30,142,90,0.10)' }],
+        refLines: [
+          { y: t.bpSys, color: '#1E8E5A' },
+          { y: t.bpDia, color: '#1E8E5A' },
+          ...(isDefault ? [] : [
+            { y: 140, color: '#C8B48F', label: '140' },
+            { y: 90, color: '#C8B48F' },
+          ]),
+        ],
+        legend: [
+          { band: true, label: '目标区（遵医嘱）' },
+          ...(isDefault ? [] : [{ color: '#C8B48F', label: '140/90 提示线', dash: true }]),
+        ],
+      };
+    }
+    if (kind === 'glucose') {
+      return {
+        zones: [],
+        refLines: [
+          { y: t.gluFast, color: '#D97706', label: `空腹参考${g(t.gluFast)}` },
+          { y: t.gluPost, color: '#0E7490', label: `餐后参考${g(t.gluPost)}` },
+        ],
+        legend: [
+          { color: '#D97706', label: `空腹目标 ${g(t.gluFast)}`, dash: true },
+          { color: '#0E7490', label: `餐后2h目标 ${g(t.gluPost)}`, dash: true },
+        ],
+      };
+    }
+    return { zones: [], refLines: [], legend: [] };
+  }
+  /* 图例：一小段和图上完全一致的线（实线=数据、同色虚线=参考线/目标区带）+ 深色标签 */
   function chartLegendHTML(kind) {
     const def = VITAL_SERIES[kind];
+    const tc = targetConfig(kind);
     const items = [];
     def.series.forEach(s => items.push(
       `<span class="lg-item"><span class="lg-sw" style="border-color:${s.color}"></span>${esc(s.label)}</span>`));
-    def.refs.filter(r => r.legend).forEach(r => items.push(
-      `<span class="lg-item"><span class="lg-sw lg-dash" style="border-color:${r.color}"></span>${esc(r.legend)}</span>`));
-    return `<div class="chart-legend">${items.join('')}${def.note ? `<span class="lg-note">${esc(def.note)}</span>` : ''}</div>`;
+    tc.legend.forEach(l => items.push(l.band
+      ? `<span class="lg-item"><span class="lg-band"></span>${esc(l.label)}</span>`
+      : `<span class="lg-item"><span class="lg-sw ${l.dash ? 'lg-dash' : ''}" style="border-color:${l.color}"></span>${esc(l.label)}</span>`));
+    return `<div class="chart-legend"><div class="lg-hint">👆 点一下图上的点，看当天数值</div>${items.join('')}${def.note ? `<span class="lg-note">${esc(def.note)}</span>` : ''}</div>`;
   }
-  /* 趋势图（记录页与历史弹窗共用，只是取的条数不同） */
+  /* 趋势图（记录页与历史弹窗共用，只是取的条数不同）；点选某列弹 tooltip 显示该条详情 */
   function drawVitalChart(kind, canvas, recent) {
     if (!canvas || recent.length < 2) return;
     const def = VITAL_SERIES[kind];
+    const tc = targetConfig(kind);
     const x = v => v.date.slice(5);
     const series = def.series.map(s => ({
       label: s.label, color: s.color, marker: s.marker,
       values: recent.map(v => ({ x: x(v), y: +v[s.key] })),
     }));
-    const refLines = def.refs.map(r => ({ y: r.y, color: r.color, label: r.label || '' }));
     const opts = kind === 'weight' ? {} : { yFloor: 0 }; // 体重不压 0，否则曲线被压扁
-    if (refLines.length) opts.refLines = refLines;
+    if (tc.refLines.length) opts.refLines = tc.refLines;
+    if (tc.zones.length) opts.zones = tc.zones;
+    opts.onTap = (i, pos) => { const rec = recent[i]; if (rec) showVitalTooltip(canvas.parentElement, kind, rec, pos.x, pos.y); };
+    opts.onLeave = () => hideVitalTooltip();
     Charts.line(canvas, series, opts);
+  }
+  /* tooltip：画布上方浮层，显示日期/时间/数值/判定（关键信息仍在下方列表，这里只做补充） */
+  function showVitalTooltip(box, kind, v, px, py) {
+    hideVitalTooltip();
+    const [cls, txt] = vitalStatus(kind, v);
+    let html = `<div class="vt-t">${esc(v.date)}${v.time ? ' ' + esc(v.time) : ''}</div>`;
+    if (kind === 'bp') {
+      html += `<div class="vt-v"><span style="color:#D93A3A">${esc(v.sys)}</span>/<span style="color:#2E6FE0">${esc(v.dia)}</span> mmHg${v.pulse ? ' · ♥ ' + esc(v.pulse) : ''}</div>`;
+    } else {
+      html += `<div class="vt-v">${VITAL_FMT[kind](v)}</div>`;
+    }
+    html += `<div class="vt-s ${cls}">${esc(txt)}</div>`;
+    const tip = document.createElement('div');
+    tip.className = 'vital-tooltip';
+    tip.innerHTML = html;
+    box.appendChild(tip);
+    const w = tip.offsetWidth || 170, h = tip.offsetHeight || 70;
+    const bw = box.clientWidth;
+    let left = px - w / 2;
+    left = Math.max(6, Math.min(left, bw - w - 6));
+    let top = py - h - 12;
+    if (top < 6) top = py + 12;
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+  }
+  function hideVitalTooltip() {
+    const el = document.querySelector('.vital-tooltip');
+    if (el) el.remove();
   }
   function histBtnHTML(kind, count) {
     if (!count) return '';
@@ -587,7 +652,7 @@ const App = (() => {
     </div>
     <div id="rec-body"></div>
     <button class="btn ghost block" id="btn-export" style="margin-top:0.2rem">📤 导出记录给医生看</button>
-    <div class="disclaimer">图中 140/90 为提示线；指南建议多数患者在能耐受时降至 130/80 以下（部分情况例外），你的控制目标以医生要求为准。</div>`;
+    <div class="disclaimer">浅绿为目标区（遵医嘱，可在设置里调整）；140/90 为一般提示线。指南建议多数患者在能耐受时降至 130/80 以下（部分情况例外），你的控制目标以医生要求为准。</div>`;
     $view().innerHTML = html;
 
     $view().querySelectorAll('[data-rectab]').forEach(b => b.onclick = () => {
@@ -1089,6 +1154,30 @@ const App = (() => {
         </div>
       </div>
       <div class="card">
+        <div class="card-title">🎯 个人目标值（遵医嘱）</div>
+        <div class="setting-row">
+          <div class="sr-label">血压高压目标</div>
+          <input id="set-bpsys" type="number" inputmode="numeric" value="${esc(p.targets.bpSys)}"
+            style="width:6em;min-height:48px;border:1.5px solid var(--border);border-radius:10px;padding:0 0.6rem;font-size:1rem"><span class="muted"> mmHg</span>
+        </div>
+        <div class="setting-row">
+          <div class="sr-label">血压低压目标</div>
+          <input id="set-bpdia" type="number" inputmode="numeric" value="${esc(p.targets.bpDia)}"
+            style="width:6em;min-height:48px;border:1.5px solid var(--border);border-radius:10px;padding:0 0.6rem;font-size:1rem"><span class="muted"> mmHg</span>
+        </div>
+        <div class="setting-row">
+          <div class="sr-label">血糖空腹目标</div>
+          <input id="set-glufast" type="number" step="0.1" inputmode="decimal" value="${esc(p.targets.gluFast)}"
+            style="width:6em;min-height:48px;border:1.5px solid var(--border);border-radius:10px;padding:0 0.6rem;font-size:1rem"><span class="muted"> mmol/L</span>
+        </div>
+        <div class="setting-row">
+          <div class="sr-label">血糖餐后2h目标</div>
+          <input id="set-glupost" type="number" step="0.1" inputmode="decimal" value="${esc(p.targets.gluPost)}"
+            style="width:6em;min-height:48px;border:1.5px solid var(--border);border-radius:10px;padding:0 0.6rem;font-size:1rem"><span class="muted"> mmol/L</span>
+        </div>
+        <div class="muted" style="margin-top:0.4rem">目标值按医生要求填写，图上会画出目标区、超过会提示"偏高"；血压 180/110、血糖极低/明显偏高等危险情况仍会单独警示。默认 140/90、空腹 7.0、餐后 10.0 仅为一般参考，以医嘱为准。</div>
+      </div>
+      <div class="card">
         <button class="btn ghost block" id="set-guide">❓ 查看使用指引</button>
         <button class="btn ghost block" id="set-export" style="margin-top:0.6rem">📤 导出健康记录（给医生）</button>
         <button class="btn ghost block" id="set-backup" style="margin-top:0.6rem">📦 备份全部数据（下载文件）</button>
@@ -1159,6 +1248,12 @@ const App = (() => {
       p2.height = node.querySelector('#set-height').value;
       const active = node.querySelector('[data-font].active');
       p2.font = active ? active.dataset.font : 'normal';
+      const g = id => +node.querySelector(id).value;
+      const bs = g('#set-bpsys'), bd = g('#set-bpdia'), gf = g('#set-glufast'), gp = g('#set-glupost');
+      if (!(bs >= 60 && bs <= 260) || !(bd >= 30 && bd <= 200)) { toast('请输入有效的血压目标值'); return; }
+      if (bs <= bd) { toast('高压目标应高于低压目标'); return; }
+      if (!(gf >= 3 && gf <= 20) || !(gp >= 3 && gp <= 30)) { toast('请输入有效的血糖目标值'); return; }
+      p2.targets = { bpSys: bs, bpDia: bd, gluFast: gf, gluPost: gp };
       Store.save();
       close();
       render(currentView);

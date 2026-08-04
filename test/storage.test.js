@@ -135,6 +135,15 @@ Store.addVital('bp', { date: '2026-01-01', time: '08:00', sys: 130, dia: 85 });
 const sameT = Store.vitalsSorted('bp').filter(v => v.date === '2026-01-01');
 assert(sameT.length === 2 && sameT[sameT.length - 1].sys === 130, '同时间记录：后录入的应排最末（视为最新）');
 
+/* --- 个人目标值：默认 + 非法值消毒（v0.2.11） --- */
+const tg = Store.data.profile.targets;
+assert(tg.bpSys === 140 && tg.bpDia === 90 && tg.gluFast === 7.0 && tg.gluPost === 10.0, '目标值默认应为 140/90、7/10');
+Store.data.profile.targets = { bpSys: 'abc', bpDia: 0, gluFast: 7.5, gluPost: -1 };
+localStorage.setItem('strokeRehab.v1', JSON.stringify(Store.data));
+Store.load();
+const tg2 = Store.data.profile.targets;
+assert(tg2.bpSys === 140 && tg2.bpDia === 90 && tg2.gluFast === 7.5 && tg2.gluPost === 10.0, '非法目标值应回落默认');
+
 /* --- 损坏数据兜底 --- */
 localStorage.setItem('strokeRehab.v1', '{broken json');
 Store.load();

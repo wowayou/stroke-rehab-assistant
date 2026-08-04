@@ -12,6 +12,10 @@ const Store = (() => {
       stage: 'sitting',  // bed/sitting/standing/walking
       font: 'normal',    // normal/large/xlarge
       height: '',        // cm，可选，算BMI
+      targets: {         // 个人目标值（遵医嘱，用户可调）：血压 140/90 与血糖 7.0/10.0 为默认
+        bpSys: 140, bpDia: 90,
+        gluFast: 7.0, gluPost: 10.0,
+      },
     },
     meds: [],            // {id, name, dose, times:['08:00'], note}
     medLog: {},          // 'YYYY-MM-DD' -> { 'medId@time': true }
@@ -25,6 +29,18 @@ const Store = (() => {
     ui: { guideSeen: false },  // 界面状态：是否已看过首次使用指引
   });
 
+  /* 目标值数字消毒：非正数/非法值回落默认（配合备份导入与旧数据，避免判定失效） */
+  function sanitizeTargets(pt) {
+    const T = defaults().profile.targets;
+    const num = (x, fb) => { const n = +x; return Number.isFinite(n) && n > 0 ? n : fb; };
+    return {
+      bpSys: num(pt.bpSys, T.bpSys),
+      bpDia: num(pt.bpDia, T.bpDia),
+      gluFast: num(pt.gluFast, T.gluFast),
+      gluPost: num(pt.gluPost, T.gluPost),
+    };
+  }
+
   let data = defaults();
 
   function load() {
@@ -34,6 +50,8 @@ const Store = (() => {
         const parsed = JSON.parse(raw);
         data = Object.assign(defaults(), parsed);
         data.profile = Object.assign(defaults().profile, parsed.profile || {});
+        // 目标值做数字消毒：损坏/非法值回落默认，避免判定失效
+        data.profile.targets = sanitizeTargets((parsed.profile && parsed.profile.targets) || {});
         data.vitals = Object.assign(defaults().vitals, parsed.vitals || {});
         data.ui = Object.assign(defaults().ui, parsed.ui || {});
       }
