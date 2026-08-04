@@ -258,6 +258,16 @@ input, select, textarea { font-family: inherit; }
 .chart-box { width: 100%; height: 200px; margin-top: 0.5rem; }
 .chart-box canvas { width: 100%; height: 100%; }
 
+/* 趋势图图例：彩色线样例 + 深色标签（颜色与 canvas 同源，见 app.js VITAL_SERIES） */
+.chart-legend {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+  gap: 0.35rem 1.1rem; margin-top: 0.6rem;
+}
+.lg-item { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.9rem; color: var(--text-2); }
+.lg-sw { display: inline-block; width: 26px; border-top: 3px solid; }
+.lg-sw.lg-dash { border-top-style: dashed; }
+.lg-note { font-size: 0.85rem; color: var(--text-2); }
+
 .rec-list { margin-top: 0.3rem; }
 .rec-row {
   display: flex; align-items: center; gap: 0.6rem;

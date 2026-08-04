@@ -204,9 +204,17 @@ const Store = (() => {
     data.vitals[kind] = data.vitals[kind].filter(v => v.id !== id);
     save();
   }
+  /* 血压/血糖/体重记录：按日期+时间升序。同一天同一分钟的多条，
+     按录入先后稳定排序（后录入的视为更新，排最末 = 「最近记录」/展示列表最上） */
   function vitalsSorted(kind) {
-    return [...data.vitals[kind]].sort((a, b) =>
-      (a.date + (a.time || '')) < (b.date + (b.time || '')) ? -1 : 1);
+    const arr = data.vitals[kind];
+    return arr.map((v, i) => ({ v, i }))
+      .sort((a, b) => {
+        const ka = a.v.date + (a.v.time || ''), kb = b.v.date + (b.v.time || '');
+        if (ka !== kb) return ka < kb ? -1 : 1;
+        return b.i - a.i; // 同时间：录入晚的（数组下标小）排后面，视为最新
+      })
+      .map(x => x.v);
   }
   function bpToday() { return data.vitals.bp.some(v => v.date === today()); }
 

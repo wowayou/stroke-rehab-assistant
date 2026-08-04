@@ -129,6 +129,12 @@ assert(Store.medStatusOn(Store.addDays(t, -3)).done === 0, '没核对过的日�
 const mh = Store.medHistory(14);
 assert(mh.length === 14 && mh[0].date === t, 'medHistory 应新→旧且长度为14');
 
+/* --- 同时间记录排序（v0.2.10）：后录入的视为最新 --- */
+Store.addVital('bp', { date: '2026-01-01', time: '08:00', sys: 120, dia: 80 });
+Store.addVital('bp', { date: '2026-01-01', time: '08:00', sys: 130, dia: 85 });
+const sameT = Store.vitalsSorted('bp').filter(v => v.date === '2026-01-01');
+assert(sameT.length === 2 && sameT[sameT.length - 1].sys === 130, '同时间记录：后录入的应排最末（视为最新）');
+
 /* --- 损坏数据兜底 --- */
 localStorage.setItem('strokeRehab.v1', '{broken json');
 Store.load();

@@ -466,29 +466,62 @@ const App = (() => {
     const [cls, txt] = bmiBadge(bmi);
     return [cls, `BMI ${bmi.toFixed(1)} · ${txt}`];
   }
-  const CHART_NOTE = {
-    bp: '—— 高压　—— 低压　（虚线为 140/90 提示线）',
-    glucose: '虚线为参考线：空腹 7.0 · 餐后2小时 10.0（目标遵医嘱）',
-    weight: '',
+  /* 趋势图颜色与图例的单一数据源：canvas 画线与下方图例都从这里读，保证颜色一一对应。
+     series.key 对应记录字段；refs 为参考线（y=目标值，label 画在图上，legend 出现在图例）。
+     调色板对齐 css/style.css：高压=--red、低压=--primary、血糖=--green、参考线=--orange。 */
+  const VITAL_SERIES = {
+    bp: {
+      series: [
+        { key: 'sys', label: '高压', color: '#D93A3A', marker: 'dot' },
+        { key: 'dia', label: '低压', color: '#2E6FE0', marker: 'square' },
+      ],
+      refs: [
+        { y: 140, color: '#D97706', label: '140', legend: '140/90 提示线' },
+        { y: 90, color: '#D97706' },
+      ],
+      note: '',
+    },
+    glucose: {
+      series: [
+        { key: 'value', label: '血糖', color: '#1E8E5A', marker: 'dot' },
+      ],
+      refs: [
+        { y: 7.0, color: '#D97706', label: '空腹参考7.0', legend: '空腹参考 7.0' },
+        { y: 10.0, color: '#0E7490', label: '餐后参考10.0', legend: '餐后2小时参考 10.0' },
+      ],
+      note: '目标遵医嘱',
+    },
+    weight: {
+      series: [
+        { key: 'value', label: '体重', color: '#7C5CD9', marker: 'dot' },
+      ],
+      refs: [],
+      note: '',
+    },
   };
+  /* 图例：一小段和图上完全一致的线（实线=数据、同色虚线=参考线）+ 深色标签，适老化保对比度 */
+  function chartLegendHTML(kind) {
+    const def = VITAL_SERIES[kind];
+    const items = [];
+    def.series.forEach(s => items.push(
+      `<span class="lg-item"><span class="lg-sw" style="border-color:${s.color}"></span>${esc(s.label)}</span>`));
+    def.refs.filter(r => r.legend).forEach(r => items.push(
+      `<span class="lg-item"><span class="lg-sw lg-dash" style="border-color:${r.color}"></span>${esc(r.legend)}</span>`));
+    return `<div class="chart-legend">${items.join('')}${def.note ? `<span class="lg-note">${esc(def.note)}</span>` : ''}</div>`;
+  }
   /* 趋势图（记录页与历史弹窗共用，只是取的条数不同） */
   function drawVitalChart(kind, canvas, recent) {
     if (!canvas || recent.length < 2) return;
+    const def = VITAL_SERIES[kind];
     const x = v => v.date.slice(5);
-    if (kind === 'bp') {
-      Charts.line(canvas, [
-        { label: '高压', color: '#D93A3A', values: recent.map(v => ({ x: x(v), y: +v.sys })) },
-        { label: '低压', color: '#2E6FE0', values: recent.map(v => ({ x: x(v), y: +v.dia })) },
-      ], { refLines: [{ y: 140, color: '#D97706' }, { y: 90, color: '#D97706' }], yFloor: 0 });
-    } else if (kind === 'glucose') {
-      Charts.line(canvas, [
-        { label: '血糖', color: '#1E8E5A', values: recent.map(v => ({ x: x(v), y: +v.value })) },
-      ], { refLines: [{ y: 7.0, color: '#D97706', label: '空腹参考7.0' }, { y: 10.0, color: '#7C5CD9', label: '餐后参考10.0' }], yFloor: 0 });
-    } else {
-      Charts.line(canvas, [
-        { label: '体重', color: '#7C5CD9', values: recent.map(v => ({ x: x(v), y: +v.value })) },
-      ], {});
-    }
+    const series = def.series.map(s => ({
+      label: s.label, color: s.color, marker: s.marker,
+      values: recent.map(v => ({ x: x(v), y: +v[s.key] })),
+    }));
+    const refLines = def.refs.map(r => ({ y: r.y, color: r.color, label: r.label || '' }));
+    const opts = kind === 'weight' ? {} : { yFloor: 0 }; // 体重不压 0，否则曲线被压扁
+    if (refLines.length) opts.refLines = refLines;
+    Charts.line(canvas, series, opts);
   }
   function histBtnHTML(kind, count) {
     if (!count) return '';
@@ -527,7 +560,7 @@ const App = (() => {
       <div class="card">
         <div class="card-title">📈 趋势（近 ${recent.length} 条）</div>
         <div class="chart-box"><canvas id="vh-chart"></canvas></div>
-        ${CHART_NOTE[kind] ? `<div class="muted" style="text-align:center">${CHART_NOTE[kind]}</div>` : ''}
+        ${chartLegendHTML(kind)}
       </div>` : ''}
       <div class="card">
         <div class="card-title">📄 全部记录（${sorted.length} 条）</div>
@@ -607,7 +640,7 @@ const App = (() => {
     <div class="card">
       <div class="card-title">🩺 最近血压</div>
       ${latestHTML}
-      ${sorted.length >= 2 ? `<div class="chart-box"><canvas id="bp-chart"></canvas></div><div class="muted" style="text-align:center">${CHART_NOTE.bp}</div>` : ''}
+      ${sorted.length >= 2 ? `<div class="chart-box"><canvas id="bp-chart"></canvas></div>${chartLegendHTML('bp')}` : ''}
       ${histBtnHTML('bp', sorted.length)}
     </div>`;
 
@@ -663,7 +696,7 @@ const App = (() => {
     <div class="card">
       <div class="card-title">🩸 最近血糖</div>
       ${latestHTML}
-      ${sorted.length >= 2 ? `<div class="chart-box"><canvas id="glu-chart"></canvas></div><div class="muted" style="text-align:center">${CHART_NOTE.glucose}</div>` : ''}
+      ${sorted.length >= 2 ? `<div class="chart-box"><canvas id="glu-chart"></canvas></div>${chartLegendHTML('glucose')}` : ''}
       ${histBtnHTML('glucose', sorted.length)}
     </div>`;
 
@@ -719,7 +752,7 @@ const App = (() => {
     <div class="card">
       <div class="card-title">⚖️ 最近体重</div>
       ${latestHTML}
-      ${sorted.length >= 2 ? '<div class="chart-box"><canvas id="wt-chart"></canvas></div>' : ''}
+      ${sorted.length >= 2 ? `<div class="chart-box"><canvas id="wt-chart"></canvas></div>${chartLegendHTML('weight')}` : ''}
       ${histBtnHTML('weight', sorted.length)}
     </div>`;
 

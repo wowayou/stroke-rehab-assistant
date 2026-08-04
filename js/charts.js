@@ -1,8 +1,9 @@
 /* ============================================================
    简易趋势图（canvas 折线图，零依赖）
    Charts.line(canvas, seriesArr, opts)
-   series: { label, color, values: [{x:'MM-DD', y:Number}] }
+   series: { label, color, marker?('dot'|'square'), values: [{x:'MM-DD', y:Number}] }
    opts: { refLines: [{y, color, label}], yMin, yMax }
+   图例不在此绘制：由调用方用同一颜色数据源生成（见 app.js 的 VITAL_SERIES）
    ============================================================ */
 
 const Charts = (() => {
@@ -85,7 +86,9 @@ const Charts = (() => {
       ctx.stroke();
       ctx.fillStyle = s.color;
       s.values.forEach((v, i) => {
-        ctx.beginPath(); ctx.arc(xAt(i), yAt(v.y), 3.2, 0, Math.PI * 2); ctx.fill();
+        const px = xAt(i), py = yAt(v.y);
+        if (s.marker === 'square') ctx.fillRect(px - 3.4, py - 3.4, 6.8, 6.8);
+        else { ctx.beginPath(); ctx.arc(px, py, 3.2, 0, Math.PI * 2); ctx.fill(); }
       });
     });
   }
