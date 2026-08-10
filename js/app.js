@@ -35,6 +35,40 @@ const App = (() => {
     if (navigator.vibrate) navigator.vibrate(300);
   }
 
+  /* ---------- 少算数：把比率/分数换成"还差几个"与圆点 ----------
+     设计依据：卒中后计算障碍常见，界面里的分数、百分比、心算都会增加
+     挫败感。原则是「应用把算好的结论说出来」，把数字降为次要信息。 */
+  /* 进度圆点：做完的实心，剩下的空心；超过 12 个不画点（改用文字），避免糊成一片 */
+  function dotsHTML(done, total, cls = '') {
+    if (!total || total > 12) return '';
+    let s = '';
+    for (let i = 0; i < total; i++) s += `<i class="pg-dot ${i < done ? 'on' : ''} ${cls}"></i>`;
+    return `<div class="pg-dots" aria-hidden="true">${s}</div>`;
+  }
+  /* 「还差 N」文案：算好差值直接说，不让患者自己减 */
+  function leftText(done, total, unit = '项') {
+    const left = Math.max(0, total - done);
+    if (!total) return '';
+    if (left === 0) return `都做完了 ✓`;
+    if (done === 0) return `${total} ${unit}，一项一项来`;
+    return `还差 ${left} ${unit}`;
+  }
+  /* 计次训练的可视进度：次数少用圆点（能一眼数出还差几个），
+     次数多（如踝泵 20 次、踏步 30 次）圆点会糊成一片，改用进度条——
+     无论哪种，患者都不必读数字就知道还剩多少。 */
+  function repTrackHTML(done, total) {
+    if (total <= 12) return dotsHTML(done, total, 'big');
+    return `<div class="progress-bar" style="width:100%;max-width:17rem"><div style="width:${Math.round(done / total * 100)}%"></div></div>`;
+  }
+  /* 秒数说成人话："大约 5 分钟"比 "5:00" 好懂，也免得患者换算分秒 */
+  function plainDuration(sec) {
+    if (sec < 60) return `大约 ${sec} 秒`;
+    const m = Math.floor(sec / 60), s = sec % 60;
+    if (!s) return `大约 ${m} 分钟`;
+    if (s === 30) return `大约 ${m} 分半`;
+    return `大约 ${m} 分 ${s} 秒`;
+  }
+
   /* ---------- 弹窗 ---------- */
   function openModal(title, contentNode, { center = false } = {}) {
     const mask = document.createElement('div');
@@ -85,41 +119,66 @@ const App = (() => {
 
     const stageName = (STAGES.find(s => s.key === p.stage) || {}).name || '';
 
+    const medDone = mp.total > 0 && mp.done >= mp.total;
+    const trainDone = plan.length > 0 && planDone >= plan.length;
+    /* 三件事里"已经做到"的件数：只用来说一句肯定的话，不做评分 */
+    const thingsDone = [bpDone, medDone, trainDone].filter(Boolean).length;
+    const summary = thingsDone === 3
+      ? '今天三件事都做到了，很稳。'
+      : thingsDone > 0
+        ? `今天已经做到 ${thingsDone} 件，剩下的慢慢来就好。`
+        : '一天做一点就好，从最容易的一件开始。';
+
+    /* 连续天数断了不清零、不指责：先肯定过去，再把重新开始说成很轻的一步 */
+    const best = Store.bestStreak();
+    const last = Store.lastExerciseDate();
+    let streakHTML = '';
+    if (streak > 0) {
+      streakHTML = `<div class="streak-chip">🔥 已连续坚持训练 ${streak} 天</div>`;
+    } else if (last) {
+      const gap = Store.daysBetween(last, Store.today());
+      streakHTML = `<div class="streak-chip">🌱 ${gap <= 2 ? '歇了一下没关系' : '欢迎回来'}${best > 1 ? `，之前最长连续 ${best} 天` : ''}，今天做一个动作就重新开始</div>`;
+    }
+
     let html = `
     <div class="today-hero">
       <div class="date-line">${now.getMonth() + 1}月${now.getDate()}日 ${Store.weekdayCN(now)}</div>
       <div class="greet">${greet}${name} 🌱</div>
       ${rd ? `<div class="rehab-day">今天是康复第 <b>${rd}</b> 天，每一天都算数</div>`
            : `<div class="rehab-day">坚持康复，每一天都算数</div>`}
-      ${streak > 0 ? `<div class="streak-chip">🔥 已连续坚持训练 ${streak} 天</div>` : ''}
+      ${streakHTML}
     </div>
 
     <div class="card">
       <div class="card-title">📋 今日三件事</div>
+      <div class="today-summary">${summary}</div>
       <div class="check-item ${bpDone ? 'done' : ''}">
         <div class="ci-icon">🩺</div>
         <div class="ci-body">
           <div class="ci-name">测量血压</div>
-          <div class="ci-sub">${bpDone ? '今天已记录 ✓' : '每天固定时间测量并记录'}</div>
+          <div class="ci-sub">${bpDone ? '今天记好了 ✓' : '每天固定时间测量并记录'}</div>
         </div>
         <button class="ci-action ${bpDone ? 'done' : ''}" data-go="records" data-rec="bp">${bpDone ? '已完成' : '去记录'}</button>
       </div>
-      <div class="check-item ${mp.total > 0 && mp.done >= mp.total ? 'done' : ''}">
+      <div class="check-item ${medDone ? 'done' : ''}">
         <div class="ci-icon">💊</div>
         <div class="ci-body">
           <div class="ci-name">按时服药</div>
-          <div class="ci-sub">${mp.total ? `今日已核对 ${mp.done} / ${mp.total} 次` : '先到「用药」页登记药物'}</div>
+          <div class="ci-sub">${mp.total
+            ? (medDone ? '今天该吃的都核对了 ✓' : leftText(mp.done, mp.total, '次没核对'))
+            : '先到「用药」页登记药物'}</div>
+          ${mp.total ? dotsHTML(mp.done, mp.total) : ''}
         </div>
-        <button class="ci-action ${mp.total > 0 && mp.done >= mp.total ? 'done' : ''}" data-go="meds">${mp.total > 0 && mp.done >= mp.total ? '已完成' : '去核对'}</button>
+        <button class="ci-action ${medDone ? 'done' : ''}" data-go="meds">${medDone ? '已完成' : '去核对'}</button>
       </div>
-      <div class="check-item ${planDone >= plan.length ? 'done' : ''}">
+      <div class="check-item ${trainDone ? 'done' : ''}">
         <div class="ci-icon">💪</div>
         <div class="ci-body">
           <div class="ci-name">康复训练</div>
-          <div class="ci-sub">今日推荐 ${plan.length} 项，已完成 ${planDone} 项</div>
-          <div class="progress-bar"><div style="width:${plan.length ? Math.round(planDone / plan.length * 100) : 0}%"></div></div>
+          <div class="ci-sub">${esc(stageName)}${trainDone ? '推荐都练过了 ✓' : ' · ' + leftText(planDone, plan.length, '项')}</div>
+          ${dotsHTML(planDone, plan.length)}
         </div>
-        <button class="ci-action ${planDone >= plan.length ? 'done' : ''}" data-go="train">${planDone >= plan.length ? '已完成' : '去训练'}</button>
+        <button class="ci-action ${trainDone ? 'done' : ''}" data-go="train">${trainDone ? '已完成' : '去训练'}</button>
       </div>
     </div>
 
@@ -252,12 +311,21 @@ const App = (() => {
     const total = Store.exerciseDaysTotal();
     const streak = Store.streak();
     const hasHistory = Store.activeDates().length > 0;
+    /* 累计天数是"越攒越多"的正向数字，放在最前面；连续天数断了也先肯定历史最长 */
+    let line;
+    if (!total) {
+      line = '<div class="muted">还没有打卡记录，今天做一个动作就开始了。</div>';
+    } else {
+      const best = Store.bestStreak();
+      line = `<div class="ad-main">已经练了 <b>${total}</b> 天</div>`
+        + (streak > 0
+          ? `<div class="muted">目前连着练了 ${streak} 天</div>`
+          : `<div class="muted">${best > 1 ? `之前最长连着练过 ${best} 天。` : ''}中间歇几天很正常，今天做一个动作就又接上了。</div>`);
+    }
     return `
     <div class="card" style="margin-bottom:0.9rem">
       <div class="card-title">📅 训练打卡记录</div>
-      ${total
-        ? `<div class="muted">累计打卡 <b>${total}</b> 天　·　当前连续 <b>${streak}</b> 天</div>`
-        : '<div class="muted">还没有打卡记录，今天做一个动作就开始了。</div>'}
+      ${line}
       ${calendarHTML(28)}
       <div class="cal-legend">
         <span>近 4 周</span>
@@ -296,11 +364,11 @@ const App = (() => {
       <div class="card">
         <div class="card-title">📅 最近 4 周</div>
         ${calendarHTML(28)}
-        <div class="cal-legend"><span>累计打卡 ${Store.exerciseDaysTotal()} 天 · 当前连续 ${Store.streak()} 天</span></div>
+        <div class="cal-legend"><span>已经练了 ${Store.exerciseDaysTotal()} 天${Store.streak() > 0 ? ` · 目前连着 ${Store.streak()} 天` : ''}</span></div>
       </div>
       <div class="card">
         <div class="card-title">📄 每天练了什么</div>
-        ${days || '<div class="empty-tip">还没有训练打卡记录</div>'}
+        ${days || '<div class="empty-tip">还没有训练打卡记录，做一个动作就有了</div>'}
       </div>`);
     openModal('训练历史', node);
   }
@@ -316,10 +384,16 @@ const App = (() => {
 
     let modeHTML = '';
     if (ex.mode.type === 'reps') {
+      /* 大数字显示「还差几次」而不是已完成次数：患者不必自己做减法 */
       modeHTML = `
       <div class="timer-wrap">
-        <div class="timer-label">目标 ${ex.mode.target} 次 · 做完一次点一下大按钮</div>
-        <button class="rep-btn" id="rep-btn"><span class="rep-count" id="rep-count">0</span><span>点我计数</span></button>
+        <div class="timer-label">做完一次点一下大按钮，剩几次它会告诉您</div>
+        <button class="rep-btn" id="rep-btn">
+          <span class="rep-count" id="rep-count">${ex.mode.target}</span>
+          <span id="rep-hint">还差这么多次</span>
+        </button>
+        <div class="rep-track" id="rep-track">${repTrackHTML(0, ex.mode.target)}</div>
+        <div class="rep-note" id="rep-note">做了 0 次 · 目标 ${ex.mode.target} 次（做不到也没关系，做几次都算）</div>
       </div>`;
     } else if (ex.mode.type === 'timer') {
       const m = Math.floor(ex.mode.seconds / 60), s = ex.mode.seconds % 60;
@@ -327,6 +401,8 @@ const App = (() => {
       <div class="timer-wrap">
         <div class="timer-label">建议时长</div>
         <div class="timer-num" id="timer-num">${m}:${String(s).padStart(2, '0')}</div>
+        <div class="timer-plain" id="timer-plain">${plainDuration(ex.mode.seconds)}</div>
+        <div class="progress-bar" style="max-width:340px;margin:0.6rem auto 0"><div id="timer-bar" style="width:0%"></div></div>
         <div class="btn-row" style="max-width:340px;margin:0.6rem auto 0">
           <button class="btn" id="timer-toggle">▶ 开始计时</button>
           <button class="btn outline" id="timer-reset">重置</button>
@@ -359,7 +435,9 @@ const App = (() => {
     const finish = () => {
       Store.logExercise(ex.id);
       closeTrainer();
-      toast('已打卡：' + ex.name);
+      /* 打卡反馈说清"今天第几项"，让每一次都看得见累积 */
+      const n = Store.exercisesDoneToday().length;
+      toast(`已打卡：${ex.name}　今天第 ${n} 项 👍`);
       render(currentView);
     };
 
@@ -368,25 +446,48 @@ const App = (() => {
     if (doneBtn) doneBtn.onclick = finish;
 
     if (ex.mode.type === 'reps') {
+      const target = ex.mode.target;
       let count = 0;
       const btn = wrap.querySelector('#rep-btn');
       const cnt = wrap.querySelector('#rep-count');
+      const hint = wrap.querySelector('#rep-hint');
+      const track = wrap.querySelector('#rep-track');
+      const note = wrap.querySelector('#rep-note');
       btn.onclick = () => {
         count++;
-        cnt.textContent = count;
+        const left = target - count;
+        /* 主数字是"还差几次"；到量后改成对勾，多做的次数当作额外收获，不报错 */
+        if (left > 0) {
+          cnt.textContent = left;
+          hint.textContent = '还差这么多次';
+          note.textContent = `做了 ${count} 次 · 目标 ${target} 次`;
+        } else {
+          cnt.textContent = '✓';
+          hint.textContent = left === 0 ? '够了！' : '够了，多做的也算';
+          note.textContent = left === 0
+            ? `做满 ${target} 次了，随时可以打卡`
+            : `做了 ${count} 次，比目标还多 ${-left} 次`;
+        }
+        track.innerHTML = repTrackHTML(Math.min(count, target), target);
         if (navigator.vibrate) navigator.vibrate(30);
-        if (count === ex.mode.target) {
+        if (count === target) {
           beep();
-          toast('达到目标次数，真棒！');
+          toast('到量了，真棒！点下方按钮打卡');
         }
       };
     } else if (ex.mode.type === 'timer') {
-      let remain = ex.mode.seconds, running = false;
+      const total = ex.mode.seconds;
+      let remain = total, running = false;
       const num = wrap.querySelector('#timer-num');
+      const plain = wrap.querySelector('#timer-plain');
+      const bar = wrap.querySelector('#timer-bar');
       const tog = wrap.querySelector('#timer-toggle');
       const rst = wrap.querySelector('#timer-reset');
       const show = () => {
         num.textContent = `${Math.floor(remain / 60)}:${String(remain % 60).padStart(2, '0')}`;
+        /* 同时给一句人话，避免患者去换算"还剩多久" */
+        plain.textContent = remain <= 0 ? '时间到了' : `还剩${plainDuration(remain).replace('大约 ', '约 ')}`;
+        bar.style.width = `${Math.round((total - remain) / total * 100)}%`;
       };
       const stopT = () => { if (trainerTimer) { clearInterval(trainerTimer); trainerTimer = null; } running = false; tog.textContent = '▶ 继续'; };
       tog.onclick = () => {
@@ -402,11 +503,23 @@ const App = (() => {
           show();
         }, 1000);
       };
-      rst.onclick = () => { stopT(); remain = ex.mode.seconds; show(); tog.textContent = '▶ 开始计时'; };
+      rst.onclick = () => {
+        stopT(); remain = total; show();
+        plain.textContent = plainDuration(total);
+        tog.textContent = '▶ 开始计时';
+      };
     } else if (ex.mode.type === 'game') {
       Games.start(ex.mode.game, wrap.querySelector('#game-box'), (score, detail) => {
         Store.logGame(ex.mode.game, score, detail);
         finish();
+      }, {
+        /* 游戏里想换一个玩（比如今天不想算数）：直接打开另一个动作，不算失败 */
+        onSwitch: key => {
+          const target = EXERCISES.find(x => x.mode && x.mode.type === 'game' && x.mode.game === key);
+          if (target) openTrainer(target);
+        },
+        /* 中途收工也给打卡：参与本身就是训练 */
+        onQuit: () => finish(),
       });
     }
   }
@@ -466,7 +579,55 @@ const App = (() => {
     if (!h) return ['', ''];
     const bmi = +v.value / Math.pow(h / 100, 2);
     const [cls, txt] = bmiBadge(bmi);
-    return [cls, `BMI ${bmi.toFixed(1)} · ${txt}`];
+    /* 结论在前、数字在后：BMI 是个算出来的抽象数，先说人话 */
+    return [cls, `${txt}（BMI ${bmi.toFixed(1)}）`];
+  }
+
+  /* ---------- 「比上次…」：应用把减法做完，直接说结论 ---------- */
+  const UP_DOWN = d => (d > 0 ? '高' : '低');
+  function deltaLineHTML(kind) {
+    const d = Store.vitalDelta(kind);
+    if (!d) return '';
+    let body;
+    if (kind === 'bp') {
+      if (!d.sys && !d.dia) body = '和上次一样';
+      else {
+        const parts = [];
+        if (d.sys) parts.push(`高压${UP_DOWN(d.sys)}了 ${Math.abs(d.sys)}`);
+        if (d.dia) parts.push(`低压${UP_DOWN(d.dia)}了 ${Math.abs(d.dia)}`);
+        body = parts.join('，');
+      }
+    } else {
+      const unit = kind === 'weight' ? '公斤' : '';
+      if (!d.value) body = '和上次一样';
+      else body = `比上次${UP_DOWN(d.value)}了 ${Math.abs(d.value)}${unit}`;
+    }
+    const prefix = (kind === 'bp' && body !== '和上次一样') ? '比上次：' : '';
+    return `<div class="delta-line">↕ ${prefix}${esc(body)}<span class="muted">（上次 ${esc(d.prevDate)}${d.prevTime ? ' ' + esc(d.prevTime) : ''}）</span></div>`;
+  }
+
+  /* 图表上方一句话小结：不看图也能知道大概情况，避免"看图 + 心算"双重负担 */
+  function chartSummaryHTML(kind, list) {
+    if (list.length < 2) return '';
+    const first = list[0], last = list[list.length - 1];
+    const val = v => (kind === 'bp' ? +v.sys : +v.value);
+    const diff = val(last) - val(first);
+    const nameOf = { bp: '高压', glucose: '血糖', weight: '体重' }[kind];
+    const unit = kind === 'weight' ? ' 公斤' : '';
+    const amount = Math.round(Math.abs(diff) * 10) / 10;
+    let trend;
+    if (!amount) trend = `${nameOf}和最早一条差不多`;
+    else trend = `这 ${list.length} 条里，${nameOf}比最早一条${UP_DOWN(diff)}了 ${amount}${unit}`;
+
+    let inTarget = '';
+    if (kind !== 'weight') {
+      const ok = list.filter(v => vitalStatus(kind, v)[0] === 'ok').length;
+      /* 说"有几次在目标内"而不是百分比；一次都没有也不说重话 */
+      inTarget = ok
+        ? `　·　其中 ${ok} 次在您的目标内`
+        : '　·　这段时间都超过了目标值，可以带记录去问问医生';
+    }
+    return `<div class="chart-summary">${esc(trend)}${inTarget}</div>`;
   }
   /* 趋势图颜色与图例的单一数据源：canvas 画线与下方图例都从这里读，保证颜色一一对应。
      series.key 对应记录字段；refs 为参考线（y=目标值，label 画在图上，legend 出现在图例）。
@@ -624,6 +785,7 @@ const App = (() => {
       ${recent.length >= 2 ? `
       <div class="card">
         <div class="card-title">📈 趋势（近 ${recent.length} 条）</div>
+        ${chartSummaryHTML(kind, recent)}
         <div class="chart-box"><canvas id="vh-chart"></canvas></div>
         ${chartLegendHTML(kind)}
       </div>` : ''}
@@ -683,6 +845,7 @@ const App = (() => {
         <span class="big">${esc(latest.sys)}/${esc(latest.dia)}</span><span class="muted">mmHg</span>
         <span class="badge ${cls}">${txt}</span>
       </div>
+      ${deltaLineHTML('bp')}
       <div class="muted">最近记录：${esc(latest.date)} ${esc(latest.time || '')}${latest.pulse ? ' · 脉搏 ' + esc(latest.pulse) + ' 次/分' : ''}</div>`;
     }
 
@@ -705,7 +868,7 @@ const App = (() => {
     <div class="card">
       <div class="card-title">🩺 最近血压</div>
       ${latestHTML}
-      ${sorted.length >= 2 ? `<div class="chart-box"><canvas id="bp-chart"></canvas></div>${chartLegendHTML('bp')}` : ''}
+      ${sorted.length >= 2 ? `${chartSummaryHTML('bp', sorted.slice(-14))}<div class="chart-box"><canvas id="bp-chart"></canvas></div>${chartLegendHTML('bp')}` : ''}
       ${histBtnHTML('bp', sorted.length)}
     </div>`;
 
@@ -738,6 +901,7 @@ const App = (() => {
         <span class="big">${esc(latest.value)}</span><span class="muted">mmol/L（${esc(latest.gtype)}）</span>
         <span class="badge ${cls}">${txt}</span>
       </div>
+      ${deltaLineHTML('glucose')}
       <div class="muted">最近记录：${esc(latest.date)} ${esc(latest.time || '')}</div>`;
     }
 
@@ -761,7 +925,7 @@ const App = (() => {
     <div class="card">
       <div class="card-title">🩸 最近血糖</div>
       ${latestHTML}
-      ${sorted.length >= 2 ? `<div class="chart-box"><canvas id="glu-chart"></canvas></div>${chartLegendHTML('glucose')}` : ''}
+      ${sorted.length >= 2 ? `${chartSummaryHTML('glucose', sorted.slice(-14))}<div class="chart-box"><canvas id="glu-chart"></canvas></div>${chartLegendHTML('glucose')}` : ''}
       ${histBtnHTML('glucose', sorted.length)}
     </div>`;
 
@@ -785,21 +949,23 @@ const App = (() => {
     const sorted = Store.vitalsSorted('weight');
     const latest = sorted[sorted.length - 1];
     const height = +Store.data.profile.height;
-    let latestHTML = '<div class="empty-tip">还没有体重记录，每周记 1～2 次即可</div>';
+    let latestHTML = '<div class="empty-tip">还没有体重记录，每周记 1～2 次就够了</div>';
     if (latest) {
       let bmiHTML = '';
       if (height) {
         const bmi = +latest.value / Math.pow(height / 100, 2);
         const [cls, txt] = bmiBadge(bmi);
-        bmiHTML = `<span class="badge ${cls}">BMI ${bmi.toFixed(1)} · ${txt}</span>`;
+        /* 先给结论"体重适中"，BMI 数字放括号里降为参考 */
+        bmiHTML = `<span class="badge ${cls}">${txt}（BMI ${bmi.toFixed(1)}）</span>`;
       } else {
-        bmiHTML = '<span class="muted">在「设置」里填身高可算BMI</span>';
+        bmiHTML = '<span class="muted">在「设置」里填身高，就能帮您算胖瘦</span>';
       }
       latestHTML = `
       <div class="latest-value">
         <span class="big">${esc(latest.value)}</span><span class="muted">公斤</span>
         ${bmiHTML}
       </div>
+      ${deltaLineHTML('weight')}
       <div class="muted">最近记录：${esc(latest.date)}</div>`;
     }
 
@@ -817,7 +983,7 @@ const App = (() => {
     <div class="card">
       <div class="card-title">⚖️ 最近体重</div>
       ${latestHTML}
-      ${sorted.length >= 2 ? `<div class="chart-box"><canvas id="wt-chart"></canvas></div>${chartLegendHTML('weight')}` : ''}
+      ${sorted.length >= 2 ? `${chartSummaryHTML('weight', sorted.slice(-14))}<div class="chart-box"><canvas id="wt-chart"></canvas></div>${chartLegendHTML('weight')}` : ''}
       ${histBtnHTML('weight', sorted.length)}
     </div>`;
 
@@ -891,18 +1057,42 @@ const App = (() => {
         </div>`).join('');
     }
 
+    /* 今日核对：把"还差几次"说在最前面，患者不用去数勾了几个 */
+    const mp = Store.medProgressToday();
+    const todayLine = mp.total
+      ? (mp.done >= mp.total
+        ? `<div class="today-summary">今天该吃的 ${mp.total} 次都核对完了 ✓</div>`
+        : `<div class="today-summary">今天一共 ${mp.total} 次，${leftText(mp.done, mp.total, '次还没核对')}${dotsHTML(mp.done, mp.total)}</div>`)
+      : '';
+
+    /* 近 7 天：主指标改成"几天全吃到"（整数天数，好懂），百分比降为给医生看的次要信息。
+       医学内容不删：依从性与复发风险的科普保留，但从"指责漏服"改成中性知识 + 可执行的办法。 */
+    const fd = Store.medFullDays(7);
+    let adBody = '';
+    if (fd.days) {
+      if (fd.full >= fd.days) {
+        adBody = `<div class="ad-main">最近 ${fd.days} 天，每天该吃的都核对到了</div>
+          <div class="muted">这件事做得很到位，继续保持就好。</div>`;
+      } else if (fd.full > 0) {
+        adBody = `<div class="ad-main">最近 ${fd.days} 天里，有 <b>${fd.full}</b> 天全都吃到了</div>
+          <div class="muted">已经记住大部分了。剩下容易忘的那几次，可以试试：手机设闹钟、把药盒放在饭桌上、或让家人在服药时间提一句。</div>`;
+      } else {
+        adBody = `<div class="ad-main">最近这几天还没有哪天全部核对上</div>
+          <div class="muted">忘吃药很常见，不是您的问题，多半是没有提醒。可以试试：手机设闹钟、把药盒放在饭桌上、请家人在服药时间提一句。吃完在这一页点一下就行。</div>`;
+      }
+    }
+
     let html = `
     <div class="card">
       <div class="card-title">✅ 今日服药核对 <span class="muted" style="font-weight:400">（吃完点一下）</span></div>
+      ${todayLine}
       ${checkHTML}
     </div>
     ${ad !== null ? `
     <div class="card">
-      <div class="card-title">📊 近7天服药完成率</div>
-      <div class="adherence-ring">
-        <div class="ring-num">${ad}%</div>
-        <div class="muted">${ad >= 90 ? '非常好，请保持！' : ad >= 70 ? '还不错，争取一次不落。' : '漏服较多。研究显示：坚持服药的患者，再次中风的风险只有不坚持者的约三分之一。可设手机闹钟配合本页核对。'}</div>
-      </div>
+      <div class="card-title">📊 最近 7 天吃药情况</div>
+      ${adBody}
+      <div class="muted" style="margin-top:0.5rem">按次数算的完成率是 ${ad}%（这个数字是给医生看的）。坚持按医嘱服药，是预防再次中风最有效的一件事。</div>
       <button class="btn ghost block" id="btn-med-hist" style="margin-top:0.7rem">📄 查看服药历史（近14天）</button>
     </div>` : ''}
     <div class="card">
@@ -950,16 +1140,15 @@ const App = (() => {
         <span class="day-date">${esc(d.date.slice(5))}${d.date === t ? '（今天）' : ''}<br>${weekdayOf(d.date)}</span>
         <span class="dot-row">${d.items.map(i =>
           `<i class="dose-dot ${i.taken ? 'taken' : ''}" aria-label="${esc(i.time)} ${esc(i.name)} ${i.taken ? '已服' : '未记录'}"></i>`).join('')}</span>
-        <span class="day-score ${d.total && d.done >= d.total ? 'ok' : ''}">${d.done}/${d.total}</span>
+        <span class="day-score ${d.total && d.done >= d.total ? 'ok' : ''}">${!d.total ? '—' : d.done >= d.total ? '全吃到' : `差 ${d.total - d.done} 次`}</span>
       </div>`).join('');
 
+    const fd14 = Store.medFullDays(14);
     const node = nodeFromHTML(`
       <div class="card">
-        <div class="card-title">📊 近14天完成率</div>
-        <div class="adherence-ring">
-          <div class="ring-num">${pct}%</div>
-          <div class="muted">共 ${sum.total} 次应服，已核对 ${sum.done} 次</div>
-        </div>
+        <div class="card-title">📊 最近 14 天</div>
+        <div class="ad-main">有 <b>${fd14.full}</b> 天该吃的全都核对到了${fd14.days ? `（共 ${fd14.days} 天有记录）` : ''}</div>
+        <div class="muted">按次数算：${sum.total} 次里核对了 ${sum.done} 次，完成率 ${pct}%（给医生看的数字）</div>
       </div>
       <div class="card">
         <div class="card-title">📄 每天核对情况</div>
@@ -1001,6 +1190,8 @@ const App = (() => {
           </div>
           <div class="muted" style="margin-top:0.3rem">已选：<span id="sel-times">${[...sel].sort().join('、') || '无'}</span></div>
         </div>
+
+
         <div class="field" style="margin-bottom:0.9rem">
           <label>备注（可不填）</label>
           <input id="med-note" type="text" placeholder="如 饭后服、别嚼碎" value="${isEdit ? esc(med.note || '') : ''}">
@@ -1286,6 +1477,12 @@ const App = (() => {
           <div class="guide-line">📚 「知识」页：防复发科普；🚨 急救卡，疑似中风立即拨 120</div>
           <div class="guide-line">⚙️ 「设置」：填发病日期、身高，可调大字体</div>
         </div>
+        <div class="card">
+          <div class="card-title">🤝 用之前想说三句</div>
+          <div class="guide-line">这里<b>不打分、不排名</b>。数字都由它替您算好，您只要照着做。</div>
+          <div class="guide-line">中间<b>歇几天很正常</b>，回来做一个动作就又接上了。</div>
+          <div class="guide-line">算数、说话、走路变难，都是<b>脑子在恢复中的常见情况</b>，不是您不行。认知练习里算不出来可以看提示、可以跳过、也可以换成不用算的。</div>
+        </div>
         <div class="disclaimer">本应用是家庭康复辅助工具，不能替代医生的诊断和治疗。<br>训练前请经康复医生评估，身体不适立即停止并就医。</div>
         <button class="btn green block huge" id="guide-done" style="margin-top:0.7rem">我知道了，开始使用</button>
       </div>`);
@@ -1344,6 +1541,8 @@ const App = (() => {
     document.getElementById('btn-settings').onclick = openSettings;
     const urlView = new URLSearchParams(location.search).get('view');
     go(RENDERERS[urlView] ? urlView : 'today');
+
+
     if (!Store.guideSeen()) openGuide();
   }
 

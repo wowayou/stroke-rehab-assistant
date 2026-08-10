@@ -144,6 +144,36 @@ Store.load();
 const tg2 = Store.data.profile.targets;
 assert(tg2.bpSys === 140 && tg2.bpDia === 90 && tg2.gluFast === 7.5 && tg2.gluPost === 10.0, '非法目标值应回落默认');
 
+/* --- 少算数 / 正向反馈用的派生数据（v0.2.12） --- */
+assert(Store.daysBetween('2026-03-01', '2026-03-04') === 3, 'daysBetween 应为3，实际 ' + Store.daysBetween('2026-03-01', '2026-03-04'));
+assert(Store.daysBetween('2026-03-04', '2026-03-04') === 0, '同一天 daysBetween 应为0');
+
+/* bestStreak / lastExerciseDate：用一份干净的打卡记录单独验证 */
+Store.data.exerciseLog = {};
+assert(Store.bestStreak() === 0, '无打卡时 bestStreak 应为0');
+assert(Store.lastExerciseDate() === null, '无打卡时 lastExerciseDate 应为 null');
+['2026-03-01', '2026-03-02', '2026-03-03', '2026-03-08', '2026-03-09'].forEach(d => {
+  Store.data.exerciseLog[d] = ['bobath'];
+});
+assert(Store.bestStreak() === 3, 'bestStreak 应取最长的一段(3)，实际 ' + Store.bestStreak());
+assert(Store.lastExerciseDate() === '2026-03-09', 'lastExerciseDate 应为最后一天，实际 ' + Store.lastExerciseDate());
+Store.data.exerciseLog['2026-03-10'] = [];
+assert(Store.lastExerciseDate() === '2026-03-09', '空数组的日期不应算作打卡日');
+assert(Store.bestStreak() === 3, '空数组的日期不应接长连续段');
+
+/* medFullDays：只统计有应服次数的天数，全部核对才算"全吃到" */
+Store.data.meds = [];
+Store.data.medLog = {};
+assert(Store.medFullDays(7).days === 0, '没有药物时 medFullDays.days 应为0');
+Store.addMed({ name: '阿司匹林肠溶片', dose: '100mg', times: ['08:00', '20:00'] });
+const mid = Store.data.meds[0].id;
+Store.toggleMed(mid, '08:00');
+Store.toggleMed(mid, '20:00');
+Store.toggleMed(mid, '08:00', Store.addDays(t, -1));   // 昨天只吃了一次
+const fd = Store.medFullDays(7);
+assert(fd.days === 7, '有药物时 7 天都应计入，实际 ' + fd.days);
+assert(fd.full === 1, '只有今天全部核对，full 应为1，实际 ' + fd.full);
+
 /* --- 损坏数据兜底 --- */
 localStorage.setItem('strokeRehab.v1', '{broken json');
 Store.load();

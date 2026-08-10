@@ -165,6 +165,23 @@ input, select, textarea { font-family: inherit; }
 .progress-bar { height: 12px; background: #EEE9DF; border-radius: 999px; overflow: hidden; margin: 0.4rem 0 0.2rem; }
 .progress-bar > div { height: 100%; background: var(--green); border-radius: 999px; transition: width 0.4s; }
 
+/* 少算数：进度圆点（做完实心/剩下空心）代替分数，一眼看出还差几个 */
+.pg-dots { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.35rem; }
+.pg-dot {
+  width: 15px; height: 15px; border-radius: 50%; display: inline-block; flex-shrink: 0;
+  border: 2px solid var(--border); background: #fff;
+}
+.pg-dot.on { background: var(--green); border-color: var(--green); }
+.pg-dot.big { width: 20px; height: 20px; }
+/* 今日/用药页顶部的一句肯定的话 */
+.today-summary {
+  background: var(--green-soft); color: #14603C;
+  border-radius: 12px; padding: 0.5rem 0.7rem; margin-bottom: 0.6rem;
+  font-size: 0.98rem; line-height: 1.5;
+}
+.ad-main { font-size: 1.08rem; font-weight: 700; line-height: 1.5; margin-bottom: 0.15rem; }
+.ad-main b { color: var(--green); font-size: 1.25rem; }
+
 /* ---------- 训练页 ---------- */
 .stage-picker { display: flex; gap: 0.45rem; flex-wrap: wrap; margin-bottom: 0.9rem; }
 .stage-chip {
@@ -217,6 +234,7 @@ input, select, textarea { font-family: inherit; }
   background: var(--orange-soft); border-left: 4px solid var(--orange);
   border-radius: 10px; padding: 0.7rem 0.8rem; font-size: 0.95rem; margin-bottom: 0.9rem;
 }
+
 .timer-wrap { text-align: center; padding: 0.5rem 0 0.8rem; }
 .timer-num { font-size: 4.2rem; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--primary); line-height: 1.1; }
 .timer-label { color: var(--text-2); margin-bottom: 0.5rem; }
@@ -228,6 +246,11 @@ input, select, textarea { font-family: inherit; }
 }
 .rep-btn:active { transform: scale(0.96); background: var(--primary-dark); }
 .rep-btn .rep-count { font-size: 3rem; font-weight: 800; line-height: 1; }
+.rep-track { display: flex; justify-content: center; margin-top: 0.7rem; }
+.rep-track .pg-dots { justify-content: center; max-width: 17rem; }
+.rep-note { color: var(--text-2); font-size: 0.92rem; margin-top: 0.5rem; line-height: 1.5; }
+/* 计时器下方的人话时长（"还剩约 3 分钟"），免得患者换算分秒 */
+.timer-plain { color: var(--text-2); font-size: 1rem; margin-top: 0.1rem; }
 
 /* ---------- 记录页 ---------- */
 .rec-tabs { display: flex; gap: 0.5rem; margin-bottom: 0.9rem; }
@@ -249,6 +272,15 @@ input, select, textarea { font-family: inherit; }
 
 .latest-value { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
 .latest-value .big { font-size: 2.2rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+/* 「比上次高了 5」：应用把减法做完，患者不用自己比 */
+.delta-line { font-size: 0.95rem; color: var(--text-2); margin: 0.25rem 0 0.1rem; }
+.delta-line .muted { font-size: 0.85rem; }
+/* 图表上方一句话小结：不看图也知道大概 */
+.chart-summary {
+  font-size: 0.95rem; line-height: 1.5; color: var(--text);
+  background: var(--primary-soft); border-radius: 12px;
+  padding: 0.45rem 0.7rem; margin-top: 0.6rem;
+}
 .badge { display: inline-block; padding: 0.15rem 0.7rem; border-radius: 999px; font-size: 0.88rem; font-weight: 600; }
 .badge.ok { background: var(--green-soft); color: var(--green); }
 .badge.warn { background: var(--orange-soft); color: var(--orange); }
@@ -476,9 +508,36 @@ input, select, textarea { font-family: inherit; }
 .answer-btn { min-height: 64px; border-radius: 14px; border: 1.5px solid var(--border); background: var(--card); font-size: 1.4rem; font-weight: 700; }
 .answer-btn.good { background: var(--green); color: #fff; border-color: var(--green); }
 .answer-btn.bad { background: var(--red); color: #fff; border-color: var(--red); }
+/* 选错不用红色报错：橙色"再看看"，允许重选，减少挫败感 */
+.answer-btn.tryagain { background: var(--orange-soft); border-color: var(--orange); color: var(--orange); }
+.answer-btn:disabled { opacity: 0.75; }
 .game-result { text-align: center; padding: 1.2rem 0; }
 .game-result .gr-icon { font-size: 3.5rem; }
 .game-result .gr-text { font-size: 1.3rem; font-weight: 700; margin: 0.5rem 0; }
+
+/* 算一算：难度自选 / 提示 / 进度点 */
+.level-list { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.8rem; }
+.level-btn {
+  min-height: 64px; border-radius: 14px; border: 1.5px solid var(--border);
+  background: var(--card); text-align: left; padding: 0.6rem 0.9rem;
+  display: flex; flex-direction: column; gap: 0.1rem;
+}
+.level-btn.active { border-color: var(--primary); background: var(--primary-soft); }
+.level-btn .lv-name { font-size: 1.1rem; font-weight: 700; }
+.level-btn .lv-hint { font-size: 0.88rem; color: var(--text-2); }
+.math-feedback { text-align: center; min-height: 3.2rem; font-size: 1rem; line-height: 1.5; padding: 0 0.3rem; }
+.math-feedback.good { color: var(--green); font-weight: 700; }
+.math-feedback.calm { color: var(--orange); }
+.game-note { font-size: 0.9rem; color: var(--text-2); line-height: 1.55; margin-top: 0.7rem; }
+.game-note.calm { text-align: center; color: var(--orange); margin: 0.2rem 0 0; }
+.q-dots { display: inline-flex; gap: 0.25rem; align-items: center; }
+.q-dot { width: 10px; height: 10px; border-radius: 50%; background: #EEE9DF; display: inline-block; }
+.q-dot.on { background: var(--green); }
+.game-foot { display: flex; justify-content: center; gap: 1.2rem; margin-top: 0.9rem; }
+.link-btn {
+  min-height: 48px; padding: 0 0.6rem; border: none; background: none;
+  color: var(--primary); font-size: 0.95rem; text-decoration: underline;
+}
 
 /* ---------- 设置 ---------- */
 .setting-row { display: flex; align-items: center; gap: 0.6rem; min-height: 60px; border-bottom: 1px solid var(--border); }

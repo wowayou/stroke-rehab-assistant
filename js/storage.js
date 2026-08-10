@@ -115,6 +115,29 @@ const Store = (() => {
     return n;
   }
 
+  /* 历史最长连续天数（用于"断了也不否定过去"的鼓励文案） */
+  function bestStreak() {
+    const dates = Object.keys(data.exerciseLog)
+      .filter(d => (data.exerciseLog[d] || []).length).sort();
+    let best = 0, run = 0, prev = null;
+    dates.forEach(d => {
+      run = (prev && addDays(prev, 1) === d) ? run + 1 : 1;
+      if (run > best) best = run;
+      prev = d;
+    });
+    return best;
+  }
+  /* 最近一次有训练打卡的日期（没有则 null） */
+  function lastExerciseDate() {
+    const dates = Object.keys(data.exerciseLog)
+      .filter(d => (data.exerciseLog[d] || []).length).sort();
+    return dates.length ? dates[dates.length - 1] : null;
+  }
+  /* 两个日期相差几天（b - a） */
+  function daysBetween(a, b) {
+    return Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000);
+  }
+
   /* 最近 n 天的日期，旧→新（含今天） */
   function recentDates(n, from = today()) {
     const out = [];
@@ -198,6 +221,24 @@ const Store = (() => {
     }
     return total ? Math.round(done / total * 100) : null;
   }
+  /* 近 n 天里"当天该吃的都核对了"的天数。
+     给患者看的主指标：整数天数比百分比好懂（避免让患者做心算/理解比率）。 */
+  function medFullDays(n = 7) {
+    let full = 0, counted = 0;
+    for (let i = 0; i < n; i++) {
+      const d = addDays(today(), -i);
+      let total = 0, done = 0;
+      data.meds.forEach(m => (m.times || []).forEach(tm => {
+        total++;
+        if (isMedTaken(m.id, tm, d)) done++;
+      }));
+      if (!total) continue;
+      counted++;
+      if (done >= total) full++;
+    }
+    return { full, days: counted };
+  }
+
   /* 某天的服药情况。注意：应服次数按「当前」药物清单计算——
      改过处方后，历史天数的分母也会跟着变，这是本地无处方版本记录下的已知取舍。 */
   function medStatusOn(date) {
@@ -235,6 +276,22 @@ const Store = (() => {
       .map(x => x.v);
   }
   function bpToday() { return data.vitals.bp.some(v => v.date === today()); }
+
+  /* 最新一条与上一条的差值（应用替患者做减法，界面直接给"比上次高了几"）。
+     返回 null 表示不足两条；血压返回 {sys, dia}，其余返回 {value}。 */
+  function vitalDelta(kind) {
+    const s = vitalsSorted(kind);
+    if (s.length < 2) return null;
+    const cur = s[s.length - 1], prev = s[s.length - 2];
+    const d = { prevDate: prev.date, prevTime: prev.time || '' };
+    if (kind === 'bp') {
+      d.sys = +cur.sys - +prev.sys;
+      d.dia = +cur.dia - +prev.dia;
+    } else {
+      d.value = Math.round((+cur.value - +prev.value) * 10) / 10;
+    }
+    return d;
+  }
 
   /* ---------- 导出报告 ---------- */
   function exportReport() {
@@ -352,13 +409,13 @@ const Store = (() => {
   return {
     load, save,
     get data() { return data; },
-    today, timeStr, addDays, weekdayCN, rehabDay, recentDates,
-    logExercise, exercisesDoneToday, isExDone, streak,
+    today, timeStr, addDays, weekdayCN, rehabDay, recentDates, daysBetween,
+    logExercise, exercisesDoneToday, isExDone, streak, bestStreak, lastExerciseDate,
     exercisesOn, exerciseDaysTotal, activeDates, exerciseCalendar,
     logGame, gamesOn,
     addMed, updateMed, removeMed, isMedTaken, toggleMed, medProgressToday, adherence7d,
-    medStatusOn, medHistory,
-    addVital, removeVital, vitalsSorted, bpToday,
+    medFullDays, medStatusOn, medHistory,
+    addVital, removeVital, vitalsSorted, bpToday, vitalDelta,
     exportReport, resetAll,
     exportBackup, parseBackup, applyBackup, backupSummary,
     guideSeen: () => !!data.ui.guideSeen,
