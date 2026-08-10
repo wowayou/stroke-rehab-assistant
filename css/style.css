@@ -234,6 +234,22 @@ input, select, textarea { font-family: inherit; }
   background: var(--orange-soft); border-left: 4px solid var(--orange);
   border-radius: 10px; padding: 0.7rem 0.8rem; font-size: 0.95rem; margin-bottom: 0.9rem;
 }
+/* 动作示意简笔画：线条用 currentColor，随主题与字号缩放；两帧对照 */
+.ex-figure {
+  background: var(--card); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 0.8rem 0.7rem 0.6rem;
+  margin: 0.3rem 0 0.8rem; text-align: center;
+}
+.ex-figure svg { width: 100%; max-width: 340px; height: auto; color: var(--primary-dark); }
+.ex-figure figcaption {
+  font-size: 0.9rem; color: var(--text-2); line-height: 1.55;
+  margin-top: 0.4rem; text-align: left;
+}
+
+/* 语音朗读按钮 */
+.speak-row { display: flex; margin-bottom: 0.8rem; }
+.speak-btn { flex: 1; }
+.speak-btn.speaking { background: var(--green-soft); color: var(--green); border-color: var(--green); }
 
 .timer-wrap { text-align: center; padding: 0.5rem 0 0.8rem; }
 .timer-num { font-size: 4.2rem; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--primary); line-height: 1.1; }
@@ -415,6 +431,17 @@ input, select, textarea { font-family: inherit; }
 .med-item .mi-body { flex: 1; }
 .med-item .mi-name { font-weight: 700; }
 .med-item .mi-sub { font-size: 0.88rem; color: var(--text-2); }
+/* 已停用的药：灰显但保留（复诊要说清吃过什么），不参与核对与完成率 */
+.med-item.stopped .mi-name { color: var(--text-2); }
+.med-item.stopped .mi-sub { text-decoration: line-through; }
+.mi-tag { margin-left: 0.4rem; font-size: 0.75rem; vertical-align: middle; }
+.mi-period { font-size: 0.82rem; color: var(--text-2); margin-top: 0.1rem; }
+/* 停用/恢复操作区：和"删除"明确区分开 */
+.stop-box {
+  background: var(--orange-soft); border-left: 4px solid var(--orange);
+  border-radius: 10px; padding: 0.7rem 0.8rem; margin-top: 0.9rem;
+}
+.stop-box .sb-title { font-weight: 700; margin-bottom: 0.2rem; }
 
 .time-chip-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .time-chip {
@@ -587,4 +614,50 @@ input, select, textarea { font-family: inherit; }
 
 @media (min-width: 600px) {
   .bottom-nav { max-width: 600px; left: 50%; transform: translateX(-50%); border-radius: 16px 16px 0 0; border: 1px solid var(--border); border-bottom: none; }
+}
+
+/* ============================================================
+   交互反馈（v0.2.16）
+   目标：手指按下立刻有回应、浮层不硬切、键盘可用、动效可关。
+   适老化前提不变——所有触控目标仍 ≥48px，这里只加反馈不改尺寸。
+   ============================================================ */
+
+/* 按下反馈：老人常怀疑"我到底点上没有"，所以要立刻给变化 */
+.check-item:active, .med-check:active, .ex-item:active, .art-item:active {
+  background: #F1EDE4;
+}
+.btn:active, .ci-action:active, .ex-start:active,
+.rec-tab:active, .cat-tab:active, .stage-chip:active,
+.answer-btn:active, .level-btn:active, .time-chip:active,
+.font-chip:active, .nav-item:active {
+  transform: scale(0.97);
+}
+.btn, .ci-action, .ex-start, .answer-btn, .level-btn,
+.rec-tab, .cat-tab, .stage-chip, .time-chip, .font-chip, .nav-item {
+  transition: transform 0.08s ease, background 0.15s ease;
+  touch-action: manipulation;   /* 去掉移动端双击缩放带来的 ~300ms 点击延迟 */
+}
+.check-item, .med-check, .ex-item, .art-item { transition: background 0.15s ease; }
+
+/* 浮层从下滑入，不要硬切——硬切会让人不确定"是不是换了一页" */
+@keyframes sheet-up {
+  from { transform: translateY(14%); opacity: 0.6; }
+  to   { transform: none; opacity: 1; }
+}
+@keyframes mask-in { from { opacity: 0; } to { opacity: 1; } }
+.modal-mask { animation: mask-in 0.18s ease-out; }
+.modal-panel { animation: sheet-up 0.24s cubic-bezier(0.22, 0.9, 0.3, 1); }
+.trainer { animation: mask-in 0.16s ease-out; }
+
+/* 键盘可见焦点：家属用电脑帮着录数据时靠它定位 */
+:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+
+/* 晕动/前庭不适的人会在系统里关动画，必须尊重 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

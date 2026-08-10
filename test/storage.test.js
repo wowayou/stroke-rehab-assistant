@@ -144,6 +144,25 @@ Store.load();
 const tg2 = Store.data.profile.targets;
 assert(tg2.bpSys === 140 && tg2.bpDia === 90 && tg2.gluFast === 7.5 && tg2.gluPost === 10.0, '非法目标值应回落默认');
 
+/* --- 枚举型偏好消毒（v0.2.13 朗读语速 / 字号） --- */
+assert(Store.data.profile.speechRate === 'slow', '朗读语速默认应为 slow，实际 ' + Store.data.profile.speechRate);
+Store.data.profile.speechRate = 'turbo';        // 非法值
+Store.data.profile.font = 'huge';               // 非法值
+localStorage.setItem('strokeRehab.v1', JSON.stringify(Store.data));
+Store.load();
+assert(Store.data.profile.speechRate === 'slow', '非法语速应回落 slow，实际 ' + Store.data.profile.speechRate);
+assert(Store.data.profile.font === 'normal', '非法字号应回落 normal，实际 ' + Store.data.profile.font);
+Store.data.profile.speechRate = 'fast';
+localStorage.setItem('strokeRehab.v1', JSON.stringify(Store.data));
+Store.load();
+assert(Store.data.profile.speechRate === 'fast', '合法语速应保留');
+/* 旧备份没有 speechRate 字段时也要能回落 */
+const legacy = JSON.parse(JSON.stringify(Store.data));
+delete legacy.profile.speechRate;
+localStorage.setItem('strokeRehab.v1', JSON.stringify(legacy));
+Store.load();
+assert(Store.data.profile.speechRate === 'slow', '旧备份缺 speechRate 应回落 slow');
+
 /* --- 少算数 / 正向反馈用的派生数据（v0.2.12） --- */
 assert(Store.daysBetween('2026-03-01', '2026-03-04') === 3, 'daysBetween 应为3，实际 ' + Store.daysBetween('2026-03-01', '2026-03-04'));
 assert(Store.daysBetween('2026-03-04', '2026-03-04') === 0, '同一天 daysBetween 应为0');
@@ -167,12 +186,61 @@ Store.data.medLog = {};
 assert(Store.medFullDays(7).days === 0, '没有药物时 medFullDays.days 应为0');
 Store.addMed({ name: '阿司匹林肠溶片', dose: '100mg', times: ['08:00', '20:00'] });
 const mid = Store.data.meds[0].id;
+/* 新登记的药默认 from=今天：登记之前的日子不该算漏服 */
+assert(Store.data.meds[0].from === t, '新增药物应默认 from=今天，实际 ' + Store.data.meds[0].from);
+assert(Store.medFullDays(7).days === 1, '今天才登记的药：只有今天该计入，实际 ' + Store.medFullDays(7).days);
+/* 把开始日期往前挪，才覆盖整个 7 天窗口 */
+Store.updateMed(mid, { from: Store.addDays(t, -10) });
 Store.toggleMed(mid, '08:00');
 Store.toggleMed(mid, '20:00');
 Store.toggleMed(mid, '08:00', Store.addDays(t, -1));   // 昨天只吃了一次
 const fd = Store.medFullDays(7);
 assert(fd.days === 7, '有药物时 7 天都应计入，实际 ' + fd.days);
 assert(fd.full === 1, '只有今天全部核对，full 应为1，实际 ' + fd.full);
+
+/* --- 停药/恢复（v0.2.15）：停药不删记录，且不再算漏服 --- */
+assert(Store.activeMeds().length === 1 && Store.stoppedMeds().length === 0, '停药前：1 个在吃、0 个停用');
+assert(Store.medsOn(t).length === 1, '今天应有 1 种在吃的药');
+assert(Store.medsOn(Store.addDays(t, -20)).length === 0, 'from 之前的日期不应算这种药');
+
+const stopDay = Store.addDays(t, -3);
+Store.stopMed(mid, stopDay);              // 吃到 3 天前为止
+assert(Store.isMedStopped(Store.data.meds[0]), 'stopMed 后应标记为已停用');
+assert(Store.data.meds.length === 1, '停药**不能删除**记录（复诊要说清吃过什么）');
+assert(Store.activeMeds().length === 0 && Store.stoppedMeds().length === 1, '停药后：0 个在吃、1 个停用');
+assert(Store.medsOn(stopDay).length === 1, '停药当天仍算在吃（to 含当天）');
+assert(Store.medsOn(Store.addDays(t, -2)).length === 0, '停药之后的日期不应再算这种药');
+assert(Store.medProgressToday().total === 0, '停用的药不应出现在今日应服次数里');
+assert(Store.medStatusOn(t).total === 0, '停用后今天的应服次数应为0（不再天天显示漏服）');
+assert(Store.medStatusOn(stopDay).total === 2, '停药当天的应服次数仍应为2');
+const fdStop = Store.medFullDays(7);
+assert(fdStop.days === 4, '停药后 7 天窗口内只有 4 天该计入（今天往前到停药日），实际 ' + fdStop.days);
+/* 导出报告要把停用的药单独列出来，并写明吃到哪天 */
+const repStop = Store.exportReport();
+assert(/已停用的药/.test(repStop), '导出报告应有「已停用的药」小节');
+assert(new RegExp('至 ' + stopDay + ' 停用').test(repStop), '导出报告应写明停用日期');
+
+Store.resumeMed(mid, Store.addDays(t, -10));
+assert(!Store.isMedStopped(Store.data.meds[0]), 'resumeMed 后应恢复为在吃');
+assert(Store.medProgressToday().total === 2, '恢复服用后应重新进入今日核对');
+assert(!/已停用的药/.test(Store.exportReport()), '没有停用药物时报告不应出现该小节');
+/* 缺 from/to 的旧数据：视为"一直在吃"，保持既有行为 */
+Store.data.meds = [{ id: 'legacy', name: '旧数据药', times: ['08:00'] }];
+assert(Store.medsOn(Store.addDays(t, -100)).length === 1, '旧数据（无 from/to）应视为一直在吃');
+assert(Store.activeMeds().length === 1, '旧数据应算在吃');
+
+/* vitalDelta：应用替患者做减法 */
+Store.data.vitals.bp = [];
+assert(Store.vitalDelta('bp') === null, '不足两条时 vitalDelta 应为 null');
+Store.addVital('bp', { date: '2026-02-01', time: '08:00', sys: 130, dia: 80 });
+Store.addVital('bp', { date: '2026-02-02', time: '08:00', sys: 145, dia: 76 });
+const dbp = Store.vitalDelta('bp');
+assert(dbp.sys === 15 && dbp.dia === -4, 'bp delta 应为 +15/-4，实际 ' + dbp.sys + '/' + dbp.dia);
+assert(dbp.prevDate === '2026-02-01', 'delta 应带上一条的日期');
+Store.data.vitals.weight = [];
+Store.addVital('weight', { date: '2026-02-01', value: 62.5 });
+Store.addVital('weight', { date: '2026-02-08', value: 62.1 });
+assert(Store.vitalDelta('weight').value === -0.4, '体重 delta 应为 -0.4，实际 ' + Store.vitalDelta('weight').value);
 
 /* --- 损坏数据兜底 --- */
 localStorage.setItem('strokeRehab.v1', '{broken json');

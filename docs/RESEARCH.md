@@ -152,3 +152,22 @@
 | 良肢位摆放 Ⅰ级推荐、软瘫期禁牵拉肩、ROM 2/3 | ✅ 新增文章《卧床期的正确姿势（良肢位摆放）》；bobath 动作 caution 强化肩保护 |
 | 中风120 更适合中国人群 + 六字速记 | ✅ befast 文章已含中风120；补充六字速记 |
 | 偏侧忽略教育、PSD 筛查量表、语音朗读、双视图 | 📋 记入 DEVELOPMENT.md 路线图（未实现） |
+
+## 十、示意简笔画的画法依据（v0.2.14）
+
+简笔画不是医学结论，但**画得对不对**影响患者照着做的动作，所以画法也留一份依据。
+
+**人体比例**（用于 `js/figures.js` 的 `FIG.SEG`）：成人身高约 **7.5 个头高**，肩宽约 2 个头，髋宽约 2 个头。以头高 12 为单位折算：全身 90，肩→髋 26，上臂 17，前臂 14，大腿 23，小腿 21，脚长 11（脚长≈头高，是常用近似）。
+
+- <https://en.wikipedia.org/wiki/Body_proportions>（"An average person is generally 7-and-a-half heads tall"）
+- <https://www.artistsnetwork.com/art-techniques/drawing-proportions-human-body-ameral/>（7½ 头身为写实素描通用标准）
+- <https://library.fiveable.me/drawing-foundations/unit-10/proportions-human-body/study-guide/bVYcw96jRRpCUZJk>（成人约 7.5～8 头高）
+- 肩宽/髋宽约 2 个头：<https://paperthinpersonas.com/2016/06/03/quick-dirty-guide-female-proportions-drawing/>
+
+**姿势要点**来自 data-exercises.js 里已按 §二/§八 核对过的 `steps`/`caution`，另核对了踝泵的通用描述——跖屈=脚尖伸直（point your toes）、背屈=脚尖朝身体（pull your toes toward you），两个方向都要"尽可能大范围"，每个方向保持数秒、每组 10～20 次：
+
+- <https://healthy.kaiserpermanente.org/health-wellness/health-encyclopedia/he.plantar-fasciitis-exercises.tr5853>（"Point your toes and feet up toward your knees as far as you can, then point them away from you as far as you can"）
+- <https://shine365.marshfieldclinic.org/wp-content/uploads/2016/08/17224-000-Ankle-Exercises-for-Arthritis.pdf>（踝部活动：保持 5 秒、重复 10 次）
+- 踝泵用于预防下肢深静脉血栓的证据：<https://link.springer.com/article/10.1186/s13018-025-06236-7>、<https://pmc.ncbi.nlm.nih.gov/articles/PMC12482818/>
+
+**仍需专业复核**：以上只能保证"比例像人、几何自洽、方向不反"，不能替代康复医生对**患侧摆位与关节角度**的判断（Bobath 握手的患侧拇指在上、软瘫期肩 ROM 限制在正常 2/3 以内等，见 §八）。Physiopedia 的对应条目（Bridging / Ankle Pumps）抓取被 403 拒绝，未能引用原文。

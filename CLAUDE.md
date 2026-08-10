@@ -7,6 +7,8 @@
 - **零依赖红线**：不引入任何 npm 依赖、框架、构建步骤。必须保持 `file://` 双击可用（因此不用 ES Modules，脚本靠全局对象 + index.html 底部的加载顺序）。
 - **内容与逻辑分离**：改训练动作只动 `js/data-exercises.js`，改文章只动 `js/data-articles.js`。动作的 `id` 发布后不可改（打卡历史引用它）。
 - **数据只走 `Store`**（js/storage.js），不要在视图代码直接摸 localStorage。日期一律用 `Store.today()/addDays()` 的本地时区 `YYYY-MM-DD`，禁用 `toISOString()` 派生日期。
+- **服药计数只走 `Store.medsOn(date)`**：药有 `from`/`to`（停药只写 `to`、不删记录）。别再遍历 `Store.data.meds` 数总数，否则停用的药会天天算漏服、历史分母也会被今天的改动带偏。
+- **加浮层必须接返回键**：开浮层时 `overlayPush()`，主动关闭走 `overlayPop()`（详见 docs/DEVELOPMENT.md §6）。安卓返回键直接退出应用对老人很糟。数据变更后的重渲染用 `render(view, { keepScroll: true })`，别把人弹回页首。
 - **转义纪律**：用户输入插入 HTML 前必须过 `App` 内的 `esc()`；`data-*.js` 静态内容例外。
 - **医学内容守则**（docs/DEVELOPMENT.md §8）：修改医学文案需注明指南依据；不得给个体化用药建议、不得删弱免责声明与安全警示；目标值必须带"遵医嘱"措辞。
 - **适老化不回退**：基准字号 18px、三档可调、触控目标 ≥48px、高对比度。
@@ -17,6 +19,8 @@
 
 ```bash
 node test/storage.test.js        # 数据层单测（改 storage.js 必跑）
+node test/figures.test.js        # 简笔画几何校验（改 figures.js 必跑）
+node test/preview-figures.js     # 简笔画目视检查截图（改 figures.js 后必看一眼图）
 bash test/smoke.sh               # 无头浏览器冒烟测试（5 页渲染 + 资源可达）
 for f in js/*.js; do node --check "$f"; done   # 语法快查
 python3 -m http.server 8080      # 本地预览（也可直接双击 index.html）

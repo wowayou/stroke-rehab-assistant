@@ -69,6 +69,85 @@ const App = (() => {
     return `大约 ${m} 分 ${s} 秒`;
   }
 
+  /* ---------- 语音朗读 ----------
+     给读字困难/视力差/失语恢复期的患者："听"比"读"省力。
+     不支持的浏览器（部分微信内置 WebView）直接不显示按钮，不做降级提示打扰。 */
+  function speakBtnHTML(id, label = '听一遍') {
+    if (!Speech.supported()) return '';
+    return `<button class="btn outline speak-btn" id="${id}">🔊 ${esc(label)}</button>`;
+  }
+  /* 把按钮接上朗读：朗读中变"停止朗读"，结束/停止自动复原 */
+  function bindSpeak(btn, getText) {
+    if (!btn) return;
+    const idle = btn.innerHTML;
+    const reset = () => { btn.innerHTML = idle; btn.classList.remove('speaking'); };
+    btn.onclick = () => {
+      if (Speech.speaking()) { Speech.stop(); reset(); return; }
+      const ok = Speech.speak(getText(), {
+        rateKey: Store.data.profile.speechRate,
+        onEnd: reset,
+        /* API 齐全但没有语音包的环境（部分微信内置浏览器）会静默失败，
+           这里给一句明确的话，不让患者以为是自己按错了 */
+        onFail: () => { reset(); toast('这个手机好像没装朗读语音，换用手机自带浏览器试试'); },
+      });
+      if (ok) { btn.innerHTML = '⏹ 停止朗读'; btn.classList.add('speaking'); }
+      else toast('这个浏览器不支持朗读，可换用手机自带浏览器');
+    };
+  }
+  /* 动作示意简笔画：有图就画（两帧对照），没图退回大 emoji——不留空位 */
+  function figureHTML(ex) {
+    const f = typeof FIGURES !== 'undefined' ? FIGURES[ex.id] : null;
+    if (!f) return `<div class="trainer-icon-big">${ex.icon}</div>`;
+    return `
+      <figure class="ex-figure">
+        ${f.svg}
+        <figcaption>${esc(f.alt)}</figcaption>
+      </figure>`;
+  }
+
+  /* 训练动作朗读稿：名称→目的→分步要领→建议量→注意，按患者听的顺序 */
+  function exerciseSpeechText(ex) {
+    const lines = [ex.name + '。', ex.goal + '。'];
+    lines.push('动作要领。');
+    ex.steps.forEach((s, i) => lines.push(`第${i + 1}步，${s}。`));
+    lines.push(`建议量，${ex.dose}。`);
+    if (ex.caution) lines.push(`注意，${ex.caution}`);
+    return lines.join('\n');
+  }
+  /* 文章朗读稿：去掉 HTML 标签，只留可读文字 */
+  function articleSpeechText(a) {
+    const div = document.createElement('div');
+    div.innerHTML = a.body;
+    const body = (div.textContent || '').replace(/\s+/g, ' ').trim();
+    return `${a.title}。${a.sub}。${body}`;
+  }
+
+  /* ---------- 浮层与返回键 ----------
+     目标：安卓实体返回键先关浮层，而不是直接退出应用。
+     做法：**每开一个浮层就压一个历史条目**，返回键消耗它 → popstate 里关浮层。
+     屏幕上的 ✕ 关闭时，DOM 立刻移除、同时记一笔"欠账"并 history.back()，
+     popstate 看到欠账就只还账不再关东西——否则会一次关掉两层。
+     （早先的版本没有压条目，返回键直接吃掉了真实页面条目、导致整页重载。） */
+  let unwindDebt = 0;
+  function overlayPush() { history.pushState({ rehabOverlay: 1 }, ''); }
+  function overlayPop() { unwindDebt++; history.back(); }
+  /* 只动 DOM、不碰历史：给 popstate 用 */
+  function closeTopOverlayDOM() {
+    if (document.getElementById('trainer')) { closeTrainer(); return true; }
+    const masks = document.querySelectorAll('.modal-mask');
+    if (masks.length) {
+      Speech.stop();
+      masks[masks.length - 1].remove();
+      return true;
+    }
+    return false;
+  }
+  /* 主动关闭（✕ / Esc）：关 DOM 并把对应的历史条目退掉 */
+  function dismissTopOverlay() {
+    if (closeTopOverlayDOM()) { overlayPop(); return true; }
+    return false;
+  }
+
   /* ---------- 弹窗 ---------- */
   function openModal(title, contentNode, { center = false } = {}) {
     const mask = document.createElement('div');
@@ -87,7 +166,13 @@ const App = (() => {
     panel.appendChild(contentNode);
     mask.appendChild(panel);
     document.getElementById('modal-root').appendChild(mask);
-    const close = () => mask.remove();
+    overlayPush();
+    const close = () => {
+      if (!mask.isConnected) return;   // 已经被返回键关过，别再退历史
+      Speech.stop();
+      mask.remove();
+      overlayPop();
+    };
     closeBtn.onclick = close;
     mask.addEventListener('click', e => { if (e.target === mask) close(); });
     return close;
@@ -377,6 +462,9 @@ const App = (() => {
      训练引导器（全屏）
      ============================================================ */
   function openTrainer(ex) {
+    /* 换一个动作（游戏里"换个不用算的"）时复用同一个历史条目：
+       "训练引导页开着"始终只对应一个条目，返回键一次就退出。 */
+    const hadTrainer = !!document.getElementById('trainer');
     closeTrainer();
     const wrap = document.createElement('div');
     wrap.className = 'trainer';
@@ -418,8 +506,9 @@ const App = (() => {
         <div class="t-name">${ex.name}</div>
       </div>
       <div class="trainer-body">
-        <div class="trainer-icon-big">${ex.icon}</div>
+        ${figureHTML(ex)}
         <div class="trainer-goal">${ex.goal}</div>
+        ${speakBtnHTML('trainer-speak', '听一遍动作要领') ? `<div class="speak-row">${speakBtnHTML('trainer-speak', '听一遍动作要领')}</div>` : ''}
         <div class="trainer-steps">
           <div class="card-title" style="margin-bottom:0.4rem">动作要领</div>
           <ol>${ex.steps.map(s => `<li>${s}</li>`).join('')}</ol>
@@ -431,17 +520,21 @@ const App = (() => {
       </div>`;
 
     document.body.appendChild(wrap);
+    if (!hadTrainer) overlayPush();
 
     const finish = () => {
       Store.logExercise(ex.id);
       closeTrainer();
+      overlayPop();
       /* 打卡反馈说清"今天第几项"，让每一次都看得见累积 */
       const n = Store.exercisesDoneToday().length;
       toast(`已打卡：${ex.name}　今天第 ${n} 项 👍`);
-      render(currentView);
+      /* 保留滚动位置：刚才翻到哪一项，回来还在那里 */
+      render(currentView, { keepScroll: true });
     };
 
-    wrap.querySelector('#trainer-back').onclick = () => { closeTrainer(); };
+    wrap.querySelector('#trainer-back').onclick = () => { closeTrainer(); overlayPop(); };
+    bindSpeak(wrap.querySelector('#trainer-speak'), () => exerciseSpeechText(ex));
     const doneBtn = wrap.querySelector('#trainer-done');
     if (doneBtn) doneBtn.onclick = finish;
 
@@ -526,6 +619,7 @@ const App = (() => {
 
   function closeTrainer() {
     if (trainerTimer) { clearInterval(trainerTimer); trainerTimer = null; }
+    Speech.stop();   // 不停会在 iOS 上继续念
     Games.stop();
     const t = document.getElementById('trainer');
     if (t) t.remove();
@@ -1028,9 +1122,11 @@ const App = (() => {
     const meds = Store.data.meds;
     const ad = Store.adherence7d();
 
-    /* 按时间分组的今日核对表 */
+    /* 按时间分组的今日核对表：只列**今天在吃**的药（已停用的不出现在核对表里，
+       否则会天天显示"漏服"，冤枉患者） */
+    const todayMeds = Store.medsOn();
     const slots = {};
-    meds.forEach(m => (m.times || []).forEach(t => {
+    todayMeds.forEach(m => (m.times || []).forEach(t => {
       if (!slots[t]) slots[t] = [];
       slots[t].push(m);
     }));
@@ -1039,6 +1135,8 @@ const App = (() => {
     let checkHTML;
     if (!meds.length) {
       checkHTML = '<div class="empty-tip">还没有登记药物。<br>请按医生处方，点下方按钮添加。</div>';
+    } else if (!todayMeds.length) {
+      checkHTML = '<div class="empty-tip">今天没有需要核对的药。<br>（清单里的药都已停用，或还没到开始服用的日期）</div>';
     } else {
       checkHTML = times.map(t => `
         <div class="med-time-group">
@@ -1095,19 +1193,7 @@ const App = (() => {
       <div class="muted" style="margin-top:0.5rem">按次数算的完成率是 ${ad}%（这个数字是给医生看的）。坚持按医嘱服药，是预防再次中风最有效的一件事。</div>
       <button class="btn ghost block" id="btn-med-hist" style="margin-top:0.7rem">📄 查看服药历史（近14天）</button>
     </div>` : ''}
-    <div class="card">
-      <div class="card-title">💊 我的药物清单</div>
-      ${meds.length ? meds.map(m => `
-        <div class="med-item">
-          <div class="mi-body">
-            <div class="mi-name">${esc(m.name)}</div>
-            <div class="mi-sub">${esc(m.dose || '')} · 每日${(m.times || []).length}次（${(m.times || []).join('、')}）${m.note ? ' · ' + esc(m.note) : ''}</div>
-          </div>
-          <button class="btn small outline" data-edit-med="${m.id}">修改</button>
-        </div>`).join('') : ''}
-      <button class="btn ghost block" id="btn-add-med" style="margin-top:0.7rem">＋ 添加药物</button>
-      <div class="muted" style="margin-top:0.5rem">请严格按医生处方登记。任何加药、减药、停药都要先问医生。</div>
-    </div>`;
+    ${medListHTML()}`;
 
     $view().innerHTML = html;
 
@@ -1126,6 +1212,42 @@ const App = (() => {
     });
     const medHistBtn = document.getElementById('btn-med-hist');
     if (medHistBtn) medHistBtn.onclick = openMedHistory;
+  }
+
+  /* 药物清单：在吃的和已停用的分开列。
+     停用的药**保留在清单里**（复诊要说清吃过什么），但灰显、不参与核对与依从率。 */
+  function medRowHTML(m, stopped) {
+    const times = m.times || [];
+    const period = stopped
+      ? `${m.from ? esc(m.from) + ' ' : ''}至 ${esc(m.to)} 停用`
+      : (m.from ? `${esc(m.from)} 开始` : '');
+    return `
+    <div class="med-item${stopped ? ' stopped' : ''}">
+      <div class="mi-body">
+        <div class="mi-name">${esc(m.name)}${stopped ? '<span class="badge info mi-tag">已停用</span>' : ''}</div>
+        <div class="mi-sub">${esc(m.dose || '')} · 每日${times.length}次（${times.join('、')}）${m.note ? ' · ' + esc(m.note) : ''}</div>
+        ${period ? `<div class="mi-period">${period}</div>` : ''}
+      </div>
+      <button class="btn small outline" data-edit-med="${m.id}">${stopped ? '查看' : '修改'}</button>
+    </div>`;
+  }
+  function medListHTML() {
+    const active = Store.activeMeds();
+    const stopped = Store.stoppedMeds();
+    return `
+    <div class="card">
+      <div class="card-title">💊 我的药物清单</div>
+      ${active.map(m => medRowHTML(m, false)).join('')}
+      ${!active.length && !stopped.length ? '' : ''}
+      <button class="btn ghost block" id="btn-add-med" style="margin-top:0.7rem">＋ 添加药物</button>
+      <div class="muted" style="margin-top:0.5rem">请严格按医生处方登记。任何加药、减药、停药都要先问医生。</div>
+    </div>
+    ${stopped.length ? `
+    <div class="card">
+      <div class="card-title">📋 已停用的药 <span class="muted" style="font-weight:400">（留着给医生看）</span></div>
+      ${stopped.map(m => medRowHTML(m, true)).join('')}
+      <div class="muted" style="margin-top:0.5rem">停用的药不再出现在每日核对里，也不计入完成率，但记录保留下来——复诊时医生常会问"这个药吃到什么时候"。</div>
+    </div>` : ''}`;
   }
 
   /* 服药历史：每天一行，一个圆点代表一次应服的药 */
@@ -1164,6 +1286,7 @@ const App = (() => {
 
   function openMedForm(med) {
     const isEdit = !!med;
+    const stopped = isEdit && Store.isMedStopped(med);
     const sel = new Set(isEdit ? med.times : ['08:00']);
 
     const node = nodeFromHTML(`
@@ -1190,14 +1313,32 @@ const App = (() => {
           </div>
           <div class="muted" style="margin-top:0.3rem">已选：<span id="sel-times">${[...sel].sort().join('、') || '无'}</span></div>
         </div>
-
-
-        <div class="field" style="margin-bottom:0.9rem">
+        <div class="field" style="margin-bottom:0.7rem">
           <label>备注（可不填）</label>
           <input id="med-note" type="text" placeholder="如 饭后服、别嚼碎" value="${isEdit ? esc(med.note || '') : ''}">
         </div>
+        <div class="field" style="margin-bottom:0.9rem">
+          <label>从哪天开始吃</label>
+          <input id="med-from" type="date" value="${isEdit ? esc(med.from || '') : Store.today()}">
+          <div class="muted" style="margin-top:0.3rem">用来算完成率：开始之前的日子不会算你漏服。</div>
+        </div>
         <button class="btn block" id="med-save">${isEdit ? '保存修改' : '添加药物'}</button>
-        ${isEdit ? '<button class="btn red block" id="med-del" style="margin-top:0.6rem">删除这个药物</button>' : ''}
+        ${isEdit && stopped ? `
+        <div class="stop-box">
+          <div class="sb-title">已停用：${esc(med.from || '')} 至 ${esc(med.to)}</div>
+          <div class="muted">这个药已经不在每日核对里了，记录保留着给医生看。</div>
+          <button class="btn outline block" id="med-resume" style="margin-top:0.6rem">医生让接着吃，恢复服用</button>
+        </div>` : ''}
+        ${isEdit && !stopped ? `
+        <div class="stop-box">
+          <div class="sb-title">医生让停这个药了？</div>
+          <div class="muted">选「已停用」——它会从每日核对里消失、不再算漏服，但记录留着（复诊时医生常问"吃到什么时候"）。<b>不要用删除</b>，删了历史里就查不到吃过这个药。</div>
+          <div style="display:flex;gap:0.5rem;margin-top:0.5rem;align-items:center">
+            <input id="med-stop-date" type="date" value="${Store.today()}" style="flex:1;min-height:54px;border:1.5px solid var(--border);border-radius:12px;padding:0 0.6rem;font-size:1.05rem">
+            <button class="btn small outline" id="med-stop">吃到这天为止</button>
+          </div>
+        </div>` : ''}
+        ${isEdit ? '<button class="btn red block" id="med-del" style="margin-top:0.6rem">删除（登记错了才用）</button>' : ''}
       </div>`);
 
     const close = openModal(isEdit ? '修改药物' : '添加药物', node);
@@ -1225,15 +1366,31 @@ const App = (() => {
       const note = node.querySelector('#med-note').value.trim();
       if (!name) { toast('请填写药物名称'); return; }
       if (!sel.size) { toast('请至少选择一个服药时间'); return; }
-      const payload = { name, dose, note, times: [...sel].sort() };
+      const payload = { name, dose, note, times: [...sel].sort(), from: node.querySelector('#med-from').value };
       if (isEdit) Store.updateMed(med.id, payload);
       else Store.addMed(payload);
       close();
       toast(isEdit ? '已保存修改' : '已添加药物');
       renderMeds();
     };
+    const stopBtn = node.querySelector('#med-stop');
+    if (stopBtn) stopBtn.onclick = () => {
+      const d = node.querySelector('#med-stop-date').value || Store.today();
+      Store.stopMed(med.id, d);
+      close();
+      toast(`已记为停用（吃到 ${d}）`);
+      renderMeds();
+    };
+    const resumeBtn = node.querySelector('#med-resume');
+    if (resumeBtn) resumeBtn.onclick = () => {
+      Store.resumeMed(med.id, med.from || Store.today());
+      close();
+      toast('已恢复服用，重新进入每日核对');
+      renderMeds();
+    };
     if (isEdit) node.querySelector('#med-del').onclick = () => {
-      if (confirm(`确定删除「${med.name}」？\n（如果是遵医嘱停药才删除）`)) {
+      /* 删除 vs 停用：明确告诉用户区别，避免为了"停药"而删掉历史 */
+      if (confirm(`确定删除「${med.name}」？\n\n删除会连历史记录一起消失。\n如果是遵医嘱停药，请用「吃到这天为止」，不要删除。`)) {
         Store.removeMed(med.id);
         close();
         toast('已删除');
@@ -1276,8 +1433,11 @@ const App = (() => {
       const open = () => {
         const a = ARTICLES.find(x => x.id === elm.dataset.art);
         if (a) {
-          const node = nodeFromHTML(`<div class="article-view">${a.body}</div>`);
+          const sb = speakBtnHTML('art-speak', '听这篇');
+          const node = nodeFromHTML(
+            `${sb ? `<div class="speak-row">${sb}</div>` : ''}<div class="article-view">${a.body}</div>`);
           openModal(a.title, node);
+          bindSpeak(node.querySelector('#art-speak'), () => articleSpeechText(a));
         }
       };
       elm.onclick = open;
@@ -1343,6 +1503,17 @@ const App = (() => {
             <button class="font-chip f3 ${p.font === 'xlarge' ? 'active' : ''}" data-font="xlarge">特大</button>
           </div>
         </div>
+        ${Speech.supported() ? `
+        <div class="setting-row">
+          <div class="sr-label">朗读语速</div>
+          <div class="font-chips">
+            <button class="font-chip f1 ${p.speechRate === 'slow' ? 'active' : ''}" data-rate="slow">慢</button>
+            <button class="font-chip f1 ${p.speechRate === 'mid' ? 'active' : ''}" data-rate="mid">适中</button>
+            <button class="font-chip f1 ${p.speechRate === 'fast' ? 'active' : ''}" data-rate="fast">快</button>
+          </div>
+        </div>
+        <div class="muted">训练动作和科普文章里都有「🔊 听一遍」，读字费劲时可以让它念。<button class="link-btn" id="set-rate-try">试听一句</button></div>
+        ` : '<div class="muted">这个浏览器不支持语音朗读（换手机自带浏览器打开通常可用）。</div>'}
       </div>
       <div class="card">
         <div class="card-title">🎯 个人目标值（遵医嘱）</div>
@@ -1386,6 +1557,17 @@ const App = (() => {
       b.classList.add('active');
       applyFont(b.dataset.font);
     });
+    /* 语速：点一下即试听，让用户用耳朵选而不是猜"适中"是多快 */
+    node.querySelectorAll('[data-rate]').forEach(b => b.onclick = () => {
+      node.querySelectorAll('[data-rate]').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      Speech.speak('这是朗读速度，听得清吗？', { rateKey: b.dataset.rate });
+    });
+    const tryBtn = node.querySelector('#set-rate-try');
+    if (tryBtn) tryBtn.onclick = () => {
+      const act = node.querySelector('[data-rate].active');
+      Speech.speak('每天坚持一点，慢慢会好起来。', { rateKey: act ? act.dataset.rate : p.speechRate });
+    };
     node.querySelector('#set-guide').onclick = () => { close(); openGuide(); };
     node.querySelector('#set-export').onclick = () => { close(); openExport(); };
     node.querySelector('#set-backup').onclick = () => { close(); downloadBackup(); };
@@ -1439,6 +1621,8 @@ const App = (() => {
       p2.height = node.querySelector('#set-height').value;
       const active = node.querySelector('[data-font].active');
       p2.font = active ? active.dataset.font : 'normal';
+      const rateActive = node.querySelector('[data-rate].active');
+      if (rateActive) p2.speechRate = rateActive.dataset.rate;
       const g = id => +node.querySelector(id).value;
       const bs = g('#set-bpsys'), bd = g('#set-bpdia'), gf = g('#set-glufast'), gp = g('#set-glupost');
       if (!(bs >= 60 && bs <= 260) || !(bd >= 30 && bd <= 200)) { toast('请输入有效的血压目标值'); return; }
@@ -1521,12 +1705,16 @@ const App = (() => {
     learn: renderLearn,
   };
 
-  function render(view) {
+  function render(view, { keepScroll = false } = {}) {
+    const y = window.scrollY;
     (RENDERERS[view] || renderToday)();
-    window.scrollTo(0, 0);
+    /* 切页要回到顶部；但"数据变了重渲染"（打卡等）应该留在原处——
+       否则在训练页往下翻着练，练完一个动作就被弹回页首。 */
+    window.scrollTo(0, keepScroll ? y : 0);
   }
 
   function go(view) {
+    Speech.stop();   // 切页停朗读，免得念着上一页的内容
     currentView = view;
     document.querySelectorAll('.nav-item').forEach(b =>
       b.classList.toggle('active', b.dataset.view === view));
@@ -1542,6 +1730,17 @@ const App = (() => {
     const urlView = new URLSearchParams(location.search).get('view');
     go(RENDERERS[urlView] ? urlView : 'today');
 
+    /* 返回键：浮层是"压过历史条目"的，这里只负责在条目被退掉时关掉它。
+       unwindDebt > 0 说明这次 back 是屏幕上的 ✕ 主动触发的，DOM 已经关了，
+       只还账、不再多关一层。 */
+    window.addEventListener('popstate', () => {
+      if (unwindDebt > 0) { unwindDebt--; return; }
+      closeTopOverlayDOM();
+    });
+    /* 键盘：Esc 关浮层（家属用电脑帮着录数据时顺手） */
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') dismissTopOverlay();
+    });
 
     if (!Store.guideSeen()) openGuide();
   }

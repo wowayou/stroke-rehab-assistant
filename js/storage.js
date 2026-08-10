@@ -11,6 +11,7 @@ const Store = (() => {
       strokeDate: '',    // 发病日期 YYYY-MM-DD（算"康复第N天"）
       stage: 'sitting',  // bed/sitting/standing/walking
       font: 'normal',    // normal/large/xlarge
+      speechRate: 'slow',   // 朗读语速 slow/mid/fast（默认慢，老人听得清比听得快重要）
       height: '',        // cm，可选，算BMI
       targets: {         // 个人目标值（遵医嘱，用户可调）：血压 140/90 与血糖 7.0/10.0 为默认
         bpSys: 140, bpDia: 90,
@@ -52,6 +53,13 @@ const Store = (() => {
         data.profile = Object.assign(defaults().profile, parsed.profile || {});
         // 目标值做数字消毒：损坏/非法值回落默认，避免判定失效
         data.profile.targets = sanitizeTargets((parsed.profile && parsed.profile.targets) || {});
+        // 枚举型偏好消毒：旧备份没有该字段、或值被改坏时回落默认
+        if (!['slow', 'mid', 'fast'].includes(data.profile.speechRate)) {
+          data.profile.speechRate = defaults().profile.speechRate;
+        }
+        if (!['normal', 'large', 'xlarge'].includes(data.profile.font)) {
+          data.profile.font = defaults().profile.font;
+        }
         data.vitals = Object.assign(defaults().vitals, parsed.vitals || {});
         data.ui = Object.assign(defaults().ui, parsed.ui || {});
       }
@@ -179,7 +187,12 @@ const Store = (() => {
   /* ---------- 用药 ---------- */
   function uid() { return Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4); }
 
-  function addMed(med) { data.meds.push({ id: uid(), ...med }); save(); }
+  /* 新登记的药默认「从今天开始吃」：不写 from 的话，这药会被算进它还没
+     开始吃的那些历史日期里，把过去的依从率冤枉成漏服。 */
+  function addMed(med) {
+    data.meds.push({ id: uid(), from: today(), to: '', ...med });
+    save();
+  }
   function updateMed(id, patch) {
     const m = data.meds.find(x => x.id === id);
     if (m) { Object.assign(m, patch); save(); }
@@ -188,6 +201,31 @@ const Store = (() => {
     data.meds = data.meds.filter(m => m.id !== id);
     save();
   }
+  /* 停药：不删记录，只写一个「吃到哪天为止」。
+     删除会让这药从所有历史里消失（复诊时说不清吃过什么），
+     而留着不管又会让它天天显示"漏服"——所以停药是第三种操作。
+     to = 最后一次服药的日期（含当天）；'' 表示还在吃。 */
+  function stopMed(id, lastDate = today()) {
+    const m = data.meds.find(x => x.id === id);
+    if (m) { m.to = lastDate; save(); }
+  }
+  /* 恢复服用（停错了或医生又让接着吃） */
+  function resumeMed(id, fromDate = today()) {
+    const m = data.meds.find(x => x.id === id);
+    if (m) { m.to = ''; if (fromDate) m.from = fromDate; save(); }
+  }
+  function isMedStopped(m) { return !!m.to; }
+  /* 某天在吃的药：从 from 起、到 to 止（都含当天）。
+     缺 from/to 的旧数据视为"一直在吃"，保持历史行为不变。 */
+  function medsOn(date = today()) {
+    return data.meds.filter(m => {
+      if (m.from && date < m.from) return false;
+      if (m.to && date > m.to) return false;
+      return true;
+    });
+  }
+  function activeMeds() { return data.meds.filter(m => !m.to); }
+  function stoppedMeds() { return data.meds.filter(m => !!m.to); }
   function medKey(medId, time) { return `${medId}@${time}`; }
   function isMedTaken(medId, time, date = today()) {
     return !!(data.medLog[date] && data.medLog[date][medKey(medId, time)]);
@@ -199,25 +237,23 @@ const Store = (() => {
     else data.medLog[date][k] = true;
     save();
   }
-  /* 今日应服总次数 / 已服次数 */
-  function medProgressToday() {
+  /* 某天该吃几次 / 已核对几次。只算当天在吃的药（停用的、还没开始的都不算） */
+  function medCountOn(date) {
     let total = 0, done = 0;
-    const t = today();
-    data.meds.forEach(m => (m.times || []).forEach(tm => {
+    medsOn(date).forEach(m => (m.times || []).forEach(tm => {
       total++;
-      if (isMedTaken(m.id, tm, t)) done++;
+      if (isMedTaken(m.id, tm, date)) done++;
     }));
     return { total, done };
   }
+  /* 今日应服总次数 / 已服次数 */
+  function medProgressToday() { return medCountOn(today()); }
   /* 近7天依从率 */
   function adherence7d() {
     let total = 0, done = 0;
     for (let i = 0; i < 7; i++) {
-      const d = addDays(today(), -i);
-      data.meds.forEach(m => (m.times || []).forEach(tm => {
-        total++;
-        if (isMedTaken(m.id, tm, d)) done++;
-      }));
+      const c = medCountOn(addDays(today(), -i));
+      total += c.total; done += c.done;
     }
     return total ? Math.round(done / total * 100) : null;
   }
@@ -226,24 +262,21 @@ const Store = (() => {
   function medFullDays(n = 7) {
     let full = 0, counted = 0;
     for (let i = 0; i < n; i++) {
-      const d = addDays(today(), -i);
-      let total = 0, done = 0;
-      data.meds.forEach(m => (m.times || []).forEach(tm => {
-        total++;
-        if (isMedTaken(m.id, tm, d)) done++;
-      }));
-      if (!total) continue;
+      const c = medCountOn(addDays(today(), -i));
+      if (!c.total) continue;
       counted++;
-      if (done >= total) full++;
+      if (c.done >= c.total) full++;
     }
     return { full, days: counted };
   }
 
-  /* 某天的服药情况。注意：应服次数按「当前」药物清单计算——
-     改过处方后，历史天数的分母也会跟着变，这是本地无处方版本记录下的已知取舍。 */
+  /* 某天的服药情况。应服次数按**那一天在吃的药**计算（medsOn），
+     所以停药、换药之后历史天数的分母不会被改动带偏。
+     仍存在的取舍：同一种药中途改剂量/改时间点没有版本记录，
+     改完之后历史日期会按新的时间点显示。 */
   function medStatusOn(date) {
     const items = [];
-    data.meds.forEach(m => (m.times || []).forEach(t => {
+    medsOn(date).forEach(m => (m.times || []).forEach(t => {
       items.push({ medId: m.id, name: m.name, dose: m.dose || '', time: t, taken: isMedTaken(m.id, t, date) });
     }));
     items.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
@@ -303,12 +336,20 @@ const Store = (() => {
     lines.push('');
 
     lines.push('■ 目前用药');
-    if (data.meds.length) {
-      data.meds.forEach(m => lines.push(`  ${m.name} ${m.dose || ''} 每日${(m.times || []).length}次(${(m.times || []).join('、')}) ${m.note || ''}`.trimEnd()));
+    const act = activeMeds(), stp = stoppedMeds();
+    if (act.length) {
+      act.forEach(m => lines.push(`  ${m.name} ${m.dose || ''} 每日${(m.times || []).length}次(${(m.times || []).join('、')})${m.from ? ' 自' + m.from : ''} ${m.note || ''}`.trimEnd()));
       const ad = adherence7d();
       if (ad !== null) lines.push(`  近7天服药完成率：${ad}%`);
     } else lines.push('  （未登记）');
     lines.push('');
+
+    /* 停用的药单独列：复诊时医生常问"这个药吃到什么时候" */
+    if (stp.length) {
+      lines.push('■ 已停用的药');
+      stp.forEach(m => lines.push(`  ${m.name} ${m.dose || ''} ${m.from || '?'} 至 ${m.to} 停用 ${m.note || ''}`.trimEnd()));
+      lines.push('');
+    }
 
     lines.push('■ 血压记录（近30条）');
     const bp = vitalsSorted('bp').slice(-30);
@@ -414,6 +455,7 @@ const Store = (() => {
     exercisesOn, exerciseDaysTotal, activeDates, exerciseCalendar,
     logGame, gamesOn,
     addMed, updateMed, removeMed, isMedTaken, toggleMed, medProgressToday, adherence7d,
+    stopMed, resumeMed, isMedStopped, medsOn, activeMeds, stoppedMeds, medCountOn,
     medFullDays, medStatusOn, medHistory,
     addVital, removeVital, vitalsSorted, bpToday, vitalDelta,
     exportReport, resetAll,

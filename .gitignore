@@ -1,2 +1,5 @@
 # wrangler/Cloudflare 本地缓存（含账号信息，勿提交）
 .wrangler/
+
+# 目视检查用的临时截图（test/preview-figures.js 生成，不提交）
+figures-preview.png

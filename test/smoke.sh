@@ -67,7 +67,7 @@ check_view meds    "今日服药核对" "添加药物"
 check_view learn   "拨打120" "防复发最重要的五件事"
 
 # 静态资源可达性
-for res in css/style.css js/data-exercises.js js/data-articles.js js/storage.js js/charts.js js/games.js manifest.json icon.svg; do
+for res in css/style.css js/data-exercises.js js/data-articles.js js/storage.js js/charts.js js/games.js js/figures.js js/speech.js manifest.json icon.svg; do
   code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${PORT}/$(basename "$ROOT")/${res}")
   if [ "$code" = "200" ]; then echo "PASS  [asset] ${res}"; else echo "FAIL  [asset] ${res} -> ${code}"; fail=1; fi
 done
