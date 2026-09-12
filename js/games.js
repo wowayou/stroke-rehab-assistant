@@ -147,7 +147,7 @@ const Games = (() => {
         /* 不按分数分档给不同表情/评语：做完一组就是做到了 */
         showResult(container, '🎉', `${TOTAL} 题都做完了`,
           `其中 ${score} 题一眼就选对了。这个练的是抗干扰，慢一点更准。`,
-          () => onDone(score, `选对${score}/${TOTAL}`), () => { round = 0; score = 0; nextRound(); });
+          () => onDone(score, `${TOTAL}题都做完，一眼选对${score}题`), () => { round = 0; score = 0; nextRound(); });
         return;
       }
       round++;
@@ -156,7 +156,8 @@ const Games = (() => {
       if (Math.random() < 0.7) {
         while (ink.name === word.name) ink = COLORS[Math.floor(Math.random() * COLORS.length)];
       }
-      container.appendChild(el('div', 'game-status', `第 ${round} / ${TOTAL} 题　不管字义，选出这个字显示的颜色`));
+      const left = TOTAL - round;
+      container.appendChild(el('div', 'game-status', `第 ${round} 题　${left ? `还差 ${left} 题` : '最后一题'}　不管字义，选出这个字显示的颜色`));
       const w = el('div', 'stroop-word', word.name);
       w.style.color = ink.css;
       container.appendChild(w);

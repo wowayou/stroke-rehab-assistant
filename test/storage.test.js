@@ -9,10 +9,23 @@ const path = require('path');
 
 /* stub 浏览器环境 */
 const _mem = {};
+let failWrites = false;
+let failWriteKey = '';
+let failReadKey = '';
+let failRemoveKey = '';
 global.localStorage = {
-  getItem: k => (_mem[k] !== undefined ? _mem[k] : null),
-  setItem: (k, v) => { _mem[k] = v; },
-  removeItem: k => { delete _mem[k]; },
+  getItem: k => {
+    if (k === failReadKey) throw new Error('StorageReadError');
+    return _mem[k] !== undefined ? _mem[k] : null;
+  },
+  setItem: (k, v) => {
+    if (failWrites || k === failWriteKey) throw new Error('QuotaExceededError');
+    _mem[k] = v;
+  },
+  removeItem: k => {
+    if (k === failRemoveKey) throw new Error('StorageRemoveError');
+    delete _mem[k];
+  },
 };
 global.window = {};
 
@@ -75,28 +88,101 @@ assert(Store.data.meds.length === 1 && Store.data.vitals.bp.length === 2, '持�
 
 /* --- 备份导出 / 恢复导入 --- */
 const backup = Store.exportBackup();
-assert(typeof backup === 'string' && backup.includes('"app": "stroke-rehab-assistant"'), '备份 JSON 应含应用标识');
+assert(typeof backup === 'string' && JSON.parse(backup).app === 'stroke-rehab-assistant', '备份 JSON 应含应用标识');
 const parsed = Store.parseBackup(backup);
 assert(parsed.data.meds.length === 1 && parsed.data.vitals.bp.length === 2, '备份往返应保留全部数据');
 assert(parsed.data.exerciseLog && parsed.data.exerciseLog[t] && parsed.data.exerciseLog[t].includes('bobath'), '备份应含训练打卡');
 
 Store.addMed({ name: '临时药', dose: 'x', times: ['08:00'], note: '' });
 assert(Store.data.meds.length === 2, '恢复前应新增到2种药');
-Store.applyBackup(parsed.data);
+assert(Store.applyBackup(parsed.data) === true, 'applyBackup 应保存恢复点并覆盖数据');
 assert(Store.data.meds.length === 1, 'applyBackup 应整体覆盖回备份状态');
 assert(Store.data.vitals.bp.length === 2, 'applyBackup 后血压记录应保留');
+assert(Store.hasRecoveryBackup() === true, '恢复后应自动保留一个本机恢复点');
+
+/* 撤销也必须是事务：写主数据失败时，保留当前数据和恢复点。 */
+const afterRestoreJSON = JSON.stringify(Store.data);
+failWriteKey = 'strokeRehab.v1';
+assert(Store.undoLastRestore() === false, '撤销写盘失败时应返回 false');
+assert(JSON.stringify(Store.data) === afterRestoreJSON, '撤销写盘失败时当前数据不得改变');
+assert(Store.hasRecoveryBackup() === true, '撤销失败后恢复点应保留');
+failWriteKey = '';
+assert(Store.undoLastRestore() === true, '撤销上次恢复应成功');
+assert(Store.data.meds.length === 2, '撤销后应回到恢复前的 2 种药');
+assert(Store.hasRecoveryBackup() === false, '撤销成功后一次性恢复点应消失');
+
+/* 后续断言继续使用原备份状态。 */
+assert(Store.applyBackup(parsed.data) === true, '再次恢复应成功');
+assert(Store.data.meds.length === 1, '再次恢复后应为 1 种药');
+
+/* 恢复点读/写失败时，主数据绝不能被覆盖。 */
+const beforeBlockedRestore = JSON.stringify(Store.data);
+failWriteKey = 'strokeRehab.recovery.v1';
+assert(Store.applyBackup(partialData()) === false, '恢复点写入失败时应拒绝恢复');
+assert(JSON.stringify(Store.data) === beforeBlockedRestore, '恢复点写入失败时原数据不得改变');
+assert(/未覆盖现有数据/.test(Store.backupError()), '恢复点失败应给出不会覆盖的明确提示');
+failWriteKey = '';
+failReadKey = 'strokeRehab.recovery.v1';
+assert(Store.applyBackup(partialData()) === false, '无法读取旧恢复点时应拒绝恢复');
+assert(JSON.stringify(Store.data) === beforeBlockedRestore, '恢复点读取失败时原数据不得改变');
+failReadKey = '';
 
 /* 畸形/非备份文件必须被拒绝，且不得破坏当前数据 */
 let rejected = 0;
 try { Store.parseBackup('not json'); } catch (e) { rejected++; }
 try { Store.parseBackup('{"foo":1}'); } catch (e) { rejected++; }
 try { Store.parseBackup('{"app":"别的应用","data":"oops"}'); } catch (e) { rejected++; }
-assert(rejected === 3, '3 种畸形备份都应抛错，实际拒绝 ' + rejected);
+try { Store.parseBackup('{"app":"stroke-rehab-assistant","schema":99,"data":{}}'); } catch (e) { rejected++; }
+assert(rejected === 4, '4 种畸形/不兼容备份都应抛错，实际拒绝 ' + rejected);
 assert(Store.data.meds.length === 1, '解析失败不得破坏现有数据');
 
+/* 内部条目也必须消毒：不能让 null/危险属性进入渲染与计算路径 */
+const dirty = Store.parseBackup(JSON.stringify({
+  app: 'stroke-rehab-assistant', schema: 1, data: {
+    profile: { stage: 'flying', font: 'huge', targets: null },
+    meds: [null, { id: '\"><img src=x onerror=alert(1)>', name: '测试药', times: ['08:00', '<img>'] }],
+    vitals: { bp: [null, { id: 'bp1', date: t, sys: 'oops', dia: 80 }] },
+  },
+}));
+assert(dirty.data.profile.stage === 'sitting' && dirty.data.profile.font === 'normal', '非法 profile 枚举应回落默认');
+assert(dirty.data.profile.targets.bpSys === 140, 'null targets 应回落默认');
+assert(dirty.data.meds.length === 1 && dirty.data.meds[0].times.length === 1, '药物 null 条目/非法时间应被丢弃');
+assert(!/[<>]/.test(dirty.data.meds[0].id), '危险药物 id 应被替换为安全 id');
+assert(dirty.data.vitals.bp.length === 0, '非法健康记录应被丢弃');
+
 /* 部分字段备份：字段级守卫合并 */
-const partial = Store.parseBackup('{"app":"stroke-rehab-assistant","data":{"profile":{"name":"老王"}}}');
+const partial = Store.parseBackup('{"app":"stroke-rehab-assistant","schema":1,"data":{"profile":{"name":"老王"}}}');
 assert(partial.data.profile.name === '老王' && partial.data.meds.length === 0, '部分备份按字段守卫合并');
+
+/* 备份边界：在 JSON.parse 前拒绝超大文件，并严格拒绝超量记录。 */
+let oversizedRejected = false, jsonParseCalled = false;
+const nativeJSONParse = JSON.parse;
+JSON.parse = (...args) => { jsonParseCalled = true; return nativeJSONParse(...args); };
+try { Store.parseBackup('x'.repeat(Store.backupLimits.maxBytes + 1)); }
+catch (e) { oversizedRejected = /5MB/.test(e.message); }
+JSON.parse = nativeJSONParse;
+assert(oversizedRejected, '超过 5MB 的备份应被拒绝');
+assert(jsonParseCalled === false, '超大备份必须在 JSON.parse 前拒绝');
+
+const envelope = data => JSON.stringify({ app: 'stroke-rehab-assistant', schema: 1, data });
+function limitRejected(data, expected) {
+  try { Store.parseBackup(envelope(data)); return false; }
+  catch (e) { return e.message.includes(expected); }
+}
+assert(limitRejected({ meds: Array.from({ length: Store.backupLimits.meds + 1 }, () => ({})) }, '药物数量'), '超量药物应被拒绝');
+assert(limitRejected({ meds: [{ times: Array(Store.backupLimits.timesPerMed + 1).fill('08:00') }] }, '服药时间'), '单种药超量时间应被拒绝');
+assert(limitRejected({ vitals: { bp: Array.from({ length: Store.backupLimits.vitalsPerKind + 1 }, () => ({})) } }, '健康记录'), '超量生命体征应被拒绝');
+const tooManyDays = {};
+for (let i = 0; i <= Store.backupLimits.logDays; i++) tooManyDays['day-' + i] = [];
+assert(limitRejected({ exerciseLog: tooManyDays }, '日期数量'), '超量日志日期应被拒绝');
+const tooManyChecks = {};
+for (let i = 0; i <= Store.backupLimits.medChecksPerDay; i++) tooManyChecks['med-' + i + '@08:00'] = true;
+assert(limitRejected({ medLog: { '2026-01-01': tooManyChecks } }, '服药核对'), '单日超量服药核对应被拒绝');
+assert(limitRejected({ exerciseLog: { '2026-01-01': Array(Store.backupLimits.exercisesPerDay + 1).fill('x') } }, '训练记录'), '单日超量训练记录应被拒绝');
+assert(limitRejected({ gameLog: { '2026-01-01': Array.from({ length: Store.backupLimits.gamesPerDay + 1 }, () => ({})) } }, '游戏记录'), '单日超量游戏记录应被拒绝');
+
+const reversedTargets = Store.parseBackup(envelope({ profile: { targets: { bpSys: 80, bpDia: 100 } } }));
+assert(reversedTargets.data.profile.targets.bpSys === 140 && reversedTargets.data.profile.targets.bpDia === 90, '高低压目标反向时应整组回落默认');
 
 /* --- 历史视图数据（训练日历 / 每日明细 / 服药历史） --- */
 const rd = Store.recentDates(3);
@@ -198,7 +284,7 @@ const fd = Store.medFullDays(7);
 assert(fd.days === 7, '有药物时 7 天都应计入，实际 ' + fd.days);
 assert(fd.full === 1, '只有今天全部核对，full 应为1，实际 ' + fd.full);
 
-/* --- 停药/恢复（v0.2.15）：停药不删记录，且不再算漏服 --- */
+/* --- 停药/重新开药：停药不删记录，重新服用保留旧疗程空档 --- */
 assert(Store.activeMeds().length === 1 && Store.stoppedMeds().length === 0, '停药前：1 个在吃、0 个停用');
 assert(Store.medsOn(t).length === 1, '今天应有 1 种在吃的药');
 assert(Store.medsOn(Store.addDays(t, -20)).length === 0, 'from 之前的日期不应算这种药');
@@ -220,10 +306,22 @@ const repStop = Store.exportReport();
 assert(/已停用的药/.test(repStop), '导出报告应有「已停用的药」小节');
 assert(new RegExp('至 ' + stopDay + ' 停用').test(repStop), '导出报告应写明停用日期');
 
-Store.resumeMed(mid, Store.addDays(t, -10));
-assert(!Store.isMedStopped(Store.data.meds[0]), 'resumeMed 后应恢复为在吃');
-assert(Store.medProgressToday().total === 2, '恢复服用后应重新进入今日核对');
-assert(!/已停用的药/.test(Store.exportReport()), '没有停用药物时报告不应出现该小节');
+/* 停错时只撤销停用，不创建新疗程 */
+assert(Store.undoStopMed(mid) === true, 'undoStopMed 应保存成功');
+assert(Store.activeMeds().length === 1 && Store.stoppedMeds().length === 0, '撤销误停应只清空旧疗程的停用状态');
+Store.stopMed(mid, stopDay);
+
+const restartDay = Store.addDays(t, -1);
+const restarted = Store.restartMed(mid, restartDay);
+assert(restarted === true, 'restartMed 应保存成功');
+assert(Store.data.meds.length === 2, '重新服用应创建新疗程并保留旧疗程');
+assert(Store.stoppedMeds().length === 1 && Store.activeMeds().length === 1, '重新服用后应同时保留旧停用疗程和新疗程');
+assert(Store.medsOn(Store.addDays(stopDay, 1)).length === 0, '停药到重新服用之间不应计为应服');
+assert(Store.medsOn(restartDay).length === 1 && Store.medProgressToday().total === 2, '新疗程开始后应重新进入核对');
+assert(/已停用的药/.test(Store.exportReport()), '重新服用后旧停用疗程仍应保留在报告中');
+const oldCourse = Store.stoppedMeds()[0];
+assert(Store.canUndoStop(oldCourse.id) === false, '已有后续疗程时旧疗程不应允许撤销停用');
+assert(Store.undoStopMed(oldCourse.id) === false, '已有后续疗程时 undoStopMed 应拒绝，避免重复计数');
 /* 缺 from/to 的旧数据：视为"一直在吃"，保持既有行为 */
 Store.data.meds = [{ id: 'legacy', name: '旧数据药', times: ['08:00'] }];
 assert(Store.medsOn(Store.addDays(t, -100)).length === 1, '旧数据（无 from/to）应视为一直在吃');
@@ -242,6 +340,25 @@ Store.addVital('weight', { date: '2026-02-01', value: 62.5 });
 Store.addVital('weight', { date: '2026-02-08', value: 62.1 });
 assert(Store.vitalDelta('weight').value === -0.4, '体重 delta 应为 -0.4，实际 ' + Store.vitalDelta('weight').value);
 
+/* --- 持久化失败：必须返回 false 并回滚内存，不能制造“看似已保存” --- */
+Store.save();
+const beforeFail = Store.data.vitals.weight.length;
+failWrites = true;
+assert(Store.addVital('weight', { date: '2026-02-09', value: 63 }) === false, '写盘失败时 mutation 应返回 false');
+assert(Store.data.vitals.weight.length === beforeFail, '写盘失败后内存数据应回滚到最近一次成功保存');
+failWrites = false;
+
+/* 清空全部数据同时清理撤销恢复点，避免旧健康数据残留。 */
+assert(Store.applyBackup(Store.data) === true && Store.hasRecoveryBackup() === true, '清空测试前应建立恢复点');
+const beforeResetFailure = JSON.stringify(Store.data);
+failRemoveKey = 'strokeRehab.recovery.v1';
+assert(Store.resetAll() === false, '恢复点无法清理时不应报告清空成功');
+assert(JSON.stringify(Store.data) === beforeResetFailure, '恢复点无法清理时现有数据不得改变');
+assert(Store.hasRecoveryBackup() === true, '恢复点无法清理时应保留恢复点');
+failRemoveKey = '';
+assert(Store.resetAll() === true, '清空全部数据应成功');
+assert(Store.hasRecoveryBackup() === false, '清空全部数据后恢复点也必须清除');
+
 /* --- 损坏数据兜底 --- */
 localStorage.setItem('strokeRehab.v1', '{broken json');
 Store.load();
@@ -252,3 +369,7 @@ if (failed) {
   process.exit(1);
 }
 console.log('✅ storage.js 全部断言通过');
+
+function partialData() {
+  return { profile: { name: '将被拒绝的恢复' } };
+}

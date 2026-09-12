@@ -423,7 +423,7 @@ const EXERCISES = [
     goal: '训练注意控制与抗干扰能力',
     dose: '每天1～2局',
     mode: { type: 'game', game: 'stroop' },
-    steps: ['屏幕显示一个带颜色的字', '不要管字的意思，选出文字显示的颜色', '共10题，答对越多越好'],
+    steps: ['屏幕显示一个带颜色的字', '不要管字的意思，选出文字显示的颜色', '共10题，慢慢辨认，做完这一组就算练到了'],
   },
   {
     id: 'game-math', cat: 'cognitive', icon: '🧮',

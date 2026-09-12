@@ -15,8 +15,13 @@
 
 | 事项 | 验证方式 | 结果 |
 |---|---|---|
-| 数据层（storage.js）逻辑 | `node test/storage.test.js`（含打卡去重、连续天数、依从率、持久化往返、损坏数据兜底） | 全部断言通过 |
-| 五个页面均能被 JS 正常渲染 | `bash test/smoke.sh`（无头 Chromium dump 每个 `?view=` 并断言关键文案 + 8 项静态资源 200） | 全部 PASS，退出码 0 |
+| 数据层（storage.js）逻辑 | `node test/storage.test.js`（含深度数据消毒、schema 拒绝、疗程空档、写盘失败回滚、打卡去重、连续天数、依从率、持久化往返、损坏数据兜底） | 全部断言通过；QuotaExceededError 与损坏 JSON 告警是预期输出 |
+| 跨模块安全/体验契约 | `node test/contracts.test.js`（少算数、48px 触控目标、CSP、动态属性转义） | 全部断言通过 |
+| 备份恢复加固（v0.2.20） | `node test/storage.test.js` + 真实浏览器探针（恢复点、一次性撤销、字号回滚、失败保护） | 全部通过；生产最新部署 `57011941` 并核对 CSP/HSTS/防嵌入响应头 |
+| 可选密码加密备份（v0.2.21） | `node test/encryption.test.js` + 真实 Chromium 全流程（`file://`、移动/桌面布局、错误口令、恢复点） | AES-GCM/PBKDF2、篡改拒绝、旧明文兼容均通过；普通备份仍为默认主操作；生产部署 `67121367` |
+| 备份浮层历史栈回归（v0.2.22） | `node test/overlay.test.js`：真实 Chromium 鼠标点击关闭备份、下载普通备份、切换加密备份、完成加密下载，并断言 URL/页面存活/历史条目/主导航 | 修复设置→备份及备份→加密的异步 `history.back()` / `pushState()` 竞态；四条用户路径均通过，未捕获异常 0；生产部署 `1aa929c3` 同样通过 |
+| 备份压力收尾（v0.2.22.1） | `node test/overlay.test.js --stress` + `node test/backup-stress.test.js` | 真实 Chromium 40 轮浮层循环历史不增长、快速双击只下载一次；4.86MB 大备份解析 12 次、加解密各 3 次、恢复/撤销 3 轮全部通过；无运行时代码改动 |
+| 五个页面均能被 JS 正常渲染 | `bash test/smoke.sh`（无头 Chromium dump 每个 `?view=`、`file://` 直开，并断言关键文案 + 静态资源 200；浏览器/网络有硬超时） | 全部 PASS，退出码 0 |
 | 有数据状态下的深度渲染 | 独立测试代理注入 10 条血压/血糖/体重 + 2 种药 + 训练打卡后重跑五页 | 图表/依从率/康复第 N 天/连续天数计算全部正确，0 JS 报错 |
 | 医学内容与指南对齐 | 后台调研（来源见 docs/RESEARCH.md §七），并按调研做了 v0.2 修订（修订清单见 RESEARCH.md §九）；2026-08-02 二次复核抓出 7 处遗留（0 高危/1 中/6 低）全部修正 | 已对照落地 |
 | 历史视图（v0.2.9，2026-08-03） | `node test/storage.test.js`（新增 14 条历史 API 断言）+ `bash test/smoke.sh` + 带数据的临时探针页无头打开三个历史弹窗 | 全部通过，0 JS 报错；日历/圆点/状态点计数与种子数据逐项核对一致。**真机未测** |
@@ -30,7 +35,7 @@
 
 1. **真机手测仅部分完成**（2026-08-02 用户录屏实测）：首次指引、设置（含备份/恢复按钮）、保存血压、知识页、导出报告已验证正常。**仍未验证**：`tel:120` 拨号唤起、震动反馈、剪贴板复制、微信内置浏览器行为、360px 小屏布局、训练与用药的完整操作流程，以及 **v0.2.9 历史视图、v0.2.11 图表交互、v0.2.12 少算数/认同患者改造、v0.2.13 语音朗读与动作简笔画、v0.2.15 停药记录、v0.2.16 交互打磨（安卓返回键是重点）**（后三项尤其需要真人判断：措辞是否被患者接受、"还差 N 次"与拆解提示在三档字号下是否好读、**语音朗读在真机与微信内置浏览器能否出声**、简笔画在小屏是否看得清）。DEVELOPMENT.md §7 有完整手工回归清单。
 2. **版本管理——已解决（2026-08-01，经用户确认）**：本项目内已 `git init`（main 分支），首次提交即 v0.2.2 全量状态，远程为私有仓库 <https://github.com/wowayou/stroke-rehab-assistant>。上级目录遗留的空 `my-projects/.git` 未动（不影响本项目，相关坑见 §3）。
-3. **部署——已完成（2026-08-01）**：公开部署到 Cloudflare Pages <https://stroke-rehab-assistant.pages.dev/>。直传静态文件（现为 12 个：index/manifest/icon + css + 8 个 js）（仅应用运行时所需，不含 docs/、test/、源码 md、.git），线上验证通过：全部文件与本地逐字节一致、五页无头渲染冒烟全过、无 JS 报错。国内可达性已由用户真机确认可打开（速度/稳定性仍建议家人实测）。重新部署用仓库根目录的 `deploy.sh`。**2026-08-10 v0.2.12～v0.2.16 一并上线，线上 12 个文件与本地逐字节一致（12/12 OK）。**
+3. **部署——已完成（2026-08-01）**：公开部署到 Cloudflare Pages <https://stroke-rehab-assistant.pages.dev/>。直传 12 个运行时文件（index/manifest/icon + css + 8 个 js）及 1 个 Pages `_headers` 规则文件（不含 docs/、test/、源码 md、.git）。线上验证通过：五页无头渲染冒烟全过、无 JS 报错。国内可达性已由用户真机确认可打开（速度/稳定性仍建议家人实测）。重新部署用仓库根目录的 `deploy.sh`。**2026-08-10 v0.2.12～v0.2.16 一并上线，线上 12 个运行时文件与本地逐字节一致（12/12 OK）；同日 v0.2.17～v0.2.19 部署完成（部署 `26600867`），生产首页/重定向/JS 均实测带 CSP、HSTS、防嵌入、`nosniff`、Referrer Policy 与 Permissions Policy，生产无头浏览器在新 CSP 下正常渲染。2026-08-11 v0.2.22 备份闪退修复部署 `1aa929c3`，生产四路径真实 Chromium 回归通过。**
    - **部署账号**：Cloudflare 账号邮箱 **demoqqxu@gmail.com**（账号名 "Demoqqxu@gmail.com's Account"，ID 0e2703e9...），与 GitHub 账号（wowayou）**不是同一个账号**，已由用户确认归其本人所有（2026-08-02）。管理入口：dash.cloudflare.com → Workers & Pages → Pages → stroke-rehab-assistant。wrangler 登录凭证在 `~/.config/.wrangler/config/default.toml`。**v0.2.9 曾因该凭证缺失/未登录而未上线（2026-08-03）**，当晚上线已解决：用户在本机终端确认已登录正确账号（demoqqxu@gmail.com）后跑 `./deploy.sh` 部署成功，线上已核对 JS 文件与本地逐字节一致（6/6 全部一致）。`deploy.sh` 现带 `chmod +x` 可直接 `./` 运行，并自带登录检查与 npx 回落；注意**带代理的 shell 里 `wrangler whoami` 会卡死**，需无代理终端或先 `unset http_proxy https_proxy`。
 4. **等着你接手的一件事**：动作示意简笔画目前 5 个（`js/figures.js`：踝泵、Bobath握手、桥式、坐站转移、原地踏步）。**画法体系已经建好**——按 7.5 头身骨架 + 两连杆逆解生成姿势，几何正确性由 `node test/figures.test.js` 断言（肢段等长、两帧同一人、不穿地、动作要点），补齐其余动作是机械工作。但**每张新图都要做两件事**：跑几何断言，以及**放大人眼看图**（AI 写坐标是盲画，几何对了也可能难认——已踩过的坑列在 DEVELOPMENT.md §6 figures.js）。姿势正确性仍需康复医生/治疗师复核，尤其患侧摆位与关节角度。
 5. 路线图功能多数未做：Service Worker 离线、双抗到期提醒、PHQ-9 情绪自评等仍是规划（见 DEVELOPMENT.md §9）；已落地的：「数据 JSON 导出/导入（换机迁移）」v0.2.6（设置页「备份全部数据 / 从备份恢复」）、「训练/用药/游戏历史视图 + 记录页历史前置」v0.2.9（详见 DEVELOPMENT.md §10；**这两项原是本文档里的待决策项，现已关闭**）。另 v0.2.13 落地了路线图第 2 项（语音朗读）与第 7 项试点（动作简笔画）。以上各版**均未真机手测**，清单见 DEVELOPMENT.md §7 末尾三组勾选项。
@@ -44,8 +49,9 @@
 ```bash
 cd /home/forbackup/Dev/my-projects/stroke-rehab-assistant
 
-# ① 确认现状是好的（预期：两个 ✅，退出码 0；smoke 约需 2~3 分钟）
+# ① 确认现状是好的（预期：三个 ✅，退出码 0；smoke 约需 2~3 分钟）
 node test/storage.test.js
+node test/contracts.test.js
 bash test/smoke.sh
 
 # ② 自己打开看看（或直接双击 index.html）
@@ -54,7 +60,7 @@ python3 -m http.server 8080   # 浏览器访问 http://localhost:8080
 # ③ 改任何东西之前，读 CLAUDE.md 的硬约定
 ```
 
-注意：`test/storage.test.js` 运行时会打印一段 `SyntaxError ... JSON` 的告警——**这是预期输出**（测试故意写入损坏 JSON 验证兜底逻辑），只要最后一行是"✅ storage.js 全部断言通过"就是成功。
+注意：`test/storage.test.js` 运行时会打印 `QuotaExceededError` 和 `SyntaxError ... JSON` 两段告警——**这是预期输出**（测试故意模拟写盘失败和损坏 JSON，验证回滚/兜底逻辑），只要最后一行是"✅ storage.js 全部断言通过"就是成功。
 
 ## 3. 环境备忘（本机实测）
 

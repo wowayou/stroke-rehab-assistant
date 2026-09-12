@@ -125,7 +125,7 @@ input, select, textarea { font-family: inherit; }
 .btn.outline { background: var(--card); color: var(--text); border: 1.5px solid var(--border); }
 .btn.green { background: var(--green); }
 .btn.red { background: var(--red); }
-.btn.small { min-height: 44px; padding: 0.3rem 0.8rem; font-size: 0.95rem; }
+.btn.small { min-height: 48px; padding: 0.3rem 0.8rem; font-size: 0.95rem; }
 .btn.huge { min-height: 64px; font-size: 1.25rem; }
 .btn:disabled { opacity: 0.5; }
 .btn-row { display: flex; gap: 0.6rem; margin-top: 0.8rem; }

@@ -23,6 +23,11 @@ const App = (() => {
     clearTimeout(t._tid);
     t._tid = setTimeout(() => t.classList.remove('show'), 2200);
   }
+  function stored(ok) {
+    if (ok) return true;
+    toast('没有保存成功，请检查浏览器存储空间后重试');
+    return false;
+  }
   function beep() {
     try {
       const ac = new (window.AudioContext || window.webkitAudioContext)();
@@ -125,12 +130,15 @@ const App = (() => {
   /* ---------- 浮层与返回键 ----------
      目标：安卓实体返回键先关浮层，而不是直接退出应用。
      做法：**每开一个浮层就压一个历史条目**，返回键消耗它 → popstate 里关浮层。
-     屏幕上的 ✕ 关闭时，DOM 立刻移除、同时记一笔"欠账"并 history.back()，
-     popstate 看到欠账就只还账不再关东西——否则会一次关掉两层。
+     屏幕上的 ✕ / Esc 只发起 history.back()，DOM 也统一由 popstate 关闭，
+     避免"先删 DOM、异步回退尚未完成、又打开新浮层"造成历史栈错位。
+     连续弹窗用 close.replace() 原位替换，复用当前浮层历史条目。
      （早先的版本没有压条目，返回键直接吃掉了真实页面条目、导致整页重载。） */
-  let unwindDebt = 0;
-  function overlayPush() { history.pushState({ rehabOverlay: 1 }, ''); }
-  function overlayPop() { unwindDebt++; history.back(); }
+  let dismissPending = false;
+  let reuseOverlayEntry = false;
+  function overlayPush() {
+    if (!reuseOverlayEntry) history.pushState({ rehabOverlay: 1 }, '');
+  }
   /* 只动 DOM、不碰历史：给 popstate 用 */
   function closeTopOverlayDOM() {
     if (document.getElementById('trainer')) { closeTrainer(); return true; }
@@ -142,10 +150,20 @@ const App = (() => {
     }
     return false;
   }
-  /* 主动关闭（✕ / Esc）：关 DOM 并把对应的历史条目退掉 */
+  /* 主动关闭（✕ / Esc）：等 popstate 到达后再关 DOM，期间遮罩仍会阻止重复操作。 */
   function dismissTopOverlay() {
-    if (closeTopOverlayDOM()) { overlayPop(); return true; }
-    return false;
+    if (!document.getElementById('trainer') && !document.querySelector('.modal-mask')) return false;
+    if (dismissPending) return true;
+    dismissPending = true;
+    Speech.stop();
+    const masks = document.querySelectorAll('.modal-mask');
+    const top = document.getElementById('trainer') || masks[masks.length - 1];
+    if (top) {
+      top.setAttribute('aria-busy', 'true');
+      top.querySelectorAll('button, input, select, textarea').forEach(control => { control.disabled = true; });
+    }
+    history.back();
+    return true;
   }
 
   /* ---------- 弹窗 ---------- */
@@ -169,9 +187,15 @@ const App = (() => {
     overlayPush();
     const close = () => {
       if (!mask.isConnected) return;   // 已经被返回键关过，别再退历史
+      dismissTopOverlay();
+    };
+    close.replace = openNext => {
+      if (!mask.isConnected || dismissPending) return false;
       Speech.stop();
       mask.remove();
-      overlayPop();
+      reuseOverlayEntry = true;
+      try { openNext(); } finally { reuseOverlayEntry = false; }
+      return true;
     };
     closeBtn.onclick = close;
     mask.addEventListener('click', e => { if (e.target === mask) close(); });
@@ -332,7 +356,7 @@ const App = (() => {
 
     $view().querySelectorAll('[data-stage]').forEach(b => b.onclick = () => {
       Store.data.profile.stage = b.dataset.stage;
-      Store.save();
+      if (!stored(Store.save())) { renderTrain(); return; }
       renderTrain();
     });
     $view().querySelectorAll('[data-cat]').forEach(b => b.onclick = () => {
@@ -522,10 +546,13 @@ const App = (() => {
     document.body.appendChild(wrap);
     if (!hadTrainer) overlayPush();
 
-    const finish = () => {
-      Store.logExercise(ex.id);
-      closeTrainer();
-      overlayPop();
+    const finish = (gameResult = null) => {
+      if (dismissPending) return;
+      const ok = gameResult
+        ? Store.logGameExercise(ex.id, gameResult.game, gameResult.score, gameResult.detail)
+        : Store.logExercise(ex.id);
+      if (!stored(ok)) return;
+      dismissTopOverlay();
       /* 打卡反馈说清"今天第几项"，让每一次都看得见累积 */
       const n = Store.exercisesDoneToday().length;
       toast(`已打卡：${ex.name}　今天第 ${n} 项 👍`);
@@ -533,7 +560,7 @@ const App = (() => {
       render(currentView, { keepScroll: true });
     };
 
-    wrap.querySelector('#trainer-back').onclick = () => { closeTrainer(); overlayPop(); };
+    wrap.querySelector('#trainer-back').onclick = dismissTopOverlay;
     bindSpeak(wrap.querySelector('#trainer-speak'), () => exerciseSpeechText(ex));
     const doneBtn = wrap.querySelector('#trainer-done');
     if (doneBtn) doneBtn.onclick = finish;
@@ -603,8 +630,7 @@ const App = (() => {
       };
     } else if (ex.mode.type === 'game') {
       Games.start(ex.mode.game, wrap.querySelector('#game-box'), (score, detail) => {
-        Store.logGame(ex.mode.game, score, detail);
-        finish();
+        finish({ game: ex.mode.game, score, detail });
       }, {
         /* 游戏里想换一个玩（比如今天不想算数）：直接打开另一个动作，不算失败 */
         onSwitch: key => {
@@ -871,7 +897,7 @@ const App = (() => {
           <span class="rec-dot ${cls}"></span>
           <span class="rec-date">${esc(v.date)}<br>${esc(v.time || '')}</span>
           <span class="rec-val">${VITAL_FMT[kind](v)}${txt ? `<br><span class="rec-note ${cls}">${txt}</span>` : ''}</span>
-          <button class="rec-del" data-del="${v.id}" aria-label="删除">🗑</button>
+          <button class="rec-del" data-del="${esc(v.id)}" aria-label="删除">🗑</button>
         </div>`;
       }).join('');
 
@@ -890,7 +916,7 @@ const App = (() => {
 
       node.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
         if (confirm('删除这条记录？')) {
-          Store.removeVital(kind, b.dataset.del);
+          if (!stored(Store.removeVital(kind, b.dataset.del))) return;
           paint();
           renderRecords();
         }
@@ -974,7 +1000,7 @@ const App = (() => {
       const time = document.getElementById('bp-time').value;
       if (!sys || !dia || sys < 50 || sys > 300 || dia < 30 || dia > 200) { toast('请输入有效的血压数值'); return; }
       if (!date) { toast('请选择日期'); return; }
-      Store.addVital('bp', { date, time, sys, dia, pulse: pulse ? +pulse : '' });
+      if (!stored(Store.addVital('bp', { date, time, sys, dia, pulse: pulse ? +pulse : '' }))) return;
       const [cls, txt] = bpBadge(sys, dia);
       toast(cls === 'bad' ? '已保存。' + txt : '已保存 ✓');
       renderRecords();
@@ -1030,7 +1056,7 @@ const App = (() => {
       const time = document.getElementById('glu-time').value;
       if (!value || value < 1 || value > 40) { toast('请输入有效的血糖数值'); return; }
       if (!date) { toast('请选择日期'); return; }
-      Store.addVital('glucose', { date, time, gtype, value });
+      if (!stored(Store.addVital('glucose', { date, time, gtype, value }))) return;
       toast('已保存 ✓');
       renderRecords();
     };
@@ -1086,7 +1112,7 @@ const App = (() => {
       const date = document.getElementById('wt-date').value;
       if (!value || value < 20 || value > 300) { toast('请输入有效的体重'); return; }
       if (!date) { toast('请选择日期'); return; }
-      Store.addVital('weight', { date, value });
+      if (!stored(Store.addVital('weight', { date, value }))) return;
       toast('已保存 ✓');
       renderRecords();
     };
@@ -1140,11 +1166,11 @@ const App = (() => {
     } else {
       checkHTML = times.map(t => `
         <div class="med-time-group">
-          <div class="med-time-label">🕐 ${t}</div>
+          <div class="med-time-label">🕐 ${esc(t)}</div>
           ${slots[t].map(m => {
             const taken = Store.isMedTaken(m.id, t);
             return `
-            <div class="med-check ${taken ? 'checked' : ''}" data-med="${m.id}" data-time="${t}" role="button" tabindex="0">
+            <div class="med-check ${taken ? 'checked' : ''}" data-med="${esc(m.id)}" data-time="${esc(t)}" role="button" tabindex="0">
               <div class="mc-box">${taken ? '✓' : ''}</div>
               <div>
                 <div class="mc-name">${esc(m.name)}</div>
@@ -1199,7 +1225,7 @@ const App = (() => {
 
     $view().querySelectorAll('.med-check').forEach(elm => {
       const act = () => {
-        Store.toggleMed(elm.dataset.med, elm.dataset.time);
+        stored(Store.toggleMed(elm.dataset.med, elm.dataset.time));
         renderMeds();
       };
       elm.onclick = act;
@@ -1225,10 +1251,10 @@ const App = (() => {
     <div class="med-item${stopped ? ' stopped' : ''}">
       <div class="mi-body">
         <div class="mi-name">${esc(m.name)}${stopped ? '<span class="badge info mi-tag">已停用</span>' : ''}</div>
-        <div class="mi-sub">${esc(m.dose || '')} · 每日${times.length}次（${times.join('、')}）${m.note ? ' · ' + esc(m.note) : ''}</div>
+        <div class="mi-sub">${esc(m.dose || '')} · 每日${times.length}次（${times.map(esc).join('、')}）${m.note ? ' · ' + esc(m.note) : ''}</div>
         ${period ? `<div class="mi-period">${period}</div>` : ''}
       </div>
-      <button class="btn small outline" data-edit-med="${m.id}">${stopped ? '查看' : '修改'}</button>
+      <button class="btn small outline" data-edit-med="${esc(m.id)}">${stopped ? '查看' : '修改'}</button>
     </div>`;
   }
   function medListHTML() {
@@ -1284,23 +1310,24 @@ const App = (() => {
   const COMMON_TIMES = ['06:30', '07:30', '08:00', '11:30', '12:00', '17:30', '18:00', '20:00', '21:00'];
   const COMMON_MEDS = ['阿司匹林肠溶片', '硫酸氢氯吡格雷片', '阿托伐他汀钙片', '瑞舒伐他汀钙片'];
 
-  function openMedForm(med) {
+  function openMedForm(med, seed = null) {
     const isEdit = !!med;
     const stopped = isEdit && Store.isMedStopped(med);
-    const sel = new Set(isEdit ? med.times : ['08:00']);
+    const formData = med || seed || {};
+    const sel = new Set(Array.isArray(formData.times) && formData.times.length ? formData.times : ['08:00']);
 
     const node = nodeFromHTML(`
       <div class="vital-form">
         <div class="field" style="margin-bottom:0.7rem">
           <label>药物名称（按处方填写）</label>
-          <input id="med-name" type="text" placeholder="如 阿司匹林肠溶片" value="${isEdit ? esc(med.name) : ''}">
+          <input id="med-name" type="text" placeholder="如 阿司匹林肠溶片" value="${esc(formData.name || '')}">
           <div class="time-chip-row" style="margin-top:0.4rem">
-            ${COMMON_MEDS.map(n => `<button class="time-chip" data-preset="${esc(n)}" style="min-height:42px;font-size:0.88rem">${esc(n)}</button>`).join('')}
+            ${COMMON_MEDS.map(n => `<button class="time-chip" data-preset="${esc(n)}" style="font-size:0.88rem">${esc(n)}</button>`).join('')}
           </div>
         </div>
         <div class="field" style="margin-bottom:0.7rem">
           <label>每次用量</label>
-          <input id="med-dose" type="text" placeholder="如 100mg，1片" value="${isEdit ? esc(med.dose || '') : ''}">
+          <input id="med-dose" type="text" placeholder="如 100mg，1片" value="${esc(formData.dose || '')}">
         </div>
         <div class="field" style="margin-bottom:0.7rem">
           <label>每天服药时间（可多选）</label>
@@ -1315,33 +1342,36 @@ const App = (() => {
         </div>
         <div class="field" style="margin-bottom:0.7rem">
           <label>备注（可不填）</label>
-          <input id="med-note" type="text" placeholder="如 饭后服、别嚼碎" value="${isEdit ? esc(med.note || '') : ''}">
+          <input id="med-note" type="text" placeholder="如 饭后服、别嚼碎" value="${esc(formData.note || '')}">
         </div>
         <div class="field" style="margin-bottom:0.9rem">
           <label>从哪天开始吃</label>
-          <input id="med-from" type="date" value="${isEdit ? esc(med.from || '') : Store.today()}">
+          <input id="med-from" type="date" value="${esc(formData.from || Store.today())}">
           <div class="muted" style="margin-top:0.3rem">用来算完成率：开始之前的日子不会算你漏服。</div>
         </div>
-        <button class="btn block" id="med-save">${isEdit ? '保存修改' : '添加药物'}</button>
+        <button class="btn block" id="med-save">${isEdit ? '保存修改' : seed ? '登记新疗程' : '添加药物'}</button>
         ${isEdit && stopped ? `
         <div class="stop-box">
           <div class="sb-title">已停用：${esc(med.from || '')} 至 ${esc(med.to)}</div>
           <div class="muted">这个药已经不在每日核对里了，记录保留着给医生看。</div>
-          <button class="btn outline block" id="med-resume" style="margin-top:0.6rem">医生让接着吃，恢复服用</button>
+          ${Store.canUndoStop(med.id)
+            ? '<button class="btn outline block" id="med-undo-stop" style="margin-top:0.6rem">停错了，撤销停用</button>'
+            : '<div class="muted" style="margin-top:0.5rem">已经登记了后续新疗程，这段旧停药记录不能再撤销。</div>'}
+          <button class="btn ghost block" id="med-new-course" style="margin-top:0.6rem">医生重新开了，登记新疗程</button>
         </div>` : ''}
         ${isEdit && !stopped ? `
         <div class="stop-box">
           <div class="sb-title">医生让停这个药了？</div>
           <div class="muted">选「已停用」——它会从每日核对里消失、不再算漏服，但记录留着（复诊时医生常问"吃到什么时候"）。<b>不要用删除</b>，删了历史里就查不到吃过这个药。</div>
           <div style="display:flex;gap:0.5rem;margin-top:0.5rem;align-items:center">
-            <input id="med-stop-date" type="date" value="${Store.today()}" style="flex:1;min-height:54px;border:1.5px solid var(--border);border-radius:12px;padding:0 0.6rem;font-size:1.05rem">
+            <input id="med-stop-date" type="date" value="${Store.today()}" min="${esc(med.from || '')}" max="${Store.today()}" style="flex:1;min-height:54px;border:1.5px solid var(--border);border-radius:12px;padding:0 0.6rem;font-size:1.05rem">
             <button class="btn small outline" id="med-stop">吃到这天为止</button>
           </div>
         </div>` : ''}
         ${isEdit ? '<button class="btn red block" id="med-del" style="margin-top:0.6rem">删除（登记错了才用）</button>' : ''}
       </div>`);
 
-    const close = openModal(isEdit ? '修改药物' : '添加药物', node);
+    const close = openModal(isEdit ? '修改药物' : seed ? '登记新疗程' : '添加药物', node);
 
     const refreshSel = () => {
       node.querySelector('#sel-times').textContent = [...sel].sort().join('、') || '无';
@@ -1366,32 +1396,43 @@ const App = (() => {
       const note = node.querySelector('#med-note').value.trim();
       if (!name) { toast('请填写药物名称'); return; }
       if (!sel.size) { toast('请至少选择一个服药时间'); return; }
-      const payload = { name, dose, note, times: [...sel].sort(), from: node.querySelector('#med-from').value };
-      if (isEdit) Store.updateMed(med.id, payload);
-      else Store.addMed(payload);
+      const from = node.querySelector('#med-from').value;
+      if (!from) { toast('请选择开始服用日期'); return; }
+      if (seed && seed.from && from < seed.from) { toast('新疗程不能早于上次停药后的第一天'); return; }
+      const payload = { name, dose, note, times: [...sel].sort(), from, previousCourseId: seed ? seed.previousCourseId || '' : formData.previousCourseId || '' };
+      const ok = isEdit ? Store.updateMed(med.id, payload) : Store.addMed(payload);
+      if (!stored(ok)) return;
       close();
-      toast(isEdit ? '已保存修改' : '已添加药物');
+      toast(isEdit ? '已保存修改' : seed ? '已登记新疗程' : '已添加药物');
       renderMeds();
     };
     const stopBtn = node.querySelector('#med-stop');
     if (stopBtn) stopBtn.onclick = () => {
       const d = node.querySelector('#med-stop-date').value || Store.today();
-      Store.stopMed(med.id, d);
+      if (d > Store.today()) { toast('停用日期不能晚于今天'); return; }
+      if (med.from && d < med.from) { toast('停用日期不能早于开始服用日期'); return; }
+      if (!stored(Store.stopMed(med.id, d))) return;
       close();
       toast(`已记为停用（吃到 ${d}）`);
       renderMeds();
     };
-    const resumeBtn = node.querySelector('#med-resume');
-    if (resumeBtn) resumeBtn.onclick = () => {
-      Store.resumeMed(med.id, med.from || Store.today());
+    const undoStopBtn = node.querySelector('#med-undo-stop');
+    if (undoStopBtn) undoStopBtn.onclick = () => {
+      if (!stored(Store.undoStopMed(med.id))) return;
       close();
-      toast('已恢复服用，重新进入每日核对');
+      toast('已撤销停用，重新进入每日核对');
       renderMeds();
+    };
+    const newCourseBtn = node.querySelector('#med-new-course');
+    if (newCourseBtn) newCourseBtn.onclick = () => {
+      const nextDay = med.to && med.to >= Store.today() ? Store.addDays(med.to, 1) : Store.today();
+      const seedData = { name: med.name, dose: med.dose, times: med.times, note: med.note, from: nextDay, previousCourseId: med.id };
+      close.replace(() => openMedForm(null, seedData));
     };
     if (isEdit) node.querySelector('#med-del').onclick = () => {
       /* 删除 vs 停用：明确告诉用户区别，避免为了"停药"而删掉历史 */
       if (confirm(`确定删除「${med.name}」？\n\n删除会连历史记录一起消失。\n如果是遵医嘱停药，请用「吃到这天为止」，不要删除。`)) {
-        Store.removeMed(med.id);
+        if (!stored(Store.removeMed(med.id))) return;
         close();
         toast('已删除');
         renderMeds();
@@ -1476,6 +1517,73 @@ const App = (() => {
   /* ============================================================
      设置弹窗
      ============================================================ */
+  function openRestorePreview(parsed, fileName) {
+    const s = Store.backupSummary(parsed.data);
+    const confirmNode = nodeFromHTML(`
+      <p class="muted" style="margin-bottom:0.5rem">备份文件：<b>${esc(fileName)}</b>${parsed.exportedAt ? '<br>导出时间：' + esc(parsed.exportedAt) : ''}</p>
+      <div class="card" style="margin-bottom:0.7rem">
+        <div class="card-title">恢复后将包含</div>
+        <div class="guide-line">💊 药物 ${s.meds} 种　·　🩺 血压 ${s.bp} 条</div>
+        <div class="guide-line">🩸 血糖 ${s.glucose} 条　·　⚖️ 体重 ${s.weight} 条</div>
+        <div class="guide-line">💪 训练打卡 ${s.checkinDays} 天</div>
+      </div>
+      <div class="disclaimer" style="padding:0.2rem 0 0.6rem">恢复会用备份<b>覆盖本机现有全部数据</b>。应用会自动保留恢复前的数据，可在设置中撤销一次。</div>
+      <button class="btn block" id="restore-confirm">确认恢复</button>`);
+    const closeConfirm = openModal('从备份恢复', confirmNode, { center: true });
+    confirmNode.querySelector('#restore-confirm').onclick = () => {
+      if (!Store.applyBackup(parsed.data)) {
+        toast(Store.backupError() || '恢复失败，原有数据未改变');
+        return;
+      }
+      applyFont(Store.data.profile.font);
+      closeConfirm();
+      render(currentView);
+      toast('已从备份恢复，可在设置中撤销一次');
+    };
+  }
+
+  function openEncryptedRestore(jsonText, fileName) {
+    const node = nodeFromHTML(`
+      <div class="vital-form">
+        <div class="muted" style="margin-bottom:0.7rem">这是密码加密的备份。密码只在本机用于解密，不会保存或上传。</div>
+        <div class="field">
+          <label for="restore-password">备份密码</label>
+          <input id="restore-password" type="password" maxlength="200" autocomplete="current-password">
+        </div>
+        <label style="display:flex;align-items:center;gap:0.6rem;min-height:48px;margin:0.35rem 0">
+          <input id="restore-password-show" type="checkbox" style="width:24px;height:24px">显示密码
+        </label>
+        <div id="restore-password-error" role="alert" style="min-height:1.6em;color:var(--red);font-weight:600"></div>
+        <button class="btn block" id="restore-decrypt">解密并查看内容</button>
+      </div>`);
+    const closePassword = openModal('打开加密备份', node, { center: true });
+    const input = node.querySelector('#restore-password');
+    const button = node.querySelector('#restore-decrypt');
+    const error = node.querySelector('#restore-password-error');
+    node.querySelector('#restore-password-show').onchange = e => { input.type = e.target.checked ? 'text' : 'password'; };
+    const decrypt = async () => {
+      if (!input.value) { error.textContent = '请输入备份密码'; input.focus(); return; }
+      button.disabled = true;
+      button.textContent = '正在验证，请稍候…';
+      error.textContent = '';
+      try {
+        const parsed = await Store.parseEncryptedBackup(jsonText, input.value);
+        input.value = '';
+        closePassword.replace(() => openRestorePreview(parsed, fileName));
+      } catch (e) {
+        error.textContent = e.message || '没有解密成功';
+        input.focus();
+        input.select();
+      } finally {
+        button.disabled = false;
+        button.textContent = '解密并查看内容';
+      }
+    };
+    button.onclick = decrypt;
+    input.onkeydown = e => { if (e.key === 'Enter') decrypt(); };
+    setTimeout(() => input.focus(), 80);
+  }
+
   function openSettings() {
     const p = Store.data.profile;
     const node = nodeFromHTML(`
@@ -1545,8 +1653,11 @@ const App = (() => {
         <button class="btn ghost block" id="set-backup" style="margin-top:0.6rem">📦 备份全部数据（下载文件）</button>
         <button class="btn ghost block" id="set-restore" style="margin-top:0.6rem">♻️ 从备份恢复</button>
         <input type="file" id="set-restore-input" accept=".json,application/json" style="display:none">
+        ${Store.hasRecoveryBackup() ? `
+          <button class="btn outline block" id="set-undo-restore" style="margin-top:0.6rem">↩️ 撤销上次恢复</button>
+          <div class="muted" style="margin-top:0.35rem">可恢复到上次导入备份前的数据，只能撤销一次。</div>` : ''}
         <button class="btn outline block" id="set-reset" style="margin-top:0.6rem;color:var(--red)">清空全部数据</button>
-        <div class="muted" style="margin-top:0.6rem">所有数据只保存在这台设备上，不会上传到任何地方。清空缓存或换手机会丢数据，请定期用「备份全部数据」下载保存；换新设备时用「从备份恢复」迁回。</div>
+        <div class="muted" style="margin-top:0.6rem">本应用不会上传数据。健康记录保存在这台设备的浏览器里；共用手机时，能使用这个浏览器的人可能看到这些记录。清空缓存或换手机会丢数据，请定期备份。</div>
       </div>
       <button class="btn block" id="set-save">保存设置</button>`);
 
@@ -1568,45 +1679,45 @@ const App = (() => {
       const act = node.querySelector('[data-rate].active');
       Speech.speak('每天坚持一点，慢慢会好起来。', { rateKey: act ? act.dataset.rate : p.speechRate });
     };
-    node.querySelector('#set-guide').onclick = () => { close(); openGuide(); };
-    node.querySelector('#set-export').onclick = () => { close(); openExport(); };
-    node.querySelector('#set-backup').onclick = () => { close(); downloadBackup(); };
+    node.querySelector('#set-guide').onclick = () => close.replace(openGuide);
+    node.querySelector('#set-export').onclick = () => close.replace(openExport);
+    node.querySelector('#set-backup').onclick = () => close.replace(openBackupWarning);
     node.querySelector('#set-restore').onclick = () => { node.querySelector('#set-restore-input').click(); };
+    const undoRestore = node.querySelector('#set-undo-restore');
+    if (undoRestore) undoRestore.onclick = () => {
+      if (!confirm('撤销后，当前恢复进来的全部数据会被替换。确定回到恢复前的数据吗？')) return;
+      if (!Store.undoLastRestore()) {
+        toast(Store.backupError() || '没有撤销成功，当前数据未改变');
+        return;
+      }
+      close();
+      applyFont(Store.data.profile.font);
+      render(currentView);
+      toast('已撤销上次恢复');
+    };
     node.querySelector('#set-restore-input').onchange = () => {
       const file = node.querySelector('#set-restore-input').files[0];
       if (!file) return;
+      if (file.size > Store.backupLimits.maxEncryptedBytes) { toast('备份文件超过 8MB，未读取'); return; }
       const reader = new FileReader();
       reader.onload = () => {
-        let parsed;
-        try { parsed = Store.parseBackup(String(reader.result)); }
-        catch (e) { toast('恢复失败：' + e.message); return; }
-        const s = Store.backupSummary(parsed.data);
-        const confirmNode = nodeFromHTML(`
-          <p class="muted" style="margin-bottom:0.5rem">备份文件：<b>${esc(file.name)}</b>${parsed.exportedAt ? '<br>导出时间：' + esc(parsed.exportedAt) : ''}</p>
-          <div class="card" style="margin-bottom:0.7rem">
-            <div class="card-title">恢复后将包含</div>
-            <div class="guide-line">💊 药物 ${s.meds} 种　·　🩺 血压 ${s.bp} 条</div>
-            <div class="guide-line">🩸 血糖 ${s.glucose} 条　·　⚖️ 体重 ${s.weight} 条</div>
-            <div class="guide-line">💪 训练打卡 ${s.checkinDays} 天</div>
-          </div>
-          <div class="disclaimer" style="padding:0.2rem 0 0.6rem">恢复会用备份<b>覆盖本机现有全部数据</b>，无法撤销。</div>
-          <button class="btn block" id="restore-confirm">确认恢复</button>`);
-        close();
-        const closeConfirm = openModal('从备份恢复', confirmNode, { center: true });
-        confirmNode.querySelector('#restore-confirm').onclick = () => {
-          Store.applyBackup(parsed.data);
-          applyFont(Store.data.profile.font);
-          closeConfirm();
-          render(currentView);
-          toast('已从备份恢复 ✓');
-        };
+        const jsonText = String(reader.result);
+        try {
+          if (Store.isEncryptedBackup(jsonText)) {
+            if (!Store.encryptionSupported()) { toast('这个浏览器不能打开加密备份，请换用最新版手机浏览器'); return; }
+            close.replace(() => openEncryptedRestore(jsonText, file.name));
+          } else {
+            const parsed = Store.parseBackup(jsonText);
+            close.replace(() => openRestorePreview(parsed, file.name));
+          }
+        } catch (e) { toast('恢复失败：' + e.message); }
       };
       reader.readAsText(file);
     };
     node.querySelector('#set-reset').onclick = () => {
       if (confirm('确定清空全部数据？此操作无法恢复！')) {
         if (confirm('再次确认：血压记录、用药、训练打卡都会被删除。')) {
-          Store.resetAll();
+          if (!stored(Store.resetAll())) return;
           close();
           applyFont('normal');
           render(currentView);
@@ -1629,7 +1740,7 @@ const App = (() => {
       if (bs <= bd) { toast('高压目标应高于低压目标'); return; }
       if (!(gf >= 3 && gf <= 20) || !(gp >= 3 && gp <= 30)) { toast('请输入有效的血糖目标值'); return; }
       p2.targets = { bpSys: bs, bpDia: bd, gluFast: gf, gluPost: gp };
-      Store.save();
+      if (!stored(Store.save())) return;
       close();
       render(currentView);
       toast('设置已保存');
@@ -1672,7 +1783,7 @@ const App = (() => {
       </div>`);
     const close = openModal('首次使用指引', node, { center: true });
     node.querySelector('#guide-done').onclick = () => {
-      Store.markGuideSeen();
+      if (!stored(Store.markGuideSeen())) return;
       close();
       toast('可以开始了！按「今日」页的提示做就行');
     };
@@ -1681,17 +1792,91 @@ const App = (() => {
   /* ============================================================
      备份下载
      ============================================================ */
-  function downloadBackup() {
-    const text = Store.exportBackup();
+  function openBackupWarning() {
+    const node = nodeFromHTML(`
+      <div class="card">
+        <div class="card-title">🔒 备份里有健康隐私</div>
+        <div class="guide-line">备份文件包含称呼、用药、血压、血糖、体重和训练记录，内容是可以直接阅读的。</div>
+        <div class="guide-line">请保存在自己的设备或可信位置，不要发到群聊，也不要交给无关人员。</div>
+      </div>
+      <button class="btn block" id="backup-plain">下载普通备份</button>
+      ${Store.encryptionSupported() ? `
+        <button class="btn outline block" id="backup-encrypted" style="margin-top:0.6rem">🔐 设置密码并加密</button>
+        <div class="muted" style="margin-top:0.4rem">备份要放网盘或共享电脑时可选。应用不会保存密码，忘记后无法替您找回。</div>` : ''}`);
+    const close = openModal('下载备份', node, { center: true });
+    node.querySelector('#backup-plain').onclick = () => {
+      downloadBackup();
+      close();
+    };
+    const encrypted = node.querySelector('#backup-encrypted');
+    if (encrypted) encrypted.onclick = () => close.replace(openEncryptedBackup);
+  }
+
+  function saveBackupFile(text, encrypted = false) {
     const blob = new Blob([text], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `脑梗康复助手-备份-${Store.today()}.json`;
+    a.download = `脑梗康复助手-${encrypted ? '加密备份' : '备份'}-${Store.today()}.json`;
     document.body.appendChild(a);
     a.click();
     setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
-    toast('备份已下载，请妥善保存该文件');
+  }
+
+  function downloadBackup() {
+    saveBackupFile(Store.exportBackup());
+    toast('普通备份已下载，请妥善保存，不要转发给无关人员');
+  }
+
+  function openEncryptedBackup() {
+    const node = nodeFromHTML(`
+      <div class="vital-form">
+        <div class="muted" style="margin-bottom:0.7rem">密码只用于这份备份，不会保存或上传。以后恢复时必须输入完全相同的密码。</div>
+        <div class="field" style="margin-bottom:0.7rem">
+          <label for="backup-password">设置备份密码（至少 8 个字符）</label>
+          <input id="backup-password" type="password" maxlength="200" autocomplete="new-password" placeholder="数字、字母或汉字都可以">
+        </div>
+        <div class="field">
+          <label for="backup-password-again">再输入一次</label>
+          <input id="backup-password-again" type="password" maxlength="200" autocomplete="new-password">
+        </div>
+        <label style="display:flex;align-items:center;gap:0.6rem;min-height:48px;margin:0.35rem 0">
+          <input id="backup-password-show" type="checkbox" style="width:24px;height:24px">显示密码
+        </label>
+        <div id="backup-password-error" role="alert" style="min-height:1.6em;color:var(--red);font-weight:600"></div>
+        <button class="btn block" id="backup-encrypt-confirm">加密并下载</button>
+        <div class="disclaimer" style="margin-top:0.7rem">请使用只有本人或可信家人知道、但记得住的密码，并记在可信位置。忘记密码后本应用无法恢复；过于简单的密码仍可能被猜中。</div>
+      </div>`);
+    const close = openModal('密码加密备份', node, { center: true });
+    const password = node.querySelector('#backup-password');
+    const again = node.querySelector('#backup-password-again');
+    const button = node.querySelector('#backup-encrypt-confirm');
+    const error = node.querySelector('#backup-password-error');
+    node.querySelector('#backup-password-show').onchange = e => {
+      password.type = again.type = e.target.checked ? 'text' : 'password';
+    };
+    button.onclick = async () => {
+      if (password.value.length < 8) { error.textContent = '密码至少需要 8 个字符'; password.focus(); return; }
+      if (password.value !== again.value) { error.textContent = '两次输入的密码不一样'; again.focus(); return; }
+      button.disabled = true;
+      button.textContent = '正在加密，请稍候…';
+      error.textContent = '';
+      try {
+        const text = await Store.exportEncryptedBackup(password.value);
+        password.value = again.value = '';
+        saveBackupFile(text, true);
+        close();
+        toast('加密备份已下载，请同时保管好密码');
+      } catch (e) {
+        error.textContent = e.message || '没有生成加密备份';
+      } finally {
+        if (!dismissPending) {
+          button.disabled = false;
+          button.textContent = '加密并下载';
+        }
+      }
+    };
+    setTimeout(() => password.focus(), 80);
   }
 
   /* ============================================================
@@ -1730,11 +1915,9 @@ const App = (() => {
     const urlView = new URLSearchParams(location.search).get('view');
     go(RENDERERS[urlView] ? urlView : 'today');
 
-    /* 返回键：浮层是"压过历史条目"的，这里只负责在条目被退掉时关掉它。
-       unwindDebt > 0 说明这次 back 是屏幕上的 ✕ 主动触发的，DOM 已经关了，
-       只还账、不再多关一层。 */
+    /* 返回键与屏幕关闭统一在历史条目退掉后关闭浮层，保证 DOM 和历史状态同步。 */
     window.addEventListener('popstate', () => {
-      if (unwindDebt > 0) { unwindDebt--; return; }
+      dismissPending = false;
       closeTopOverlayDOM();
     });
     /* 键盘：Esc 关浮层（家属用电脑帮着录数据时顺手） */

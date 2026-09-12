@@ -19,10 +19,10 @@ if ! "${WRANGLER[@]}" whoami 2>&1 | grep -q "Account Name\|Account ID"; then
   exit 1
 fi
 
-# 只部署应用运行时需要的文件，不带上 .git/、docs/、test/、*.md
+# 只部署应用运行时需要的文件和 Pages 响应头规则，不带上 .git/、docs/、test/、*.md
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-cp -r index.html manifest.json icon.svg css js "$TMP"/
+cp -r index.html manifest.json icon.svg _headers css js "$TMP"/
 
 "${WRANGLER[@]}" pages deploy "$TMP" \
   --project-name=stroke-rehab-assistant \
