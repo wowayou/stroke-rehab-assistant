@@ -953,6 +953,29 @@ const App = (() => {
     return { d: Store.today(), t: Store.timeStr() };
   }
 
+  /* 日期时间的口语化短显示：绝大多数记录就是"刚刚"，低频修改不值得占一级大字段 */
+  function fmtWhen(date, time) {
+    const today = Store.today();
+    const head = date === today ? '今天'
+      : date === Store.addDays(today, -1) ? '昨天'
+        : `${+date.slice(5, 7)}-${+date.slice(8, 10)}`;
+    return time ? `${head} ${time}` : head;
+  }
+
+  /* 「记录时间」收敛成一个小条：点开才显示日期/时间原生输入（同前缀约定：*-dt-chip / *-dt-row / *-date / *-time） */
+  function bindWhenToggle(prefix) {
+    const row = document.getElementById(prefix + '-dt-row');
+    const chip = document.getElementById(prefix + '-dt-chip');
+    if (!row || !chip) return;
+    const dateEl = document.getElementById(prefix + '-date');
+    const timeEl = document.getElementById(prefix + '-time');
+    const fmt = () => { chip.textContent = fmtWhen(dateEl.value, timeEl ? timeEl.value : ''); };
+    chip.onclick = () => { row.hidden = !row.hidden; };
+    dateEl.onchange = fmt;
+    if (timeEl) timeEl.onchange = fmt;
+    fmt();
+  }
+
   function renderBP(body) {
     const { d, t } = formDefaults();
     const sorted = Store.vitalsSorted('bp');
@@ -976,9 +999,16 @@ const App = (() => {
         <div class="form-row">
           <div class="field"><label>高压<span class="label-opt">（收缩压）</span></label><input id="bp-sys" type="number" inputmode="numeric" placeholder="如 135"></div>
           <div class="field"><label>低压<span class="label-opt">（舒张压）</span></label><input id="bp-dia" type="number" inputmode="numeric" placeholder="如 85"></div>
-          <div class="field"><label>脉搏<span class="label-opt">（选填）</span></label><input id="bp-pulse" type="number" inputmode="numeric" placeholder="次/分"></div>
         </div>
-        <div class="form-row">
+        <div class="form-inline">
+          <label class="fi-label" for="bp-pulse">脉搏<span class="label-opt">（选填）</span></label>
+          <input id="bp-pulse" type="number" inputmode="numeric" placeholder="次/分">
+        </div>
+        <div class="form-inline">
+          <span class="fi-label">记录时间</span>
+          <button type="button" class="dt-chip" id="bp-dt-chip"></button>
+        </div>
+        <div class="form-row dt-row" id="bp-dt-row" hidden>
           <div class="field wide"><label>日期</label><input id="bp-date" type="date" value="${d}"></div>
           <div class="field wide"><label>时间</label><input id="bp-time" type="time" value="${t}"></div>
         </div>
@@ -992,6 +1022,7 @@ const App = (() => {
       ${histBtnHTML('bp', sorted.length)}
     </div>`;
 
+    bindWhenToggle('bp');
     document.getElementById('bp-save').onclick = () => {
       const sys = +document.getElementById('bp-sys').value;
       const dia = +document.getElementById('bp-dia').value;
@@ -1035,7 +1066,11 @@ const App = (() => {
           </div>
           <div class="field"><label>数值 mmol/L</label><input id="glu-val" type="number" step="0.1" inputmode="decimal" placeholder="如 6.2"></div>
         </div>
-        <div class="form-row">
+        <div class="form-inline">
+          <span class="fi-label">记录时间</span>
+          <button type="button" class="dt-chip" id="glu-dt-chip"></button>
+        </div>
+        <div class="form-row dt-row" id="glu-dt-row" hidden>
           <div class="field wide"><label>日期</label><input id="glu-date" type="date" value="${d}"></div>
           <div class="field wide"><label>时间</label><input id="glu-time" type="time" value="${t}"></div>
         </div>
@@ -1049,6 +1084,7 @@ const App = (() => {
       ${histBtnHTML('glucose', sorted.length)}
     </div>`;
 
+    bindWhenToggle('glu');
     document.getElementById('glu-save').onclick = () => {
       const gtype = document.getElementById('glu-type').value;
       const value = +document.getElementById('glu-val').value;
@@ -1095,7 +1131,13 @@ const App = (() => {
       <div class="vital-form">
         <div class="form-row">
           <div class="field"><label>体重（公斤）</label><input id="wt-val" type="number" step="0.1" inputmode="decimal" placeholder="如 62.5"></div>
-          <div class="field"><label>日期</label><input id="wt-date" type="date" value="${d}"></div>
+        </div>
+        <div class="form-inline">
+          <span class="fi-label">记录日期</span>
+          <button type="button" class="dt-chip" id="wt-dt-chip"></button>
+        </div>
+        <div class="form-row dt-row" id="wt-dt-row" hidden>
+          <div class="field wide"><label>日期</label><input id="wt-date" type="date" value="${d}"></div>
         </div>
         <button class="btn block" id="wt-save">保存体重记录</button>
       </div>
@@ -1107,6 +1149,7 @@ const App = (() => {
       ${histBtnHTML('weight', sorted.length)}
     </div>`;
 
+    bindWhenToggle('wt');
     document.getElementById('wt-save').onclick = () => {
       const value = +document.getElementById('wt-val').value;
       const date = document.getElementById('wt-date').value;
@@ -1590,18 +1633,15 @@ const App = (() => {
       <div class="card">
         <div class="setting-row">
           <div class="sr-label">怎么称呼您</div>
-          <input id="set-name" type="text" value="${esc(p.name)}" placeholder="如 王叔叔"
-            style="width:9em;min-height:48px;border:1.5px solid var(--border);border-radius:10px;padding:0 0.6rem;font-size:1rem">
+          <input id="set-name" class="set-input" type="text" value="${esc(p.name)}" placeholder="如 王叔叔">
         </div>
         <div class="setting-row">
           <div class="sr-label">发病日期</div>
-          <input id="set-stroke-date" type="date" value="${esc(p.strokeDate)}"
-            style="min-height:48px;border:1.5px solid var(--border);border-radius:10px;padding:0 0.6rem;font-size:1rem">
+          <input id="set-stroke-date" class="set-input" type="date" value="${esc(p.strokeDate)}">
         </div>
         <div class="setting-row">
           <div class="sr-label">身高(cm)</div>
-          <input id="set-height" type="number" inputmode="numeric" value="${esc(p.height)}" placeholder="算BMI用"
-            style="width:7em;min-height:48px;border:1.5px solid var(--border);border-radius:10px;padding:0 0.6rem;font-size:1rem">
+          <input id="set-height" class="set-input" type="number" inputmode="numeric" value="${esc(p.height)}" placeholder="算BMI用">
         </div>
         <div class="setting-row">
           <div class="sr-label">字体大小</div>
@@ -1620,30 +1660,26 @@ const App = (() => {
             <button class="font-chip f1 ${p.speechRate === 'fast' ? 'active' : ''}" data-rate="fast">快</button>
           </div>
         </div>
-        <div class="muted">训练动作和科普文章里都有「🔊 听一遍」，读字费劲时可以让它念。<button class="link-btn" id="set-rate-try">试听一句</button></div>
+        <div class="muted">训练动作和科普文章里都有「<span class="nowrap">🔊 听一遍</span>」，读字费劲时可以让它念。<button class="link-btn" id="set-rate-try">试听一句</button></div>
         ` : '<div class="muted">这个浏览器不支持语音朗读（换手机自带浏览器打开通常可用）。</div>'}
       </div>
       <div class="card">
         <div class="card-title">🎯 个人目标值（遵医嘱）</div>
         <div class="setting-row">
           <div class="sr-label">血压高压目标</div>
-          <input id="set-bpsys" type="number" inputmode="numeric" value="${esc(p.targets.bpSys)}"
-            style="width:6em;min-height:48px;border:1.5px solid var(--border);border-radius:10px;padding:0 0.6rem;font-size:1rem"><span class="muted"> mmHg</span>
+          <input id="set-bpsys" class="set-input" type="number" inputmode="numeric" value="${esc(p.targets.bpSys)}"><span class="muted"> mmHg</span>
         </div>
         <div class="setting-row">
           <div class="sr-label">血压低压目标</div>
-          <input id="set-bpdia" type="number" inputmode="numeric" value="${esc(p.targets.bpDia)}"
-            style="width:6em;min-height:48px;border:1.5px solid var(--border);border-radius:10px;padding:0 0.6rem;font-size:1rem"><span class="muted"> mmHg</span>
+          <input id="set-bpdia" class="set-input" type="number" inputmode="numeric" value="${esc(p.targets.bpDia)}"><span class="muted"> mmHg</span>
         </div>
         <div class="setting-row">
           <div class="sr-label">血糖空腹目标</div>
-          <input id="set-glufast" type="number" step="0.1" inputmode="decimal" value="${esc(p.targets.gluFast)}"
-            style="width:6em;min-height:48px;border:1.5px solid var(--border);border-radius:10px;padding:0 0.6rem;font-size:1rem"><span class="muted"> mmol/L</span>
+          <input id="set-glufast" class="set-input" type="number" step="0.1" inputmode="decimal" value="${esc(p.targets.gluFast)}"><span class="muted"> mmol/L</span>
         </div>
         <div class="setting-row">
           <div class="sr-label">血糖餐后2h目标</div>
-          <input id="set-glupost" type="number" step="0.1" inputmode="decimal" value="${esc(p.targets.gluPost)}"
-            style="width:6em;min-height:48px;border:1.5px solid var(--border);border-radius:10px;padding:0 0.6rem;font-size:1rem"><span class="muted"> mmol/L</span>
+          <input id="set-glupost" class="set-input" type="number" step="0.1" inputmode="decimal" value="${esc(p.targets.gluPost)}"><span class="muted"> mmol/L</span>
         </div>
         <div class="muted" style="margin-top:0.4rem">目标值按医生要求填写，图上会画出目标区、超过会提示"偏高"；血压 180/110、血糖极低/明显偏高等危险情况仍会单独警示。默认 140/90、空腹 7.0、餐后 10.0 仅为一般参考，以医嘱为准。</div>
       </div>

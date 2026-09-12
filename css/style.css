@@ -297,6 +297,32 @@ html[data-font="xlarge"] .btn-emergency { padding: 0 0.55rem; }
 }
 .field input:focus, .field select:focus { outline: 2px solid var(--primary); border-color: var(--primary); }
 
+/* ---- 表单次要信息行：标签左、控件右（与设置页同一行内语言）。
+   主信息（如高压/低压）用大字段，次要信息（脉搏/记录时间）用紧凑行——紧凑而不拥挤 ---- */
+.form-inline { display: flex; align-items: center; gap: 0.6rem; min-height: 54px; margin-bottom: 0.55rem; }
+.form-inline .fi-label { flex: none; font-size: 0.9rem; color: var(--text-2); }
+.form-inline input {
+  flex: 1; min-width: 0; min-height: 54px;
+  border: 1.5px solid var(--border); border-radius: 12px;
+  padding: 0 0.8rem; font-size: 1.25rem; background: #FDFCFA; color: var(--text);
+}
+/* 记录时间/日期收敛成一个可点开的小条：默认"今天"，低频修改不占一级空间 */
+.dt-chip {
+  flex: 1; min-width: 0; min-height: 48px;
+  border: 1.5px dashed var(--border); border-radius: 12px;
+  padding: 0 0.8rem; font-size: 1.1rem; background: #FDFCFA; color: var(--text-2);
+  text-align: left;
+}
+.dt-row[hidden] { display: none; }
+
+/* 设置页输入控件：弹性填满行宽，任何字号下都与标签同行（iOS 设置列表式） */
+.set-input {
+  flex: 1 1 auto; min-width: 0; min-height: 48px;
+  border: 1.5px solid var(--border); border-radius: 10px;
+  padding: 0 0.6rem; font-size: 1.05rem; background: #FDFCFA; color: var(--text);
+}
+.nowrap { white-space: nowrap; }
+
 .latest-value { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
 .latest-value .big { font-size: 2.2rem; font-weight: 800; font-variant-numeric: tabular-nums; }
 /* 「比上次高了 5」：应用把减法做完，患者不用自己比 */
