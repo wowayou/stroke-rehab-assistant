@@ -287,8 +287,13 @@ html[data-font="xlarge"] .btn-emergency { padding: 0 0.55rem; }
 .field .label-opt { white-space: nowrap; }   /* 标签里的括号说明是整体，窄列下整段换行，不许断成"（收缩/压）" */
 /* 数字输入框最小宽度，防止占位符（如 135）被裁剪；放不下时整字段换行 */
 .vital-form .field { min-width: 5.5em; }
-/* 日期/时间输入框有浏览器固有最小宽度：字段放不下时整体换行，绝不横向撑破页面 */
-.field.wide { min-width: 8.5em; }
+/* 日期/时间永远独占整行：iOS 对原生日期控件有强制最小宽度（桌面浏览器验证不到），
+   并排挤窄了框会戳出卡片；全宽则任何引擎都放得下 */
+.field.wide { flex: 1 1 100%; }
+/* 结构性保险：任何输入框都不允许超出其容器（超出一律变为容器内裁剪，而不是戳破卡片） */
+input, select { min-width: 0; max-width: 100%; }
+/* 设置页的日期输入在特大字号下整行放不下时，退化为独占一行（行内放得下时仍与标签同行） */
+input[type="date"].set-input { min-width: 9.5em; }
 .field label { display: block; font-size: 0.9rem; color: var(--text-2); margin-bottom: 0.25rem; }
 .field input, .field select {
   width: 100%; min-height: 54px;
