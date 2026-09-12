@@ -974,13 +974,13 @@ const App = (() => {
       <div class="card-title">➕ 记一次血压</div>
       <div class="vital-form">
         <div class="form-row">
-          <div class="field"><label>高压（收缩压）</label><input id="bp-sys" type="number" inputmode="numeric" placeholder="如 135"></div>
-          <div class="field"><label>低压（舒张压）</label><input id="bp-dia" type="number" inputmode="numeric" placeholder="如 85"></div>
+          <div class="field"><label>高压<span class="label-opt">（收缩压）</span></label><input id="bp-sys" type="number" inputmode="numeric" placeholder="如 135"></div>
+          <div class="field"><label>低压<span class="label-opt">（舒张压）</span></label><input id="bp-dia" type="number" inputmode="numeric" placeholder="如 85"></div>
+          <div class="field"><label>脉搏<span class="label-opt">（选填）</span></label><input id="bp-pulse" type="number" inputmode="numeric" placeholder="次/分"></div>
         </div>
         <div class="form-row">
-          <div class="field"><label>脉搏（可不填）</label><input id="bp-pulse" type="number" inputmode="numeric" placeholder="次/分"></div>
-          <div class="field"><label>日期</label><input id="bp-date" type="date" value="${d}"></div>
-          <div class="field"><label>时间</label><input id="bp-time" type="time" value="${t}"></div>
+          <div class="field wide"><label>日期</label><input id="bp-date" type="date" value="${d}"></div>
+          <div class="field wide"><label>时间</label><input id="bp-time" type="time" value="${t}"></div>
         </div>
         <button class="btn block" id="bp-save">保存血压记录</button>
       </div>
@@ -1036,8 +1036,8 @@ const App = (() => {
           <div class="field"><label>数值 mmol/L</label><input id="glu-val" type="number" step="0.1" inputmode="decimal" placeholder="如 6.2"></div>
         </div>
         <div class="form-row">
-          <div class="field"><label>日期</label><input id="glu-date" type="date" value="${d}"></div>
-          <div class="field"><label>时间</label><input id="glu-time" type="time" value="${t}"></div>
+          <div class="field wide"><label>日期</label><input id="glu-date" type="date" value="${d}"></div>
+          <div class="field wide"><label>时间</label><input id="glu-time" type="time" value="${t}"></div>
         </div>
         <button class="btn block" id="glu-save">保存血糖记录</button>
       </div>

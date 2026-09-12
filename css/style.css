@@ -51,10 +51,14 @@ input, select, textarea { font-family: inherit; }
 .header-inner {
   max-width: 600px; margin: 0 auto;
   display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap;   /* 极端组合（小屏×特大字号）下操作按钮换到第二行，标题永不截断 */
   padding: 0.6rem 0.9rem;
 }
-.header-title { font-size: 1.15rem; font-weight: 700; display: flex; align-items: center; gap: 0.4rem; }
+.header-title { font-size: 1.15rem; font-weight: 700; display: flex; align-items: center; gap: 0.4rem; white-space: nowrap; }
 .header-logo { font-size: 1.3rem; }
+/* 特大字号下头部放不下：标题绝对字号降到与"大"档一致（23px，适老化不回退），急救键收窄内边距 */
+html[data-font="xlarge"] .header-title { font-size: 1.05rem; }
+html[data-font="xlarge"] .btn-emergency { padding: 0 0.55rem; }
 .header-actions { display: flex; gap: 0.5rem; align-items: center; }
 .btn-icon {
   min-height: 48px; min-width: 48px;
@@ -145,6 +149,8 @@ input, select, textarea { font-family: inherit; }
   display: inline-flex; align-items: center; gap: 0.3rem;
   background: rgba(255,255,255,0.2); border-radius: 999px;
   padding: 0.25rem 0.8rem; margin-top: 0.55rem; font-size: 0.95rem;
+  max-width: 100%;   /* 特大字号+窄屏下允许成两行圆角条，不允许撑破卡片 */
+}
 }
 
 .check-item {
@@ -276,8 +282,13 @@ input, select, textarea { font-family: inherit; }
 }
 .rec-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); font-weight: 700; }
 
-.vital-form .form-row { display: flex; gap: 0.6rem; margin-bottom: 0.7rem; }
-.field { flex: 1; }
+.vital-form .form-row { display: flex; flex-wrap: wrap; align-items: end; gap: 0.6rem; margin-bottom: 0.7rem; }
+.field { flex: 1; min-width: 0; }
+.field .label-opt { white-space: nowrap; }   /* 标签里的括号说明是整体，窄列下整段换行，不许断成"（收缩/压）" */
+/* 数字输入框最小宽度，防止占位符（如 135）被裁剪；放不下时整字段换行 */
+.vital-form .field { min-width: 5.5em; }
+/* 日期/时间输入框有浏览器固有最小宽度：字段放不下时整体换行，绝不横向撑破页面 */
+.field.wide { min-width: 8.5em; }
 .field label { display: block; font-size: 0.9rem; color: var(--text-2); margin-bottom: 0.25rem; }
 .field input, .field select {
   width: 100%; min-height: 54px;
@@ -567,9 +578,10 @@ input, select, textarea { font-family: inherit; }
 }
 
 /* ---------- 设置 ---------- */
-.setting-row { display: flex; align-items: center; gap: 0.6rem; min-height: 60px; border-bottom: 1px solid var(--border); }
+.setting-row { display: flex; align-items: center; gap: 0.6rem; min-height: 60px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 .setting-row:last-child { border-bottom: none; }
-.setting-row .sr-label { flex: 1; font-weight: 600; }
+/* 标签永不收缩断词；特大字号下放不下时输入框整体换到下一行 */
+.setting-row .sr-label { flex: 1 0 auto; font-weight: 600; }
 .font-chips { display: flex; gap: 0.4rem; }
 .font-chip { min-width: 56px; min-height: 48px; border-radius: 12px; border: 1.5px solid var(--border); background: var(--card); }
 .font-chip.active { background: var(--primary); color: #fff; border-color: var(--primary); font-weight: 700; }
