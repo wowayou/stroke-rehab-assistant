@@ -24,6 +24,11 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 cp -r index.html manifest.json icon.svg _headers css js "$TMP"/
 
+# 缓存穿透：部署时把 index.html 里所有 ?ver=N 替换成时间戳，
+# 手机浏览器（尤其 iOS Safari 缓存激进）每次上线都能立刻拿到新 css/js，不用手动刷新
+STAMP="$(date +%Y%m%d%H%M%S)"
+sed -i "s/?ver=[0-9]*/?ver=${STAMP}/g" "$TMP/index.html"
+
 "${WRANGLER[@]}" pages deploy "$TMP" \
   --project-name=stroke-rehab-assistant \
   --branch main \

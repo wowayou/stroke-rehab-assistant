@@ -292,6 +292,16 @@ html[data-font="xlarge"] .btn-emergency { padding: 0 0.55rem; }
 .field.wide { flex: 1 1 100%; }
 /* 结构性保险：任何输入框都不允许超出其容器（超出一律变为容器内裁剪，而不是戳破卡片） */
 input, select { min-width: 0; max-width: 100%; }
+/* iOS Safari 会给原生日期/时间控件强制画自己的灰色渐变底+内阴影（无视上述样式），
+   且带引擎固有的最小宽度——去掉原生外观后它才完全听我们的盒模型。
+   用 @supports 限定只在 iOS Safari 生效，桌面浏览器保留原生日历图标 */
+@supports (-webkit-touch-callout: none) {
+  input[type="date"], input[type="time"] {
+    -webkit-appearance: none;
+    appearance: none;
+    min-height: 54px;
+  }
+}
 /* 设置页的日期输入在特大字号下整行放不下时，退化为独占一行（行内放得下时仍与标签同行） */
 input[type="date"].set-input { min-width: 9.5em; }
 .field label { display: block; font-size: 0.9rem; color: var(--text-2); margin-bottom: 0.25rem; }
