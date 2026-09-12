@@ -249,6 +249,36 @@ localStorage.setItem('strokeRehab.v1', JSON.stringify(legacy));
 Store.load();
 assert(Store.data.profile.speechRate === 'slow', '旧备份缺 speechRate 应回落 slow');
 
+/* --- 朗读音色名消毒（v0.2.27）---
+   speechVoice 与上面的枚举偏好不同：**不能白名单**。每台机器装的中文音色都不一样
+   （iOS `Tingting`、安卓 `Chinese China`、Windows `Microsoft Xiaoxiao Online …`），
+   枚举不出来，所以只做类型与长度守卫；本机没有这个音色时由 Speech.pickVoice()
+   静默回落到系统默认，存一个陌生名字不会有后果。 */
+assert(Store.data.profile.speechVoice === '', '音色默认应为空（跟随系统），实际 ' + JSON.stringify(Store.data.profile.speechVoice));
+Store.data.profile.speechVoice = 'Microsoft Xiaoxiao Online (Natural) - Chinese (Mainland)';
+localStorage.setItem('strokeRehab.v1', JSON.stringify(Store.data));
+Store.load();
+assert(Store.data.profile.speechVoice === 'Microsoft Xiaoxiao Online (Natural) - Chinese (Mainland)',
+  '各系统的真实音色名（含空格括号连字符）必须原样保留，不能被消毒掉');
+/* 非字符串、超长都要挡住：备份文件是外部输入 */
+Store.data.profile.speechVoice = { evil: 1 };
+localStorage.setItem('strokeRehab.v1', JSON.stringify(Store.data));
+Store.load();
+assert(Store.data.profile.speechVoice === '', '非字符串音色名应回落空串');
+Store.data.profile.speechVoice = 'x'.repeat(400);
+localStorage.setItem('strokeRehab.v1', JSON.stringify(Store.data));
+Store.load();
+assert(Store.data.profile.speechVoice.length === 120, '超长音色名应截到 120，实际 ' + Store.data.profile.speechVoice.length);
+/* 旧备份没有这个字段（v0.2.26 及更早导出的） */
+const legacyVoice = JSON.parse(JSON.stringify(Store.data));
+delete legacyVoice.profile.speechVoice;
+localStorage.setItem('strokeRehab.v1', JSON.stringify(legacyVoice));
+Store.load();
+assert(Store.data.profile.speechVoice === '', '旧备份缺 speechVoice 应回落空串（跟随系统）');
+Store.data.profile.speechVoice = '';
+localStorage.setItem('strokeRehab.v1', JSON.stringify(Store.data));
+Store.load();
+
 /* --- 少算数 / 正向反馈用的派生数据（v0.2.12） --- */
 assert(Store.daysBetween('2026-03-01', '2026-03-04') === 3, 'daysBetween 应为3，实际 ' + Store.daysBetween('2026-03-01', '2026-03-04'));
 assert(Store.daysBetween('2026-03-04', '2026-03-04') === 0, '同一天 daysBetween 应为0');

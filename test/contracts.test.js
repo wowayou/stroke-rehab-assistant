@@ -42,6 +42,44 @@ assert(/Store\.exportEncryptedBackup\(password\.value\)/.test(app) && /Store\.pa
 assert(/name: 'AES-GCM'/.test(read('js/storage.js')) && /kdf: 'PBKDF2'/.test(read('js/storage.js')), '加密备份必须使用 AES-GCM 与 PBKDF2');
 assert(!/localStorage\.setItem\([^\n]*(?:password|passphrase)/i.test(read('js/storage.js') + app), '备份密码不得写入 localStorage');
 
+/* 即时生效型设置（字号/语速）：选中态只能从 Store 派生，且点一下就落盘。
+   设置弹窗有 ✕/返回键/Esc/点遮罩四种关法，只有一种走「保存设置」——
+   若把它们挂在保存按钮上，已生效的字号会丢，重开时回显旧档（v0.2.25 修的 bug）。 */
+assert(/current: \(\) => Store\.data\.profile\.font/.test(app), '字号选中态必须从 Store 读取，不得依赖 DOM 上的 .active');
+assert(/current: \(\) => Store\.data\.profile\.speechRate/.test(app), '语速选中态必须从 Store 读取，不得依赖 DOM 上的 .active');
+assert(!/\[data-font\]\.active/.test(app) && !/\[data-rate\]\.active/.test(app),
+  '不得再按 DOM 的 .active 反推设置值（那是"显示与实际不一致"的根源）');
+assert(/#set-save'\)\.onclick[\s\S]{0,900}?字号与语速不在这里读/.test(app), '「保存设置」不得重新赋值字号/语速，否则会覆盖已即时生效的偏好');
+assert(/role="radiogroup"/.test(app) && /role="radio"/.test(app) && /aria-checked=/.test(app), '分段单选控件必须是可被读屏识别的 radiogroup');
+/* commit() 抛异常时选中态也必须重刷：不刷的话高亮停在旧值、Store 已是新值，
+   又变成"显示与真相两个来源"——正是 v0.2.25 修掉的那类 bug。 */
+assert(/try\s*\{\s*commit\(c\.dataset\.segKey\);\s*\}\s*finally\s*\{\s*paint\(\);\s*\}/.test(app),
+  '分段控件的 commit 失败也必须重刷选中态（paint 放 finally）');
+
+/* 朗读层（v0.2.27）：生硬的主因是喂给引擎的文本，归一化必须在 Speech 内部统一做。 */
+const speech = read('js/speech.js');
+assert(/normalize\(text\)/.test(speech) && /splitSentences\(normalize\(text\)\)/.test(speech),
+  'speak() 必须自己归一化，不能让每个调用方各自处理（漏一处就是一处生硬）');
+assert(/GAP_SENTENCE/.test(speech) && /gapAfter\(/.test(speech),
+  '句间必须留换气停顿，不能 onend 立刻念下一句（机关枪式朗读）');
+assert(/gapTimer[\s\S]{0,200}?myGen !== gen/.test(speech),
+  '句间停顿的定时器必须认代号，否则停止后到点仍会接着念旧内容');
+/* 老 WebView 不支持 lookbehind：用了会让整个文件解析失败、朗读功能全哑 */
+assert(!/\(\?<[=!]/.test(speech), 'speech.js 不得使用 lookbehind（老 WebView 会整文件解析失败）');
+/* 显示文案是给眼睛的，不能为了朗读去改数据文件 */
+assert(/[～]/.test(exercises) && /[×]/.test(exercises),
+  '动作库里的 ～ 与 × 是给眼睛看的，朗读问题只能在 speech.js 里解，不许改数据文件');
+/* 文章朗读稿必须按块级标签断句，且只在叶子块取文本（否则外层容器重复念一遍） */
+assert(/SPEECH_BLOCK/.test(app) && /!node\.querySelector\(SPEECH_BLOCK\)/.test(app),
+  '文章朗读稿必须按块级标签断句，并只在叶子块上取文本');
+assert(!/div\.textContent \|\| ''\)\.replace\(\/\\s\+\/g, ' '\)\.trim\(\);\s*\n\s*return `\$\{a\.title\}/.test(app),
+  'articleSpeechText 不得退回 textContent 直取（会把小标题和正文粘成破句）');
+/* 音色是自由字符串，不能白名单（各机音色名不同）；整体换 data 的地方都要重新套用 */
+assert(/out\.profile\.speechVoice = text\(p\.speechVoice/.test(read('js/storage.js')),
+  '音色名只能限长不能白名单——每台机器装的音色不一样，枚举不出来');
+assert(/function applyVoice/.test(app) && (app.match(/applyVoice\(/g) || []).length >= 5,
+  '凡是整体换掉 data 的地方（启动/恢复/撤销/清空）都要 applyVoice()，同 applyFont');
+
 if (failed) {
   console.error(`❌ ${failed} 项静态硬约定失败`);
   process.exit(1);

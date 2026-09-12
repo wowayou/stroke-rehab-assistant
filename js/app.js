@@ -74,6 +74,74 @@ const App = (() => {
     return `大约 ${m} 分 ${s} 秒`;
   }
 
+  /* ---------- 单选分段控件（字号/语速这类"立刻生效"的偏好） ----------
+     两条规则，缺一个就会出现"显示和实际不一致"：
+     ① 选中态**只从 Store 派生**，不靠 DOM 上残留的 .active 反推；
+     ② 立刻生效的偏好点一下就落盘（同训练页阶段 chip），不等"保存设置"——
+        设置弹窗有 ✕/返回键/Esc/点遮罩四种关法，只有一种会走保存按钮。
+     无障碍：radiogroup + aria-checked，读屏能报"已选中，3 之 3"。 */
+  function segGroupHTML(name, label, options, current, cls = '') {
+    const chips = options.map(o =>
+      `<button type="button" role="radio" class="font-chip ${o.cls || ''} ${o.key === current ? 'active' : ''}"
+         aria-checked="${o.key === current}" data-seg="${esc(name)}" data-seg-key="${esc(o.key)}"
+       >${esc(o.label)}</button>`).join('');
+    return `<div class="font-chips ${cls}" role="radiogroup" aria-label="${esc(label)}">${chips}</div>`;
+  }
+  /* current() 读真相（Store），commit(key) 负责落盘并返回是否成功。
+     无论成功或失败都按 current() 重刷一遍——落盘失败时高亮会自己弹回旧值，
+     用户看到的永远是真实生效的那一档，不会出现"看起来选上了其实没存"。
+     键盘：左右/上下箭头在同组内移动选择（WAI-ARIA radiogroup 惯例）。 */
+  function bindSegGroup(root, name, { current, commit }) {
+    const chips = [...root.querySelectorAll(`[data-seg="${name}"]`)];
+    if (!chips.length) return () => {};
+    const paint = () => chips.forEach(c => {
+      const on = c.dataset.segKey === current();
+      c.classList.toggle('active', on);
+      c.setAttribute('aria-checked', String(on));
+      c.tabIndex = on ? 0 : -1;
+    });
+    /* paint() 放在 finally 里：commit 里任何一步抛异常（试听时浏览器语音接口
+       抽风就会），高亮也必须按 Store 重刷一遍。漏了这一步，高亮会停在旧档而
+       Store 已经变了——显示与真相分叉，正是 v0.2.25 修掉的那类 bug。 */
+    const pick = c => {
+      try { commit(c.dataset.segKey); }
+      finally { paint(); }
+    };
+    chips.forEach((c, i) => {
+      c.onclick = () => pick(c);
+      c.onkeydown = e => {
+        const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+        if (!step) return;
+        e.preventDefault();
+        const next = chips[(i + step + chips.length) % chips.length];
+        pick(next);
+        next.focus();
+      };
+    });
+    paint();
+    return paint;
+  }
+  /* 写 profile 的统一入口。不必自己备份回滚：Store.save() 失败时会把整个 data
+     重新读回上次持久化的状态，此后 Store.data.profile 已是旧值。after() 与
+     选中态重绘都从 Store 现读，所以落盘失败时字号和高亮会自动弹回真正生效的那一档。 */
+  function commitProfile(mutate, after) {
+    mutate(Store.data.profile);
+    const ok = stored(Store.save());
+    if (after) after();
+    return ok;
+  }
+  /* 字号/语速的选项表：标签、存储键、以及 chip 自身的字号示意（f1/f2/f3） */
+  const FONT_OPTIONS = [
+    { key: 'normal', label: '标准', cls: 'f1' },
+    { key: 'large', label: '大', cls: 'f2' },
+    { key: 'xlarge', label: '特大', cls: 'f3' },
+  ];
+  const RATE_OPTIONS = [
+    { key: 'slow', label: '慢', cls: 'f1' },
+    { key: 'mid', label: '适中', cls: 'f1' },
+    { key: 'fast', label: '快', cls: 'f1' },
+  ];
+
   /* ---------- 语音朗读 ----------
      给读字困难/视力差/失语恢复期的患者："听"比"读"省力。
      不支持的浏览器（部分微信内置 WebView）直接不显示按钮，不做降级提示打扰。 */
@@ -119,12 +187,38 @@ const App = (() => {
     if (ex.caution) lines.push(`注意，${ex.caution}`);
     return lines.join('\n');
   }
-  /* 文章朗读稿：去掉 HTML 标签，只留可读文字 */
+  /* 文章朗读稿：把 HTML 变成"能听懂"的稿子。
+     不能直接用 textContent——`<h3>2. 控制血压</h3><ul><li>高血压是…` 会被粘成
+     "控制血压高血压是…"，一句破句念到底，听着就是"生硬"的主要来源之一。
+     按块级标签断行（朗读层据此换气），段末没标点的补句号。 */
+  const SPEECH_BLOCK = 'p,h1,h2,h3,h4,h5,h6,li,dt,dd,blockquote,figcaption,div,td,th';
+  function collectSpeechBlocks(root, out) {
+    for (let i = 0; i < root.childNodes.length; i++) {
+      const node = root.childNodes[i];
+      if (node.nodeType === 3) {           // 块级标签之间的裸文本也要念
+        const t = node.textContent.replace(/\s+/g, ' ').trim();
+        if (t) out.push(t);
+        continue;
+      }
+      if (node.nodeType !== 1) continue;
+      /* 只在"叶子块"上取文本：ul/div 这类里面还套着块的容器继续往里走，
+         否则外层容器会把内层每一段重复念一遍。 */
+      if (node.matches(SPEECH_BLOCK) && !node.querySelector(SPEECH_BLOCK)) {
+        const t = (node.textContent || '').replace(/\s+/g, ' ').trim();
+        if (t) out.push(t);
+        continue;
+      }
+      collectSpeechBlocks(node, out);
+    }
+    return out;
+  }
   function articleSpeechText(a) {
     const div = document.createElement('div');
     div.innerHTML = a.body;
-    const body = (div.textContent || '').replace(/\s+/g, ' ').trim();
-    return `${a.title}。${a.sub}。${body}`;
+    const body = collectSpeechBlocks(div, [])
+      .map(s => (/[。！？；：…，、,.!?;:]$/.test(s) ? s : s + '。'))
+      .join('\n');
+    return `${a.title}。${a.sub}。\n${body}`;
   }
 
   /* ---------- 浮层与返回键 ----------
@@ -308,10 +402,11 @@ const App = (() => {
     bindExItems($view());
   }
 
-  /* 训练条目公共 HTML（今日推荐 & 训练库共用） */
+  /* 训练条目公共 HTML（今日推荐 & 训练库共用）：行样式由 CSS 的 .ex-item 统一给，
+     今天页在 .card 里、训练库在 #ex-list 分组卡里，都是"一卡多行"的分组列表 */
   function exItemHTML(e, done) {
     return `
-    <div class="ex-item" style="box-shadow:none;padding:0.6rem 0;margin-bottom:0;border-bottom:1px solid var(--border);border-radius:0">
+    <div class="ex-item">
       <div class="ex-icon">${e.icon}</div>
       <div class="ex-body">
         <div class="ex-name">${e.name}</div>
@@ -372,9 +467,9 @@ const App = (() => {
       const others = list.filter(e => e.stage !== p.stage);
       const stageName = k => (STAGES.find(s => s.key === k) || {}).name || '';
       document.getElementById('ex-list').innerHTML =
-        `<div class="muted" style="margin-bottom:0.4rem">适合当前阶段（${esc(stageName(p.stage))}）：</div>`
+        `<div class="ex-group-label">适合当前阶段（${esc(stageName(p.stage))}）</div>`
         + mine.map(e => exCardHTML(e, doneIds.includes(e.id))).join('')
-        + `<div class="muted" style="margin:0.7rem 0 0.4rem">其他阶段动作（量力选做）：</div>`
+        + `<div class="ex-group-label">其他阶段动作（量力选做）</div>`
         + others.map(e => exCardHTML(e, doneIds.includes(e.id), stageName(e.stage))).join('');
     } else {
       document.getElementById('ex-list').innerHTML =
@@ -1497,16 +1592,18 @@ const App = (() => {
       <button class="btn red block" id="btn-open-emergency">查看急救指引 + 拨打120</button>
     </div>
     ${groups.map(g => `
-      <div class="card-title" style="margin:0.9rem 0 0.5rem 0.2rem">${esc(g)}</div>
-      ${ARTICLES.filter(a => a.group === g).map(a => `
-        <div class="art-item" data-art="${a.id}" role="button" tabindex="0">
-          <div class="art-icon">${a.icon}</div>
-          <div class="art-body">
-            <div class="art-title">${a.title}</div>
-            <div class="art-sub">${a.sub}</div>
-          </div>
-          <div class="art-arrow">›</div>
-        </div>`).join('')}
+      <div class="section-label">${esc(g)}</div>
+      <div class="list-group">
+        ${ARTICLES.filter(a => a.group === g).map(a => `
+          <div class="art-item" data-art="${a.id}" role="button" tabindex="0">
+            <div class="art-icon">${a.icon}</div>
+            <div class="art-body">
+              <div class="art-title">${a.title}</div>
+              <div class="art-sub">${a.sub}</div>
+            </div>
+            <div class="art-arrow">›</div>
+          </div>`).join('')}
+      </div>
     `).join('')}
     <div class="disclaimer">内容参考国内卒中防治与康复指南整理，仅作健康教育用途，<br>不能替代医生的诊断和治疗建议。</div>`;
 
@@ -1579,6 +1676,7 @@ const App = (() => {
         return;
       }
       applyFont(Store.data.profile.font);
+      applyVoice(Store.data.profile.speechVoice);
       closeConfirm();
       render(currentView);
       toast('已从备份恢复，可在设置中撤销一次');
@@ -1629,6 +1727,16 @@ const App = (() => {
 
   function openSettings() {
     const p = Store.data.profile;
+    /* 音色选项＝这台机器上真有的中文音色，只有两个以上才值得让用户选。
+       不做"跟随系统"这一档：那是给开发者的概念，患者只想知道"现在是哪个声音"。
+       高亮取真正在用的那个（存的名字在本机不存在时 Speech 已回落），
+       保证"看到高亮的"和"按下听到的"永远是同一个声音。 */
+    const voiceOpts = (Speech.supported() ? Speech.voices() : [])
+      .map(v => ({ key: v.name, label: v.label, cls: 'f1' }));
+    const voiceCurrent = () => {
+      const want = Store.data.profile.speechVoice;
+      return voiceOpts.some(o => o.key === want) ? want : Speech.voiceName();
+    };
     const node = nodeFromHTML(`
       <div class="card">
         <div class="setting-row">
@@ -1645,22 +1753,22 @@ const App = (() => {
         </div>
         <div class="setting-row">
           <div class="sr-label">字体大小</div>
-          <div class="font-chips">
-            <button class="font-chip f1 ${p.font === 'normal' ? 'active' : ''}" data-font="normal">标准</button>
-            <button class="font-chip f2 ${p.font === 'large' ? 'active' : ''}" data-font="large">大</button>
-            <button class="font-chip f3 ${p.font === 'xlarge' ? 'active' : ''}" data-font="xlarge">特大</button>
-          </div>
+          ${segGroupHTML('font', '字体大小', FONT_OPTIONS, p.font)}
         </div>
+        <div class="muted seg-hint">点一下立刻变大，不用再按保存。</div>
         ${Speech.supported() ? `
         <div class="setting-row">
           <div class="sr-label">朗读语速</div>
-          <div class="font-chips">
-            <button class="font-chip f1 ${p.speechRate === 'slow' ? 'active' : ''}" data-rate="slow">慢</button>
-            <button class="font-chip f1 ${p.speechRate === 'mid' ? 'active' : ''}" data-rate="mid">适中</button>
-            <button class="font-chip f1 ${p.speechRate === 'fast' ? 'active' : ''}" data-rate="fast">快</button>
-          </div>
+          ${segGroupHTML('rate', '朗读语速', RATE_OPTIONS, p.speechRate)}
         </div>
-        <div class="muted">训练动作和科普文章里都有「<span class="nowrap">🔊 听一遍</span>」，读字费劲时可以让它念。<button class="link-btn" id="set-rate-try">试听一句</button></div>
+        <div class="muted">点一下就按这个速度念一句给您听，选好即生效。训练动作和科普文章里都有「<span class="nowrap">🔊 听一遍</span>」，读字费劲时可以让它念。<button class="link-btn" id="set-rate-try">再听一句</button></div>
+        ${voiceOpts.length > 1 ? `
+        <div class="setting-row setting-stack">
+          <div class="sr-label">朗读声音</div>
+          ${segGroupHTML('voice', '朗读声音', voiceOpts, voiceCurrent())}
+        </div>
+        <div class="muted seg-hint">这台手机装了 ${voiceOpts.length} 个中文声音，点一下试听，挑个您听着舒服的。</div>
+        ` : ''}
         ` : '<div class="muted">这个浏览器不支持语音朗读（换手机自带浏览器打开通常可用）。</div>'}
       </div>
       <div class="card">
@@ -1699,22 +1807,40 @@ const App = (() => {
 
     const close = openModal('设置', node);
 
-    node.querySelectorAll('[data-font]').forEach(b => b.onclick = () => {
-      node.querySelectorAll('[data-font]').forEach(x => x.classList.remove('active'));
-      b.classList.add('active');
-      applyFont(b.dataset.font);
+    /* 字号/语速是「即时生效」型设置：点一下就落盘。
+       绝不能等「保存设置」——弹窗有 ✕/返回键/Esc/点遮罩四种关法，
+       等保存会让已经生效的字号丢掉，下次打开回显成旧值（v0.2.25 修复的 bug）。 */
+    bindSegGroup(node, 'font', {
+      current: () => Store.data.profile.font,
+      commit: key => commitProfile(
+        pf => { pf.font = key; },
+        () => applyFont(Store.data.profile.font),
+      ),
     });
-    /* 语速：点一下即试听，让用户用耳朵选而不是猜"适中"是多快 */
-    node.querySelectorAll('[data-rate]').forEach(b => b.onclick = () => {
-      node.querySelectorAll('[data-rate]').forEach(x => x.classList.remove('active'));
-      b.classList.add('active');
-      Speech.speak('这是朗读速度，听得清吗？', { rateKey: b.dataset.rate });
+    /* 语速：点一下即按新速度念一句，让用户用耳朵选而不是猜"适中"是多快 */
+    bindSegGroup(node, 'rate', {
+      current: () => Store.data.profile.speechRate,
+      commit: key => {
+        const ok = commitProfile(pf => { pf.speechRate = key; });
+        if (ok) Speech.speak('这是朗读速度，听得清吗？', { rateKey: Store.data.profile.speechRate });
+        return ok;
+      },
+    });
+    /* 音色：同样点一下即试听。先 setVoice 再念，让耳朵听到的就是刚点的那个。
+       落盘失败时 commitProfile 已把 profile 读回旧值，这里按旧值再套一次，
+       免得"存没存上"和"正在用哪个声音"对不上。 */
+    bindSegGroup(node, 'voice', {
+      current: voiceCurrent,
+      commit: key => {
+        const ok = commitProfile(pf => { pf.speechVoice = key; });
+        applyVoice(Store.data.profile.speechVoice);
+        if (ok) Speech.speak('您好，以后就用这个声音念给您听。', { rateKey: Store.data.profile.speechRate });
+        return ok;
+      },
     });
     const tryBtn = node.querySelector('#set-rate-try');
-    if (tryBtn) tryBtn.onclick = () => {
-      const act = node.querySelector('[data-rate].active');
-      Speech.speak('每天坚持一点，慢慢会好起来。', { rateKey: act ? act.dataset.rate : p.speechRate });
-    };
+    if (tryBtn) tryBtn.onclick = () =>
+      Speech.speak('每天坚持一点，慢慢会好起来。', { rateKey: Store.data.profile.speechRate });
     node.querySelector('#set-guide').onclick = () => close.replace(openGuide);
     node.querySelector('#set-export').onclick = () => close.replace(openExport);
     node.querySelector('#set-backup').onclick = () => close.replace(openBackupWarning);
@@ -1728,6 +1854,7 @@ const App = (() => {
       }
       close();
       applyFont(Store.data.profile.font);
+      applyVoice(Store.data.profile.speechVoice);
       render(currentView);
       toast('已撤销上次恢复');
     };
@@ -1756,6 +1883,7 @@ const App = (() => {
           if (!stored(Store.resetAll())) return;
           close();
           applyFont('normal');
+          applyVoice('');
           render(currentView);
           toast('已清空');
         }
@@ -1766,10 +1894,8 @@ const App = (() => {
       p2.name = node.querySelector('#set-name').value.trim();
       p2.strokeDate = node.querySelector('#set-stroke-date').value;
       p2.height = node.querySelector('#set-height').value;
-      const active = node.querySelector('[data-font].active');
-      p2.font = active ? active.dataset.font : 'normal';
-      const rateActive = node.querySelector('[data-rate].active');
-      if (rateActive) p2.speechRate = rateActive.dataset.rate;
+      /* 字号与语速不在这里读：它们点一下就已经落盘了（见上方 bindSegGroup）。
+         若在此按 DOM 再赋一次值，任何时序差都会把已生效的偏好覆盖回旧值。 */
       const g = id => +node.querySelector(id).value;
       const bs = g('#set-bpsys'), bd = g('#set-bpdia'), gf = g('#set-glufast'), gp = g('#set-glupost');
       if (!(bs >= 60 && bs <= 260) || !(bd >= 30 && bd <= 200)) { toast('请输入有效的血压目标值'); return; }
@@ -1786,6 +1912,12 @@ const App = (() => {
   function applyFont(f) {
     if (f === 'large' || f === 'xlarge') document.documentElement.dataset.font = f;
     else delete document.documentElement.dataset.font;
+  }
+  /* 把存着的音色告诉朗读层。和 applyFont 一样，凡是整体换掉 data 的地方
+     （启动、恢复备份、撤销恢复、清空）都要重新套一次，否则朗读还用着上一份数据的音色。
+     机上没有这个音色时 Speech 内部静默回落，这里不需要判断。 */
+  function applyVoice(name) {
+    if (Speech.supported()) Speech.setVoice(name || '');
   }
 
   /* ============================================================
@@ -1945,6 +2077,7 @@ const App = (() => {
   function init() {
     Store.load();
     applyFont(Store.data.profile.font);
+    applyVoice(Store.data.profile.speechVoice);
     document.querySelectorAll('.nav-item').forEach(b => b.onclick = () => go(b.dataset.view));
     document.getElementById('btn-emergency').onclick = openEmergency;
     document.getElementById('btn-settings').onclick = openSettings;

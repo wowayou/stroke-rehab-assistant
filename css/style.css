@@ -151,7 +151,6 @@ html[data-font="xlarge"] .btn-emergency { padding: 0 0.55rem; }
   padding: 0.25rem 0.8rem; margin-top: 0.55rem; font-size: 0.95rem;
   max-width: 100%;   /* 特大字号+窄屏下允许成两行圆角条，不允许撑破卡片 */
 }
-}
 
 .check-item {
   display: flex; align-items: center; gap: 0.7rem;
@@ -165,7 +164,7 @@ html[data-font="xlarge"] .btn-emergency { padding: 0 0.55rem; }
 .check-item .ci-name { font-weight: 600; font-size: 1.02rem; }
 .check-item .ci-sub { font-size: 0.85rem; color: var(--text-2); }
 .check-item.done .ci-name { color: var(--green); }
-.ci-action { min-height: 48px; min-width: 88px; border-radius: 12px; border: none; font-size: 0.98rem; font-weight: 600; background: var(--primary-soft); color: var(--primary); padding: 0 0.8rem; }
+.ci-action { min-height: 48px; min-width: 88px; border-radius: 12px; border: none; font-size: 0.98rem; font-weight: 700; background: var(--primary-soft); color: var(--primary-dark); padding: 0 0.8rem; }
 .ci-action.done { background: var(--green-soft); color: var(--green); }
 
 .progress-bar { height: 12px; background: #EEE9DF; border-radius: 999px; overflow: hidden; margin: 0.4rem 0 0.2rem; }
@@ -197,6 +196,39 @@ html[data-font="xlarge"] .btn-emergency { padding: 0 0.55rem; }
 }
 .stage-chip.active { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 700; }
 
+/* 动作列表 = 一张分组卡（iOS 设置列表式）：#ex-list 是容器，.ex-item 是卡内行。
+   此前每个动作各是一张浮动小卡片，一屏十几个同款卡+实心蓝按钮，重复感很强 */
+#ex-list {
+  background: var(--card); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 0.25rem 0.9rem 0.35rem;
+  margin-bottom: 0.9rem;
+}
+.ex-group-label {
+  font-size: 0.85rem; font-weight: 800; color: var(--text-2);
+  letter-spacing: 0.03em; padding: 0.85rem 0.15rem 0.35rem;
+}
+.ex-item {
+  display: flex; align-items: center; gap: 0.7rem;
+  padding: 0.8rem 0.15rem;
+  border-bottom: 1px solid var(--border);
+}
+.ex-item:last-child { border-bottom: none; }
+/* 分组标题前不画发丝线：换组是更强的分隔（不支持 :has 的老浏览器只是多一条线，无碍） */
+.ex-item:has(+ .ex-group-label) { border-bottom: none; }
+.ex-item .ex-icon { font-size: 1.7rem; width: 2.3rem; text-align: center; }
+.ex-item .ex-body { flex: 1; min-width: 0; }
+.ex-item .ex-name { font-weight: 700; font-size: 1.02rem; }
+.ex-item .ex-dose { font-size: 0.85rem; color: var(--text-2); }
+.ex-item .ex-done-mark { color: var(--green); font-size: 0.85rem; font-weight: 600; }
+/* 行内的"开始"是重复性动作，用浅色按钮（同今日页三件事的口径）；
+   实心蓝只留给每屏唯一主操作（保存/打卡/拨打120），主次才分得明 */
+.ex-start {
+  min-height: 48px; min-width: 80px; border: none; border-radius: 12px;
+  background: var(--primary-soft); color: var(--primary-dark);
+  font-size: 0.98rem; font-weight: 700;
+}
+.ex-start.done { background: var(--green-soft); color: var(--green); }
+
 .cat-tabs { display: flex; gap: 0.4rem; overflow-x: auto; padding-bottom: 0.4rem; margin-bottom: 0.6rem; -webkit-overflow-scrolling: touch; }
 .cat-tab {
   flex-shrink: 0; min-height: 48px; padding: 0.3rem 0.85rem;
@@ -204,19 +236,6 @@ html[data-font="xlarge"] .btn-emergency { padding: 0 0.55rem; }
   background: var(--card); font-size: 0.95rem;
 }
 .cat-tab.active { background: var(--primary-soft); border-color: var(--primary); color: var(--primary); font-weight: 700; }
-
-.ex-item {
-  display: flex; align-items: center; gap: 0.7rem;
-  background: var(--card); border-radius: var(--radius);
-  box-shadow: var(--shadow); padding: 0.85rem 0.9rem; margin-bottom: 0.7rem;
-}
-.ex-item .ex-icon { font-size: 1.7rem; width: 2.3rem; text-align: center; }
-.ex-item .ex-body { flex: 1; min-width: 0; }
-.ex-item .ex-name { font-weight: 700; font-size: 1.02rem; }
-.ex-item .ex-dose { font-size: 0.85rem; color: var(--text-2); }
-.ex-item .ex-done-mark { color: var(--green); font-size: 0.85rem; font-weight: 600; }
-.ex-start { min-height: 48px; min-width: 80px; border: none; border-radius: 12px; background: var(--primary); color: #fff; font-size: 0.98rem; font-weight: 600; }
-.ex-start.done { background: var(--green-soft); color: var(--green); }
 
 /* ---------- 训练引导页(全屏) ---------- */
 .trainer {
@@ -342,7 +361,8 @@ input[type="date"].set-input { min-width: 9.5em; }
 .latest-value .big { font-size: 2.2rem; font-weight: 800; font-variant-numeric: tabular-nums; }
 /* 「比上次高了 5」：应用把减法做完，患者不用自己比 */
 .delta-line { font-size: 0.95rem; color: var(--text-2); margin: 0.25rem 0 0.1rem; }
-.delta-line .muted { font-size: 0.85rem; }
+/* 日期放不下时整个括号一起换行，不在"（上次 2026-"中间断开 */
+.delta-line .muted { display: inline-block; font-size: 0.85rem; }
 /* 图表上方一句话小结：不看图也知道大概 */
 .chart-summary {
   font-size: 0.95rem; line-height: 1.5; color: var(--text);
@@ -506,12 +526,23 @@ input[type="date"].set-input { min-width: 9.5em; }
 .adherence-ring { display: flex; align-items: center; gap: 1rem; }
 .ring-num { font-size: 2rem; font-weight: 800; color: var(--green); }
 
-/* ---------- 知识页 ---------- */
+/* ---------- 知识页 ----------
+   分类标题（section-label）+ 一张分组卡（list-group）内放文章行，
+   替代原先"小灰字标题 + 每篇一张浮动卡"：标题成为扫读锚点，页面更安静 */
+.section-label {
+  font-size: 0.92rem; font-weight: 800; color: var(--text-2);
+  letter-spacing: 0.04em; margin: 1.1rem 0.15rem 0.45rem;
+}
+.list-group {
+  background: var(--card); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 0.15rem 0.9rem;
+}
 .art-item {
   display: flex; align-items: center; gap: 0.7rem;
-  background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
-  padding: 0.9rem; margin-bottom: 0.7rem;
+  padding: 0.8rem 0.1rem;
+  border-bottom: 1px solid var(--border);
 }
+.art-item:last-child { border-bottom: none; }
 .art-item .art-icon { font-size: 1.7rem; }
 .art-item .art-body { flex: 1; }
 .art-item .art-title { font-weight: 700; font-size: 1.02rem; }
@@ -623,10 +654,19 @@ input[type="date"].set-input { min-width: 9.5em; }
 .setting-row:last-child { border-bottom: none; }
 /* 标签永不收缩断词；特大字号下放不下时输入框整体换到下一行 */
 .setting-row .sr-label { flex: 1 0 auto; font-weight: 600; }
-.font-chips { display: flex; gap: 0.4rem; }
+/* 单选分段控件（字号/语速）：选中态由 Store 派生，见 app.js segGroupHTML */
+.font-chips { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 .font-chip { min-width: 56px; min-height: 48px; border-radius: 12px; border: 1.5px solid var(--border); background: var(--card); }
+/* 选中不只靠颜色：反白 + 加粗 + 一个对勾，色觉障碍与低对比屏也分得清哪个是当前档 */
 .font-chip.active { background: var(--primary); color: #fff; border-color: var(--primary); font-weight: 700; }
+.font-chip.active::before { content: '✓ '; }
 .font-chip.f1 { font-size: 0.9rem; } .font-chip.f2 { font-size: 1.05rem; } .font-chip.f3 { font-size: 1.2rem; }
+/* "点一下立刻生效"的说明紧跟控件，不要和上一行挤在一起 */
+.seg-hint { margin: 0.35rem 0 0; }
+/* 选项本身很长时（音色名如"晓晓（女声）"）标签与选项分两行放。
+   同一行硬挤会把 chip 压到 48px 触控线以下，或让"朗读声音"被挤成竖排单字。 */
+.setting-row.setting-stack { flex-direction: column; align-items: stretch; padding: 0.5rem 0; }
+.setting-row.setting-stack .sr-label { flex: none; margin-bottom: 0.45rem; }
 
 /* ---------- 首次使用指引 ---------- */
 .guide { padding: 0.1rem 0 0.3rem; }
@@ -651,7 +691,9 @@ input[type="date"].set-input { min-width: 9.5em; }
   position: fixed; left: 50%; bottom: calc(var(--nav-h) + 20px);
   transform: translateX(-50%) translateY(20px);
   background: rgba(30, 33, 42, 0.92); color: #fff;
-  padding: 0.7rem 1.3rem; border-radius: 999px;
+  /* 圆角是固定值而非 999px：长句在窄屏/特大字号下会换成两三行，
+     全圆角会把它渲染成一个椭圆黑块，压住下面的控件还看不出是提示条 */
+  padding: 0.7rem 1.3rem; border-radius: 16px;
   font-size: 1rem; opacity: 0; pointer-events: none;
   transition: all 0.25s; z-index: 300; max-width: 90vw; text-align: center;
 }

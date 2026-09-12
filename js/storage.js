@@ -28,6 +28,7 @@ const Store = (() => {
       stage: 'sitting',  // bed/sitting/standing/walking
       font: 'normal',    // normal/large/xlarge
       speechRate: 'slow',   // 朗读语速 slow/mid/fast（默认慢，老人听得清比听得快重要）
+      speechVoice: '',   // 指定朗读音色名，''=跟随系统（各机音色名不同，换手机后自动回落）
       height: '',        // cm，可选，算BMI
       targets: {         // 个人目标值（遵医嘱，用户可调）：血压 140/90 与血糖 7.0/10.0 为默认
         bpSys: 140, bpDia: 90,
@@ -107,6 +108,10 @@ const Store = (() => {
       out.profile.stage = ['bed', 'sitting', 'standing', 'walking'].includes(p.stage) ? p.stage : out.profile.stage;
       out.profile.font = ['normal', 'large', 'xlarge'].includes(p.font) ? p.font : out.profile.font;
       out.profile.speechRate = ['slow', 'mid', 'fast'].includes(p.speechRate) ? p.speechRate : out.profile.speechRate;
+      /* 音色名只能限长不能白名单：每台机器装的音色不一样，枚举不出来。
+         这台机器上没有这个音色（换手机、恢复别人的备份）由 Speech.pickVoice()
+         静默回落到系统默认，所以存一个陌生名字不会造成任何后果。 */
+      out.profile.speechVoice = text(p.speechVoice, 120);
       const h = finite(p.height);
       out.profile.height = h !== null && h > 0 && h <= 300 ? String(p.height) : '';
       out.profile.targets = sanitizeTargets(p.targets);
