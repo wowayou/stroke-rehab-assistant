@@ -1,5 +1,31 @@
 /* ============================================================
    主应用：视图渲染 / 训练引导 / 弹窗 / 设置
+   ------------------------------------------------------------
+   模块地图（按本文件从上到下的顺序；搜 `【区】` 跳分区锚点）：
+
+   一、公共基础层（跨视图共用，改一处影响全站，动前先想清楚）
+     · 工具        esc/toast/stored/beep —— 转义、提示条、存盘失败提示、成功音
+     · 少算数      dotsHTML/leftText/repTrackHTML/plainDuration
+                   —— 把比率/分数换成"还差几个"与圆点（硬约定 5）
+     · 分段控件    segGroupHTML/bindSegGroup/commitProfile + FONT/RATE_OPTIONS
+                   —— 字号/语速这类"点一下即生效即落盘"的偏好（硬约定 9）
+     · 语音朗读    speakBtnHTML/bindSpeak/figureHTML/exerciseSpeechText/
+                   collectSpeechBlocks/articleSpeechText —— 朗读稿装配（朗读规则在 speech.js）
+     · 浮层与返回键 overlayPush/closeTopOverlayDOM/dismissTopOverlay（硬约定 10）
+     · 弹窗        openModal/nodeFromHTML —— 所有浮层的底座
+
+   二、视图层（五个页面各自成区，末尾跟本页专属的弹窗/引导器）
+     · 今日页      renderToday + exItemHTML/bindExItems
+     · 训练页      renderTrain/exCardHTML → 打卡历史(日历+明细) → 训练引导器(reps/timer/game)
+     · 记录页      判定(bpBadge/gluBadge/bmiBadge) → 格式化 → 比上次 → 图表(VITAL_SERIES/
+                   targetConfig/drawVitalChart/tooltip) → renderBP/Glucose/Weight → openExport
+     · 用药页      renderMeds/medListHTML → 服药历史 → openMedForm（登记/停用/新疗程）
+     · 知识页      renderLearn + openEmergency
+
+   三、设置与备份    openSettings/applyFont/applyVoice → 首次指引 → 备份下载(明文/加密)
+   四、导航与初始化  RENDERERS/render/go/init（DOMContentLoaded 入口在文件末尾）
+
+   数据一律走 Store（storage.js），本文件不直接读写 localStorage。
    ============================================================ */
 
 const App = (() => {
@@ -9,6 +35,10 @@ const App = (() => {
   let trainerTimer = null;
 
   const $view = () => document.getElementById('view');
+
+  /* ============================================================
+     【区】一、公共基础层：以下六个小节被各视图共用，改动波及全站
+     ============================================================ */
 
   /* ---------- 工具 ---------- */
   function esc(s) {
@@ -301,8 +331,14 @@ const App = (() => {
     return d;
   }
 
+  /* ############################################################
+     二、视图层：以下每个 renderXxx 对应底部导航一个页面，
+     末尾跟随本页专属的弹窗/引导器。视图只读 Store、只拼 HTML，
+     数据变更一律走 Store 再 render()。
+     ############################################################ */
+
   /* ============================================================
-     今日页
+     【区】今日页
      ============================================================ */
   function renderToday() {
     const p = Store.data.profile;
@@ -424,7 +460,7 @@ const App = (() => {
   }
 
   /* ============================================================
-     训练页
+     【区】训练页
      ============================================================ */
   function renderTrain() {
     const p = Store.data.profile;
@@ -492,7 +528,7 @@ const App = (() => {
   }
 
   /* ============================================================
-     训练打卡历史（日历 + 每日明细 + 游戏成绩）
+     【区】训练打卡历史（日历 + 每日明细 + 游戏成绩）
      ============================================================ */
 
   /* 打卡日历：最近 n 天，按周几对齐，颜色深浅表示当天训练项数 */
@@ -578,7 +614,7 @@ const App = (() => {
   }
 
   /* ============================================================
-     训练引导器（全屏）
+     【区】训练引导器（全屏）：reps 计次 / timer 计时 / game 认知游戏
      ============================================================ */
   function openTrainer(ex) {
     /* 换一个动作（游戏里"换个不用算的"）时复用同一个历史条目：
@@ -747,7 +783,7 @@ const App = (() => {
   }
 
   /* ============================================================
-     记录页
+     【区】记录页：判定 → 格式化 → 比上次 → 图表 → 三个表单 → 导出
      ============================================================ */
   const REC_KINDS = {
     bp: { name: '血压', icon: '🩺' },
@@ -942,7 +978,10 @@ const App = (() => {
     const [cls, txt] = vitalStatus(kind, v);
     let html = `<div class="vt-t">${esc(v.date)}${v.time ? ' ' + esc(v.time) : ''}</div>`;
     if (kind === 'bp') {
-      html += `<div class="vt-v"><span style="color:#D93A3A">${esc(v.sys)}</span>/<span style="color:#2E6FE0">${esc(v.dia)}</span> mmHg${v.pulse ? ' · ♥ ' + esc(v.pulse) : ''}</div>`;
+      /* 高压/低压颜色从 VITAL_SERIES 取，别再在这里硬写一遍 hex——
+         图表画线与这里的 tooltip 数字要同色，只能有一个真源。 */
+      const bpColor = key => (VITAL_SERIES.bp.series.find(s => s.key === key) || {}).color || '';
+      html += `<div class="vt-v"><span style="color:${bpColor('sys')}">${esc(v.sys)}</span>/<span style="color:${bpColor('dia')}">${esc(v.dia)}</span> mmHg${v.pulse ? ' · ♥ ' + esc(v.pulse) : ''}</div>`;
     } else {
       html += `<div class="vt-v">${VITAL_FMT[kind](v)}</div>`;
     }
@@ -1280,7 +1319,7 @@ const App = (() => {
   }
 
   /* ============================================================
-     用药页
+     【区】用药页：核对表 → 药物清单 → 服药历史 → 登记/停用/新疗程表单
      ============================================================ */
   function renderMeds() {
     const meds = Store.data.meds;
@@ -1579,7 +1618,7 @@ const App = (() => {
   }
 
   /* ============================================================
-     知识页
+     【区】知识页
      ============================================================ */
   function renderLearn() {
     const groups = [];
@@ -1627,7 +1666,7 @@ const App = (() => {
   }
 
   /* ============================================================
-     紧急弹窗
+     【区】紧急弹窗（BE-FAST + 拨 120）
      ============================================================ */
   function openEmergency() {
     const node = nodeFromHTML(`
@@ -1654,8 +1693,12 @@ const App = (() => {
     openModal('紧急识别', node, { center: false });
   }
 
+  /* ############################################################
+     三、设置与备份：设置弹窗 + 恢复预览 + 加密恢复 + applyFont/applyVoice
+     ############################################################ */
+
   /* ============================================================
-     设置弹窗
+     【区】设置弹窗（含从备份恢复的两个前置弹窗）
      ============================================================ */
   function openRestorePreview(parsed, fileName) {
     const s = Store.backupSummary(parsed.data);
@@ -1762,6 +1805,7 @@ const App = (() => {
           ${segGroupHTML('rate', '朗读语速', RATE_OPTIONS, p.speechRate)}
         </div>
         <div class="muted">点一下就按这个速度念一句给您听，选好即生效。训练动作和科普文章里都有「<span class="nowrap">🔊 听一遍</span>」，读字费劲时可以让它念。<button class="link-btn" id="set-rate-try">再听一句</button></div>
+        <div class="muted seg-hint">觉得声音太生硬？<button class="link-btn" id="set-voice-guide">教您换更自然的声音 →</button></div>
         ${voiceOpts.length > 1 ? `
         <div class="setting-row setting-stack">
           <div class="sr-label">朗读声音</div>
@@ -1841,6 +1885,9 @@ const App = (() => {
     const tryBtn = node.querySelector('#set-rate-try');
     if (tryBtn) tryBtn.onclick = () =>
       Speech.speak('每天坚持一点，慢慢会好起来。', { rateKey: Store.data.profile.speechRate });
+    /* 连续弹窗复用当前浮层历史条目（硬约定 10），返回键一次退回设置 */
+    const voiceGuideBtn = node.querySelector('#set-voice-guide');
+    if (voiceGuideBtn) voiceGuideBtn.onclick = () => close.replace(openVoiceGuide);
     node.querySelector('#set-guide').onclick = () => close.replace(openGuide);
     node.querySelector('#set-export').onclick = () => close.replace(openExport);
     node.querySelector('#set-backup').onclick = () => close.replace(openBackupWarning);
@@ -1921,7 +1968,41 @@ const App = (() => {
   }
 
   /* ============================================================
-     首次使用指引
+     【区】换更自然的朗读声音（图文引导）
+     朗读"机器味"最有效的一招其实在手机系统里：多数手机能免费下载更自然的
+     中文语音包，装一次长期可用。这里只教怎么找——不装任何东西、不联网、
+     不碰第三方脚本（隐私红线）。系统菜单名各机型/版本不同，措辞留有余地，
+     宁可让用户"搜一下"，也不给一个找不到的精确按钮名误导老人。 */
+  function openVoiceGuide() {
+    const node = nodeFromHTML(`
+      <div class="guide">
+        <p class="guide-sub">觉得声音生硬，多半是手机默认的声音不够好。很多手机里可以<b>免费下载更自然的中文声音</b>，装一次就一直能用。下面教您怎么找。</p>
+        <div class="card">
+          <div class="card-title">🍎 苹果手机（iPhone）</div>
+          <div class="guide-line">大致这样找：<b>设置 → 辅助功能 → 朗读内容 → 声音 → 中文</b></div>
+          <div class="guide-line">挑一个名字后面带「增强／高质量」的声音，点旁边的下载按钮，装好回到本应用就会更自然。</div>
+          <div class="muted">不同 iOS 版本菜单名略有不同，找不到就在手机「设置」顶部搜索框里搜「朗读」。</div>
+        </div>
+        <div class="card">
+          <div class="card-title">🤖 安卓手机</div>
+          <div class="guide-line">大致这样找：在手机「设置」里搜<b>「文字转语音」</b>（有的在 系统 → 语言和输入 里）。</div>
+          <div class="guide-line">打开「首选引擎／文字转语音输出」，选一个语音服务，再进去<b>下载／安装中文语音数据</b>，挑带「自然」字样的。</div>
+          <div class="muted">各品牌（华为／小米／OPPO／vivo 等）菜单名不一样，找不到就搜「您的手机型号 + 文字转语音 下载中文」。</div>
+        </div>
+        <div class="card">
+          <div class="card-title">💬 在微信里点了没声音？</div>
+          <div class="guide-line">微信内置浏览器有时不出声。点微信右上角「···」→「在浏览器打开」，用手机<b>自带浏览器</b>打开本应用再试。</div>
+        </div>
+        <div class="guide-line" style="margin-top:0.3rem">换好声音后，回到「设置」，如果「朗读声音」里出现好几个，挑一个您听着最舒服的就行。</div>
+        <div class="disclaimer">以上都是手机系统自带的功能。本应用<b>不会安装任何东西，也不联网</b>，只是用手机里已有的声音念给您听。</div>
+        <button class="btn green block huge" id="voice-guide-done" style="margin-top:0.7rem">我知道了</button>
+      </div>`);
+    const close = openModal('换更自然的朗读声音', node, { center: true });
+    node.querySelector('#voice-guide-done').onclick = close;
+  }
+
+  /* ============================================================
+     【区】首次使用指引
      ============================================================ */
   function openGuide() {
     const node = nodeFromHTML(`
@@ -1958,7 +2039,7 @@ const App = (() => {
   }
 
   /* ============================================================
-     备份下载
+     【区】备份下载（隐私提醒 → 明文备份 / 密码加密备份）
      ============================================================ */
   function openBackupWarning() {
     const node = nodeFromHTML(`
@@ -2047,9 +2128,9 @@ const App = (() => {
     setTimeout(() => password.focus(), 80);
   }
 
-  /* ============================================================
-     导航与初始化
-     ============================================================ */
+  /* ############################################################
+     四、导航与初始化
+     ############################################################ */
   const RENDERERS = {
     today: renderToday,
     train: renderTrain,
