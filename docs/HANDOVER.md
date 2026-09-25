@@ -5,9 +5,9 @@
 
 ## 当前版本（2026-09-25）
 
-本地已有 v0.2.30 界面打磨与返回焦点修复，尚未部署或提交；范围与验证见 [DEVELOPMENT §10](DEVELOPMENT.md#10-变更记录)，组件及分阶段加固标准见 [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md)。仍需真机核对读屏、原生键盘和返回手势。
+v0.2.30.1 在 v0.2.30 基础上继续打磨精致度/统一性（设置弹窗卡片标题层级对齐、展开折叠箭头改 CSS V 形），已提交（`714c435`）并部署上线；范围与验证见 [DEVELOPMENT §10](DEVELOPMENT.md#10-变更记录)，组件及分阶段加固标准见 [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md)。仍需真机核对读屏、原生键盘和返回手势。
 
-生产仍为 v0.2.29，地址 <https://stroke-rehab-assistant.pages.dev/>，部署 `0457801b`（上一生产部署 `97d111f5`），尚未 git 提交。发布时线上 12 个运行时文件与当时本地一致（index 的部署版本参数归一化后比较），安全响应头已核对；生产 `settings.test.js` 与 `overlay.test.js --stress` 全部通过，含五页指引退出、备份恢复、急救、布局和 40 轮浮层压力回归。
+生产为 v0.2.30.1，地址 <https://stroke-rehab-assistant.pages.dev/>；git 已推送 `origin/main`（本地=远程 `714c435`）。Cloudflare 部署 `03a2a862`（上一生产部署 `17399c3` 对应戳）。线上 `js/app.js`、`css/style.css` 与本地逐字节 md5 一致，`index.html` 带部署戳 `ver=20260925223544`。待复核：生产端 `settings.test.js`/`overlay.test.js --stress` 未重跑、安全响应头（CSP/HSTS/防嵌入/nosniff/Referrer/Permissions）未再核对。
 
 设计组件与交互标准见 [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md)，子域名迁移方法见 [DOMAIN-MIGRATION.md](DOMAIN-MIGRATION.md)。最终子域名尚未确定，未改 DNS 或旧站跳转；手机实际拨号、原生返回、读屏、备份文件落地与真实设备迁移仍需核对。下文早期交接状态为历史记录。
 
