@@ -383,9 +383,11 @@ input[aria-invalid="true"], select[aria-invalid="true"] { border: 2px solid var(
 .disclosure summary::-webkit-details-marker { display: none; }
 .disclosure summary > span:first-child { flex: 1; min-width: 0; }
 .disclosure-hint { display: block; font-size: 0.9rem; color: var(--text-2); margin-top: 0.15rem; }
-.disclosure-arrow { color: var(--primary-dark); font-size: 1.3rem; }
+/* 展开箭头用边框画的 V 形，跨平台一致、随字号缩放；开合时平滑旋转（减少动画时全局降为 0.01ms） */
+.disclosure-arrow { display: inline-block; flex-shrink: 0; width: 0.62em; height: 0.62em; border-right: 2.5px solid var(--primary-dark); border-bottom: 2.5px solid var(--primary-dark); border-radius: 2px; transform: translateY(-0.12em) rotate(45deg); transition: transform 0.2s ease; }
 .disclosure-action { display: flex; align-items: center; gap: 0.4rem; color: var(--primary-dark); font-size: 0.9rem; }
-.disclosure[open] .disclosure-arrow { transform: rotate(180deg); }
+.disclosure-action .disclosure-arrow { border-color: currentColor; }
+.disclosure[open] .disclosure-arrow { transform: translateY(0.06em) rotate(-135deg); }
 .disclosure-body { padding: 0 1rem 1rem; }
 
 /* 设置页输入控件：弹性填满行宽，任何字号下都与标签同行（iOS 设置列表式） */

@@ -576,7 +576,7 @@ const App = (() => {
     let html = `
     ${pageHeading('康复训练', '选一个动作，按自己的节奏慢慢练。')}
     <details class="card disclosure stage-card" id="train-stage">
-      <summary><span><strong>当前阶段 · ${esc(stage.name)}</strong><span class="disclosure-hint">${esc(stage.desc)}</span></span><span class="disclosure-action">更换<span class="disclosure-arrow" aria-hidden="true">⌄</span></span></summary>
+      <summary><span><strong>当前阶段 · ${esc(stage.name)}</strong><span class="disclosure-hint">${esc(stage.desc)}</span></span><span class="disclosure-action">更换<span class="disclosure-arrow" aria-hidden="true"></span></span></summary>
       <div class="disclosure-body">
       <div class="stage-picker" role="group" aria-label="当前康复阶段">
         ${STAGES.map(s => `<button class="stage-chip ${p.stage === s.key ? 'active' : ''}" aria-pressed="${p.stage === s.key}" data-stage="${s.key}">${s.name}</button>`).join('')}
@@ -677,7 +677,7 @@ const App = (() => {
     }
     return `
     <details class="disclosure card" id="train-history">
-      <summary><span><strong>训练打卡记录</strong><span class="disclosure-hint">${total ? `已积累 ${total} 天 · 查看近四周` : '查看日历与每日明细'}</span></span><span class="disclosure-arrow" aria-hidden="true">⌄</span></summary>
+      <summary><span><strong>训练打卡记录</strong><span class="disclosure-hint">${total ? `已积累 ${total} 天 · 查看近四周` : '查看日历与每日明细'}</span></span><span class="disclosure-arrow" aria-hidden="true"></span></summary>
       <div class="disclosure-body">
       ${line}
       ${calendarHTML(28)}
@@ -1994,6 +1994,7 @@ const App = (() => {
     };
     const node = nodeFromHTML(`
       <div class="card">
+        <div class="card-title">👤 基本信息</div>
         <div class="setting-row">
           <label class="sr-label" for="set-name">怎么称呼您</label>
           <input id="set-name" class="set-input" type="text" value="${esc(p.name)}" placeholder="如 王叔叔">
@@ -2006,6 +2007,9 @@ const App = (() => {
           <label class="sr-label" for="set-height">身高(cm)</label>
           <input id="set-height" class="set-input" type="number" inputmode="numeric" value="${esc(p.height)}" placeholder="算BMI用">
         </div>
+      </div>
+      <div class="card">
+        <div class="card-title">🔊 显示与朗读</div>
         <div class="setting-row">
           <div class="sr-label">字体大小</div>
           ${segGroupHTML('font', '字体大小', FONT_OPTIONS, p.font)}
