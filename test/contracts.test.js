@@ -31,7 +31,7 @@ assert(/cp -r[^\n]*\b_headers\b/.test(deploy), '部署包必须包含 Cloudflare
 assert(/data-med="\$\{esc\(m\.id\)\}"/.test(app), '药物动态 id 插入 HTML 前必须转义');
 assert(/data-del="\$\{esc\(v\.id\)\}"/.test(app), '健康记录动态 id 插入 HTML 前必须转义');
 assert(/备份里有健康隐私/.test(app) && /内容是可以直接阅读的/.test(app), '下载明文备份前必须说明敏感健康信息风险');
-assert(/set-backup'\)\.onclick = \(\) => close\.replace\(openBackupWarning\)/.test(app), '备份按钮必须先显示隐私提醒，并复用当前浮层历史条目');
+assert(/set-backup'\)\.onclick = openBackupWarning/.test(app), '备份按钮必须先显示隐私提醒，并保留父级设置');
 assert(!/unwindDebt/.test(app) && /close\.replace\(openEncryptedBackup\)/.test(app), '连续备份弹窗不得用异步 history.back 后立即 pushState');
 assert(/id="set-undo-restore"/.test(app) && /Store\.undoLastRestore\(\)/.test(app), '设置页必须提供一次性的恢复撤销入口');
 assert(!/恢复会[^\n]*无法撤销/.test(app) && /可在设置中撤销一次/.test(app), '恢复确认必须说明可撤销一次');
@@ -79,6 +79,26 @@ assert(/out\.profile\.speechVoice = text\(p\.speechVoice/.test(read('js/storage.
   '音色名只能限长不能白名单——每台机器装的音色不一样，枚举不出来');
 assert(/function applyVoice/.test(app) && (app.match(/applyVoice\(/g) || []).length >= 5,
   '凡是整体换掉 data 的地方（启动/恢复/撤销/清空）都要 applyVoice()，同 applyFont');
+
+/* 设计系统的语义配色必须在真实前景/背景组合中可读。 */
+const colors = Object.fromEntries([...css.matchAll(/--([\w-]+):\s*(#[\da-f]{6});/gi)].map(m => [m[1], m[2]]));
+const luminance = hex => {
+  const channels = hex.slice(1).match(/../g).map(c => parseInt(c, 16) / 255)
+    .map(v => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+  return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+};
+for (const [front, back] of [
+  ['text', 'bg'], ['text-2', 'bg'], ['text-2', 'card'],
+  ['text-2', 'surface-subtle'], ['text-2', 'surface-hover'],
+  ['primary-dark', 'primary-soft'], ['primary', 'primary-soft'],
+  ['green', 'green-soft'], ['orange', 'orange-soft'], ['red', 'red-soft'],
+  ['card', 'primary'], ['card', 'green'], ['card', 'red'],
+]) {
+  const a = luminance(colors[front]), b = luminance(colors[back]);
+  assert((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05) >= 4.5, `${front}/${back} 文字对比度至少 4.5:1`);
+}
+assert(html.includes(`name="theme-color" content="${colors.primary}"`) && JSON.parse(read('manifest.json')).theme_color === colors.primary,
+  '浏览器与主屏幕主题色必须与应用主色一致');
 
 if (failed) {
   console.error(`❌ ${failed} 项静态硬约定失败`);

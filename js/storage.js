@@ -67,6 +67,9 @@ const Store = (() => {
 
   let data = defaults();
   let persistedJSON = JSON.stringify(data);
+  let persistedRaw = null;
+  let storageIssue = null;
+  let loadBlocked = false;
   let backupErrorMessage = '';
 
   const isObj = x => x && typeof x === 'object' && !Array.isArray(x);
@@ -196,29 +199,62 @@ const Store = (() => {
   }
 
   function load() {
+    persistedRaw = null;
+    storageIssue = null;
+    loadBlocked = false;
     try {
       const raw = localStorage.getItem(KEY);
-      if (raw) {
-        data = normalizeState(JSON.parse(raw));
+      persistedRaw = raw;
+      if (raw !== null) {
+        const parsed = JSON.parse(raw);
+        if (!isObj(parsed)) throw new Error('本地数据结构损坏');
+        validateBackupLimits(parsed);
+        data = normalizeState(parsed);
       } else data = defaults();
       persistedJSON = JSON.stringify(data);
     } catch (e) {
       console.warn('读取本地数据失败，使用空数据', e);
       data = defaults();
       persistedJSON = JSON.stringify(data);
+      loadBlocked = true;
+      storageIssue = { kind: persistedRaw !== null ? 'corrupt' : 'unavailable', message: persistedRaw !== null
+        ? '原有数据暂时无法读取，已停止保存以保护原件。请在设置里下载原始数据副本，请家人协助处理；不要清除浏览器数据。'
+        : '无法读取浏览器存储，暂时不能保存。请检查浏览器权限后重新打开，或换用平时记录数据的浏览器。' };
     }
     return data;
   }
 
-  function save() {
+  function checkCurrent(allowCorrupt = false) {
+    if (loadBlocked && !(allowCorrupt && persistedRaw !== null)) return false;
     try {
+      if (localStorage.getItem(KEY) !== persistedRaw) {
+        storageIssue = { kind: 'conflict', message: '另一个页面已更新记录，本次没有保存。请保留尚未保存的输入，关闭其他页面后刷新，再重新填写。' };
+        return false;
+      }
+      return true;
+    } catch (_) {
+      storageIssue = { kind: 'unavailable', message: '无法读取浏览器存储，本次没有保存。请检查浏览器权限后重试。' };
+      return false;
+    }
+  }
+  function rollback() { data = normalizeState(JSON.parse(persistedJSON)); }
+  function save(allowCorrupt = false) {
+    if (!checkCurrent(allowCorrupt)) { rollback(); return false; }
+    try {
+      // 先拒绝超限，再规范化；不能把超出的健康记录静默截掉后报告成功。
+      validateBackupLimits(data);
       data = normalizeState(data);
       const json = JSON.stringify(data);
+      if (utf8Size(JSON.stringify(backupEnvelope(data))) > BACKUP_LIMITS.maxBytes) throw new Error('数据已超过备份容量，请先备份并请家人协助整理');
       localStorage.setItem(KEY, json);
       persistedJSON = json;
+      persistedRaw = json;
+      storageIssue = null;
+      loadBlocked = false;
       return true;
     } catch (e) {
       console.warn('保存失败', e);
+      storageIssue = { kind: 'write', message: /超过/.test(e.message || '') ? e.message : '没有保存成功，原有记录未改变。请检查浏览器存储空间或权限后重试，不要清除浏览器数据。' };
       try { data = normalizeState(JSON.parse(persistedJSON)); }
       catch (_) { data = defaults(); }
       return false;
@@ -566,11 +602,15 @@ const Store = (() => {
   /* 生成全量备份 JSON 文本（带 schema 版本，便于将来兼容） */
   function exportBackup() {
     /* 不加缩进：接近 5MB 上限时，格式化空白可能让本应用导出的文件反而无法导入。 */
-    return JSON.stringify(backupEnvelope(data));
+    if (loadBlocked) throw new Error(storageIssue.message);
+    const json = JSON.stringify(backupEnvelope(data));
+    parseBackup(json); // 普通备份与加密备份都必须能被本应用重新读取。
+    return json;
   }
 
   function utf8Size(s) {
-    if (s.length > BACKUP_LIMITS.maxBytes) return BACKUP_LIMITS.maxBytes + 1;
+    // 超出所有入口上限时可直接拒绝；5～8MB 仍须准确计数（加密上限为 8MB）。
+    if (s.length > BACKUP_LIMITS.maxEncryptedBytes) return s.length;
     if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(s).length;
     let bytes = 0;
     for (const c of s) {
@@ -743,6 +783,9 @@ const Store = (() => {
   /* 覆盖前先保存一个恢复点；恢复点写不下时宁可拒绝，也不冒险覆盖原数据。 */
   function applyBackup(state) {
     backupErrorMessage = '';
+    if (!checkCurrent()) { backupErrorMessage = storageIssue.message; return false; }
+    try { validateBackupLimits(state); }
+    catch (e) { backupErrorMessage = e.message; return false; }
     let priorRecovery;
     try {
       priorRecovery = localStorage.getItem(RECOVERY_KEY);
@@ -773,6 +816,7 @@ const Store = (() => {
 
   function undoLastRestore() {
     backupErrorMessage = '';
+    if (!checkCurrent()) { backupErrorMessage = storageIssue.message; return false; }
     let parsed;
     try {
       const raw = localStorage.getItem(RECOVERY_KEY);
@@ -805,6 +849,7 @@ const Store = (() => {
 
   /* ---------- 清空 ---------- */
   function resetAll() {
+    if (!checkCurrent(true)) return false;
     /* 先清理恢复点：若清理失败就不要让“清空成功”后仍能撤销出旧健康数据。 */
     try { localStorage.removeItem(RECOVERY_KEY); }
     catch (e) {
@@ -812,12 +857,14 @@ const Store = (() => {
       return false;
     }
     data = defaults();
-    if (!save()) return false;
+    if (!save(true)) return false;
     return true;
   }
 
   return {
     load, save,
+    storageStatus: () => storageIssue && { ...storageIssue },
+    originalData: () => loadBlocked && persistedRaw !== null ? persistedRaw : null,
     get data() { return data; },
     today, timeStr, addDays, weekdayCN, rehabDay, recentDates, daysBetween,
     logExercise, exercisesDoneToday, isExDone, streak, bestStreak, lastExerciseDate,

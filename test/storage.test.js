@@ -394,6 +394,58 @@ localStorage.setItem('strokeRehab.v1', '{broken json');
 Store.load();
 assert(Store.data.meds.length === 0, '损坏数据应回落到空默认值');
 
+/* 原件损坏时只允许显式清空，不得以空默认值覆盖或导出假备份。 */
+assert(Store.storageStatus().kind === 'corrupt', '损坏必须可被界面识别');
+assert(Store.logExercise('protect-original') === false, '损坏后日常保存应被阻止');
+assert(localStorage.getItem('strokeRehab.v1') === '{broken json', '损坏原文必须原样保留');
+assert(Store.originalData() === '{broken json', '应可取出原始副本供排查');
+let exportRefused = false;
+try { Store.exportBackup(); } catch (_) { exportRefused = true; }
+assert(exportRefused, '不能把损坏后的空默认值导出为健康备份');
+assert(Store.applyBackup(parsed.data) === false, '未处理损坏原件前不能直接恢复覆盖');
+assert(Store.resetAll(), '显式清空后可以重新开始');
+assert(!Store.storageStatus() && Store.originalData() === null, '清空后解除读取保护');
+
+/* 读取权限失败后，权限恢复也要重新读取原件，不能用空值保存。 */
+Store.data.profile.name = '原有记录';
+Store.save();
+const readableOriginal = localStorage.getItem('strokeRehab.v1');
+failReadKey = 'strokeRehab.v1';
+Store.load();
+assert(Store.storageStatus().kind === 'unavailable', '读取失败须报告权限问题');
+failReadKey = '';
+assert(Store.save() === false, '未重新读取前仍然禁止覆盖');
+assert(localStorage.getItem('strokeRehab.v1') === readableOriginal, '读取失败不改变原件');
+Store.load();
+assert(Store.data.profile.name === '原有记录' && !Store.storageStatus(), '重新读取后恢复原有记录');
+
+/* 另一页面已保存，当前页面的旧快照不可覆盖它，包括导入/清空。 */
+const remoteState = JSON.parse(readableOriginal);
+remoteState.profile.name = '另一页的新记录';
+const remoteJSON = JSON.stringify(remoteState);
+localStorage.setItem('strokeRehab.v1', remoteJSON);
+assert(Store.logExercise('stale') === false, '过期页面保存必须失败');
+assert(Store.storageStatus().kind === 'conflict', '过期页面应报告冲突');
+assert(Store.applyBackup(parsed.data) === false && Store.resetAll() === false, '冲突时恢复和清空同样应拒绝');
+assert(localStorage.getItem('strokeRehab.v1') === remoteJSON, '不能覆盖另一页新数据');
+Store.load();
+assert(Store.logExercise('fresh') === true, '重新读取后可继续保存');
+
+/* 达到容量时明确拒绝新记录，而非静默截断后显示保存成功。 */
+Store.data.vitals.weight = Array.from({ length: Store.backupLimits.vitalsPerKind }, (_, i) => ({
+  id: 'capacity_' + i, date: t, value: 65,
+}));
+assert(Store.save(), '上限内记录可保存');
+const capacityOriginal = localStorage.getItem('strokeRehab.v1');
+assert(Store.addVital('weight', { date: t, value: 70 }) === false, '第 5001 条记录应明确拒绝');
+assert(localStorage.getItem('strokeRehab.v1') === capacityOriginal, '超限不能改写已有记录');
+assert(Store.data.vitals.weight.length === 5000, '超限失败后内存回滚');
+Store.data.vitals.weight.push({ id: 'extra', date: t, value: 70 });
+exportRefused = false;
+try { Store.exportBackup(); } catch (_) { exportRefused = true; }
+assert(exportRefused, '普通导出也要拒绝无法导入的超限备份');
+Store.load();
+
 if (failed) {
   console.error(`❌ ${failed} 项断言失败`);
   process.exit(1);

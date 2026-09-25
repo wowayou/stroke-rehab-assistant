@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>康复助手 · 组件样张</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<main class="view-container">
+  <h1>康复助手 · 组件样张</h1>
+  <p class="muted">供设计与开发核对，所有示例均为演示。样式直接引用应用文件。</p>
+  <h2 class="section-label">信息层级</h2>
+  <div class="card">
+    <div class="card-title">今天慢慢来</div>
+    <p>先从最容易的一件事开始。</p>
+    <p class="muted">补充说明与主要结论分层呈现。</p>
+  </div>
+  <h2 class="section-label">操作层级</h2>
+  <div class="card">
+    <button class="btn block" type="button">保存记录（示例）</button>
+    <div class="btn-row"><button class="btn ghost" type="button">查看历史</button><button class="btn outline" type="button">返回</button></div>
+  </div>
+  <h2 class="section-label">选中与完成</h2>
+  <div class="rec-tabs" role="group" aria-label="记录类型样式示例">
+    <button class="rec-tab active" aria-pressed="true" type="button">血压</button>
+    <button class="rec-tab" aria-pressed="false" type="button">血糖</button>
+    <button class="rec-tab" aria-pressed="false" type="button">体重</button>
+  </div>
+  <div class="card">
+    <h3 class="card-title">今日推荐训练 <span class="card-meta">坐位期</span></h3>
+    <div class="ex-item">
+      <div class="ex-body"><div class="ex-name">动作示例</div><div class="ex-done-mark">✓ 今日已完成</div></div>
+      <button class="ex-start done" type="button" aria-label="再练：动作示例">再练</button>
+    </div>
+    <p class="muted">选中有边框，完成有文字；状态不只依赖颜色。</p>
+  </div>
+  <h2 class="section-label">分组任务</h2>
+  <div class="card action-list">
+    <button class="btn ghost block" type="button">查看使用指引</button>
+    <button class="btn ghost block" type="button">备份全部数据</button>
+    <button class="btn ghost block" type="button">从备份恢复</button>
+  </div>
+  <h2 class="section-label">反馈与表单</h2>
+  <div class="notice">文件已生成，请到下载列表确认已保存。</div>
+  <div class="notice danger">没有保存成功，原有记录未改变。请检查浏览器存储空间后重试。</div>
+  <div class="card vital-form">
+    <div class="field"><label for="sample-name">怎么称呼您</label><input id="sample-name" type="text" placeholder="如 王叔叔"></div>
+    <p><span class="badge ok">✓ 已完成</span> <span class="badge warn">请核对</span></p>
+  </div>
+  <div class="card vital-form">
+    <div class="field"><label for="sample-error">称呼（错误示例）</label><input id="sample-error" type="text" aria-invalid="true" aria-describedby="sample-error-hint"><p class="field-error" id="sample-error-hint">请填写您的称呼。</p></div>
+    <p class="form-status saved">✓ 已保存，记录仅保存在本机。</p>
+    <div class="btn-row"><button class="btn block" type="button" disabled aria-busy="true">正在处理…</button></div>
+  </div>
+  <h2 class="section-label">急救操作样式</h2>
+  <div class="card"><p>演示按钮不拨号；应用内按钮显示并拨打 120。</p><button class="call-120" type="button">📞 拨号按钮示例</button></div>
+</main>
+</body>
+</html>

@@ -19,6 +19,8 @@
 | innerHTML 模板字符串渲染 | 无构建约束下最直接的方案；配合转义纪律（见 §6 安全） | 交互复杂度显著上升时考虑迁移框架 |
 | 适老化：18px 基准/三档字号/≥48px 触控 | 参考工信部适老化通用设计规范的思路 | 不要推翻 |
 
+UI 与 UX 的组件、状态和验收标准见 [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md)；域名切换步骤见 [DOMAIN-MIGRATION.md](DOMAIN-MIGRATION.md)。
+
 ## 3. 目录结构
 
 ```
@@ -43,7 +45,7 @@ stroke-rehab-assistant/
 │   ├── contracts.test.js  # 跨模块静态契约检查（node 直接跑）
 │   ├── figures.test.js    # 简笔画几何校验（node 直接跑）
 │   ├── speech.test.js     # 朗读层：归一化规则全表 + 句间停顿（node 直接跑）
-│   ├── overlay.test.js    # 真实 Chromium 浮层/历史回归
+│   ├── overlay.test.js    # 真实 Chromium 浮层/返回/急救/布局回归
 │   ├── settings.test.js   # 真实 Chromium 即时生效偏好落盘与回显
 │   ├── backup-stress.test.js # 接近上限的大备份压力回归
 │   ├── preview-figures.js # 简笔画截图（目视用，非断言）
@@ -109,7 +111,7 @@ data-exercises.js → data-articles.js → storage.js → charts.js → games.js
 约定：
 
 - **所有读写必须走 `Store` 的方法**，不要在视图代码里直接摸 `localStorage`。
-- `Store.load()` 对损坏 JSON 有兜底（回落空默认值），并通过 `normalizeState()` 对缺字段、非法嵌套值做深度规范化；备份恢复复用同一路径。
+- `Store.load()` 通过 `normalizeState()` 对缺字段与非法嵌套值做深度规范化；读取失败时用空值维持页面可打开，同时禁止写入并保留原件。`storageStatus()` 向界面提供持续错误，`originalData()` 仅提供读取失败的原始文本供人工排查；该文本不是已校验备份。
 - **隐私边界**：`localStorage` 与普通 JSON 备份都是明文。不做“应用内加密”，因为密钥若同存在浏览器里不能抵御设备或同源脚本失陷，而要求患者每次输入口令会增加锁死数据的风险。v0.2.21 仅为需要放网盘/共享电脑的备份提供主动选择的口令加密（PBKDF2-SHA-256 600000 次 + AES-256-GCM，随机 16-byte salt / 12-byte IV，口令不保存）；普通备份仍是默认主操作，旧明文备份保持兼容。忘记口令无法恢复，弱口令仍可能被猜中，界面必须同时说明这两个边界。
 - 日期一律 `YYYY-MM-DD` 本地时区字符串（`Store.today()` / `Store.addDays()`），不要用 `Date.toISOString()`（会有 UTC 偏移导致的跨天 bug）。
 - 未来做 schema 迁移：在 `load()` 里检测旧 key 存在且新 key 不存在 → 转换 → 写新 key（保留旧 key 一段时间以便回滚）。
@@ -126,7 +128,7 @@ data-exercises.js → data-articles.js → storage.js → charts.js → games.js
   - `deltaLineHTML(kind)`、`chartSummaryHTML(kind, list)`、`plainDuration(sec)` → 差值、图表小结、"大约 5 分钟"都由应用算好再说。
   - 结论在前、数字在后（如 BMI 写成"体重适中（BMI 21.6）"）。给医生看的精确数字（百分比、导出报告）保留，但标注"给医生看的"并降为次要信息。
 - **认同患者的措辞（v0.2.12）**：不打分、不排名、不按成绩分档给评语；连续天数断了先肯定历史（`Store.bestStreak()`）再说"做一个动作就重新开始"；做不到/漏做一律按"很常见、不是您的问题"处理并给出可执行的办法，不用威慑或指责。医学事实与安全警示不得因此删弱（见 §8）。
-- **浮层与返回键（v0.2.22，加浮层时必须照做）**：安卓实体返回键默认会直接退出应用，对老人是很糟的体验。每开一个浮层就 `overlayPush()` 压一个历史条目；实体返回键或屏幕上的 ✕ / Esc 都只发起 `history.back()`，统一由 `popstate` 调 `closeTopOverlayDOM()` 关最上层，保证 DOM 与历史状态同步。主动关闭先置 `dismissPending` 并禁用控件，避免回退完成前快速双击重复保存。浮层切换必须用 `close.replace(openNext)` 原位替换，既不 back 也不再次 push；`openTrainer` 换动作同样复用已有条目（`hadTrainer` 判断）。没有浮层时不拦返回键。相关回归必须跑 `node test/overlay.test.js --stress`。
+- **浮层与返回键（v0.2.22，加浮层时必须照做）**：安卓实体返回键默认会直接退出应用，对老人是很糟的体验。每开一个浮层就 `overlayPush()` 压一个历史条目；实体返回键或屏幕上的 ✕ / Esc 都只发起 `history.back()`，统一由 `popstate` 调 `closeTopOverlayDOM()` 关最上层，保证 DOM 与历史状态同步。主动关闭先置 `dismissPending` 并禁用控件，避免回退完成前快速双击重复保存。父任务打开帮助或独立任务时直接 `openModal()` 叠子层，保留父层 DOM；同一任务切换步骤才用 `close.replace(openNext)` 原位替换，既不 back 也不再次 push；`openTrainer` 换动作同样复用已有条目（`hadTrainer` 判断）。没有浮层时不拦返回键。相关回归必须跑 `node test/overlay.test.js --stress`。
 - **即时生效型设置必须即时落盘（v0.2.25，加这类偏好时必须照做）**：字号、语速这类"点一下就看到/听到效果"的偏好，**不能挂在「保存设置」按钮上**。设置弹窗有 ✕、安卓返回键、Esc、点遮罩四种关法，只有一种会走保存按钮——挂在保存上等于四分之三的关法都会丢设置。两条规则：① 点一下立刻写 `Store`（走 `commitProfile()`，同训练页阶段 chip 的 `Store.save()` 范式）；② 选中态**只从 `Store` 派生**（`segGroupHTML()` 渲染 + `bindSegGroup({ current, commit })` 重刷），绝不用 DOM 上残留的 `.active` 反推真值。用 `.active` 反推是 v0.2.25 修掉的那个 bug 的根源：DOM 与 `Store` 成了两个真相来源，点完特大再用 ✕ 关掉，字号已生效但没落盘，重开回显"标准"、刷新后字号直接掉回标准。相关回归必须跑 `node test/settings.test.js`。
 - **同类条目用分组列表，不要一条一张卡（v0.2.26，加列表/按钮时必须照做）**：同一页出现三个以上同构条目（训练动作、科普文章）时，用「分组标题 + 一张卡内分行」（`.section-label` + `.list-group` / `#ex-list` + `.ex-item`），不要每条一张带阴影的浮动卡片——十几张同款卡叠起来是"卡片墙"，看不出哪项是今天该做的。按钮分三级：**实心蓝（`.btn`）每屏只允许一个主操作**（保存、拨 120），列表行里重复出现的操作用浅蓝（`.ex-start` / `.ci-action`，`--primary-soft` 底 + `--primary-dark` 字，对比度约 6.4:1），完成态用浅绿。一屏六七个实心蓝按钮会让真正的主操作消失在其中。触控目标仍是 48px 起，分级只改颜色不改尺寸。
 - **重渲染不要跳页首**：`render(view, { keepScroll })`。切页用默认（回顶部），"数据变了重渲染"（如训练打卡）传 `keepScroll: true`——否则在训练页往下翻着练，练完一个就被弹回顶部。
@@ -138,11 +140,11 @@ data-exercises.js → data-articles.js → storage.js → charts.js → games.js
   - **关闭时必须清理**：`closeTrainer()` 负责 `clearInterval` + `Games.stop()`，新增异步资源要在这里一并清理。
 - **历史视图**：三个入口都是 `openModal` 弹窗，不占主页面高度——`openVitalHistory(kind)`（趋势图 + 全部记录 + 状态点 + 删除，删除后 `paint()` 重画弹窗并 `renderRecords()` 刷新背后页面）、`openExerciseHistory()`、`openMedHistory()`。血压/血糖/体重的判定统一走 `vitalStatus(kind, v)`（复用 `bpBadge/gluBadge/bmiBadge`），趋势图统一走 `drawVitalChart(kind, canvas, recent)`——**加新指标时改这两个函数即可**。打卡日历 `calendarHTML(n)` 由 `Store.exerciseCalendar(n)` 驱动，训练页与弹窗共用。
 - **安全/转义纪律**：所有**用户输入**（姓名、药名、剂量、备注等）插入 HTML 前必须过 `esc()`。`data-*.js` 里的静态内容是我们自己写的，直接插入；**如果未来文章/动作内容改为用户可编辑或远程下发，必须改为全量转义或消毒**。
-- 提示反馈：`toast(msg)`（2.2s 自动消失）、`beep()`（WebAudio 提示音+震动，失败静默）。
+- 提示反馈：`toast(msg)`（5s 自动消失）；需用户处理的错误用 `showError()` 持续显示，存储问题另由 `renderStorageNotice()` 显示；`beep()`（WebAudio 提示音+震动，失败静默）。
 
 ### storage.js
 
-纯数据层，无 DOM 依赖（因此可以在 Node 里测试）。公开 API 见文件头部注释和 `return` 清单。改这里必须同步跑 `node test/storage.test.js`。
+纯数据层，无 DOM 依赖（因此可以在 Node 里测试）。公开 API 见文件头部注释和 `return` 清单。`save()` 在规范化前检查容量、保存前对照 `persistedRaw` 检测过期快照，失败回滚到 `persistedJSON`；不会自动合并另一标签页的数据。`exportBackup()` 也走解析校验，拒绝不可恢复的文件。改这里必须同步跑 `node test/storage.test.js`。
 
 ### data-exercises.js
 
@@ -245,8 +247,8 @@ node test/figures.test.js
 node test/speech.test.js
 
 # 1d) 真实 Chromium 浮层回归（关闭/普通下载/进入加密/完成加密后页面不得离开）
-node test/overlay.test.js
-# 部署后可把生产地址作为参数，对线上同跑四条路径
+node test/overlay.test.js --stress
+# 部署后可把生产地址作为参数，在隔离浏览器中跑同一套回归
 node test/overlay.test.js https://stroke-rehab-assistant.pages.dev/
 
 # 1e) 备份压力回归（40 轮浮层/历史 + 4.8MB 级备份加密恢复）
@@ -320,6 +322,9 @@ for f in js/*.js; do node --check "$f"; done
 
 | 日期 | 版本 | 变更 |
 |---|---|---|
+| 2026-09-25 | v0.2.30（本地） | 应用户要求参考 Linear 打磨：统一表面、标题与控件；宽屏侧栏、手机底栏、窄屏按钮分行；修复打卡/修改后返回焦点丢失，补读屏按钮名称与组件样张。验证：contracts/speech/settings/overlay --stress/smoke、语法、90 组页面与触控、18 组设置/急救、缩放保留输入、截图目验通过；窄屏收尾后复跑 overlay。未验：真机读屏、原生键盘/手势；未部署。 |
+| 2026-09-25 | v0.2.29 上线 | 用户要求“处理完”：沿用现有部署脚本发布到原 Pages 地址，部署 `0457801b`，未改域名。生产 12 个运行时文件与本地一致，安全响应头在位；线上 settings 与 overlay --stress 全通过，含返回/草稿/失败重试/备份恢复/急救、72 组布局及 40 轮压力。未验：真机拨号、读屏和文件落地；域名迁移待定名。 |
+| 2026-09-25 | v0.2.29 | 应用户要求夯实底座：建立设计系统与组件样张；帮助/备份保留设置草稿、原页与焦点；保存先校验，损坏原件保护、过期页面覆盖检测、超限拒绝；备份可恢复校验、8MB 计数修正、异步取消及同文件重选；急救覆盖浮层并前置拨号。补子域名迁移步骤。验证：storage/contracts/speech/encryption/backup-stress/settings/overlay --stress/smoke、语法、60 组页面及 12 组设置/急救布局、截图目验通过。未验：真机拨号、读屏、域名实迁。 |
 | 2026-09-19 | v0.2.28 | 朗读「换更自然的声音」引导 + 图表色去重复。① 新增 `openVoiceGuide()`：教用户在**手机系统里**下载更自然的中文语音包（iOS 增强音／安卓中文语音数据）——提升听感最有效且不破红线；入口在设置页语速说明下方（限 `Speech.supported()`），措辞只给"大致这样找"+搜索关键词、不给精确按钮名，顺带覆盖"微信里点了没声音"。② `showVitalTooltip` 不再硬写 hex，改从 `VITAL_SERIES` 取色。③ 订正 §4 行数。神经 TTS 选型结论见 §6 speech.js。回归：四套 Node + settings/overlay + smoke 全过（含补跑 v0.2.27.2 未跑的无头套件）。**未验**：引导菜单措辞、装包后听感。 |
 | 2026-09-19 | v0.2.27.2 | 可维护性：`js/app.js` 加分区导航（顶部「模块地图」目录 + 各视图区 `【区】` 前缀可搜索跳转），纯注释、**未移动任何函数、未改加载顺序**。起因：app.js 已从交接时约 1200 行长到 2100+，缺总览入口。当时判断"仅改注释无运行时影响"而未跑无头套件，**已在 v0.2.28 补跑**；遗留的 §4 行数也已订正。 |
 | 2026-09-12 | v0.2.27.1 | 文档漂移审计 + 朗读规则潜伏 bug（无用户可见变化）。① 文档引用扫描报出 8 处"幽灵引用"，查证**全是误报**（否定句/通称/历史记录三类），教训见 AGENTS「写文档的纪律」。② 换问法"文档承诺的行为还成立吗"抓到真 bug：`SPEAK_RULES` 有 6 条用 `\s` 吃空白，违反自己第 12 条约定（`\s` 吞换行粘句）；当前内容 0 触发属潜伏 bug，新增以 `·`/`→` 开头的要点就会爆。10 处全改 `[ \t]`；护栏升级为**遍历 `SPEAK_RULES` 全表 + 静态禁 `\s`**，新规则自动纳入。③ 收敛速查文件分叉（`ef5a439`）：`AGENTS.md` 定唯一真源、`CLAUDE.md` 改指针。回归：六套 Node + settings/overlay + 两探针 + smoke 全过。 |

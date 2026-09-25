@@ -33,6 +33,9 @@ const App = (() => {
   let recTab = 'bp';      // 记录页当前标签
   let catTab = 'limb';    // 训练页当前分类
   let trainerTimer = null;
+  let settingsRevision = 0;
+  const recordDrafts = {}; // 只保留当前页面会话中的未保存输入，不写入健康记录。
+  let recordSaved = null;
 
   const $view = () => document.getElementById('view');
 
@@ -51,11 +54,59 @@ const App = (() => {
     t.textContent = msg;
     t.classList.add('show');
     clearTimeout(t._tid);
-    t._tid = setTimeout(() => t.classList.remove('show'), 2200);
+    t._tid = setTimeout(() => t.classList.remove('show'), 5000);
+  }
+  function showError(node, message) {
+    let feedback = node.querySelector('.save-feedback');
+    if (!feedback) {
+      feedback = document.createElement('div');
+      feedback.className = 'notice danger save-feedback';
+      feedback.setAttribute('role', 'alert');
+      feedback.tabIndex = -1;
+      node.prepend(feedback);
+    }
+    feedback.textContent = message;
+    feedback.focus();
+  }
+  function clearFieldErrors(root) {
+    root.querySelectorAll('.field-error').forEach(el => el.remove());
+    root.querySelectorAll('[aria-invalid]').forEach(el => {
+      el.removeAttribute('aria-invalid');
+      const ids = (el.getAttribute('aria-describedby') || '').split(' ').filter(id => !id.endsWith('-error'));
+      if (ids.length) el.setAttribute('aria-describedby', ids.join(' '));
+      else el.removeAttribute('aria-describedby');
+    });
+  }
+  function fieldError(id, message) {
+    const field = document.getElementById(id);
+    const error = document.createElement('p');
+    error.id = id + '-error';
+    error.className = 'field-error';
+    error.textContent = message;
+    field.insertAdjacentElement('afterend', error);
+    field.setAttribute('aria-invalid', 'true');
+    field.setAttribute('aria-describedby', [field.getAttribute('aria-describedby'), error.id].filter(Boolean).join(' '));
+    const row = field.closest('.dt-row');
+    if (row) {
+      row.hidden = false;
+      document.getElementById(row.id.replace('-dt-row', '-dt-chip')).setAttribute('aria-expanded', 'true');
+    }
+    field.focus();
+  }
+  function pageHeading(title, hint) {
+    return `<header class="page-heading"><h1 tabindex="-1">${esc(title)}</h1><p>${esc(hint)}</p></header>`;
+  }
+  function renderStorageNotice() {
+    const notice = document.getElementById('storage-notice');
+    const issue = Store.storageStatus();
+    notice.hidden = !issue;
+    notice.textContent = issue ? issue.message : '';
   }
   function stored(ok) {
+    renderStorageNotice();
     if (ok) return true;
-    toast('没有保存成功，请检查浏览器存储空间后重试');
+    showError(topOverlay()?.querySelector('.modal-panel, .trainer-body') || $view(),
+      Store.storageStatus()?.message || Store.backupError() || '没有保存成功，请重试');
     return false;
   }
   function beep() {
@@ -260,28 +311,68 @@ const App = (() => {
      （早先的版本没有压条目，返回键直接吃掉了真实页面条目、导致整页重载。） */
   let dismissPending = false;
   let reuseOverlayEntry = false;
+  let replacementFocus = null;
+  let openingTrigger = null;
+  const overlayStack = [];
+  const topOverlay = () => overlayStack[overlayStack.length - 1];
+  function syncOverlays() {
+    const top = topOverlay();
+    document.body.classList.toggle('overlay-open', !!top);
+    document.querySelectorAll('.app-header, #view, #storage-notice, .bottom-nav').forEach(el => {
+      el.inert = !!top;
+      if (top) el.setAttribute('aria-hidden', 'true'); else el.removeAttribute('aria-hidden');
+    });
+    overlayStack.forEach(el => {
+      el.inert = el !== top;
+      if (el !== top) el.setAttribute('aria-hidden', 'true'); else el.removeAttribute('aria-hidden');
+      el.style.zIndex = String(150 + overlayStack.indexOf(el));
+    });
+  }
+  function mountOverlay(node, focusTarget) {
+    // Safari 触摸按钮未必获得焦点，返回位置要认触发控件本身。
+    const trigger = openingTrigger?.isConnected && (!topOverlay() || topOverlay().contains(openingTrigger))
+      ? openingTrigger : document.activeElement;
+    node._returnFocus = replacementFocus || trigger;
+    overlayStack.push(node);
+    Speech.stop();
+    syncOverlays();
+    focusTarget.focus({ preventScroll: true });
+  }
   function overlayPush() {
     if (!reuseOverlayEntry) history.pushState({ rehabOverlay: 1 }, '');
   }
+  // 保存/打卡会重建列表；用原控件的稳定标识找回新节点，不能只检查旧 DOM。
+  function returnFocusTarget(target) {
+    if (!target || target.isConnected) return target;
+    if (target.id) return document.getElementById(target.id);
+    for (const key of ['ex', 'editMed', 'hist', 'art']) {
+      if (target.dataset[key]) {
+        return [...$view().querySelectorAll('button, [role="button"]')]
+          .find(el => el.dataset[key] === target.dataset[key]);
+      }
+    }
+    return null;
+  }
   /* 只动 DOM、不碰历史：给 popstate 用 */
   function closeTopOverlayDOM() {
-    if (document.getElementById('trainer')) { closeTrainer(); return true; }
-    const masks = document.querySelectorAll('.modal-mask');
-    if (masks.length) {
-      Speech.stop();
-      masks[masks.length - 1].remove();
-      return true;
-    }
-    return false;
+    const top = topOverlay();
+    if (!top) return false;
+    if (top.id === 'trainer') closeTrainer();
+    else { overlayStack.pop(); Speech.stop(); top.remove(); syncOverlays(); }
+    if (topOverlay()?._onResume) topOverlay()._onResume();
+    const target = returnFocusTarget(top._returnFocus);
+    if (target?.isConnected && !target.closest('[inert]')) target.focus({ preventScroll: true });
+    else if (topOverlay()) topOverlay().querySelector('.m-title, .t-name').focus({ preventScroll: true });
+    else $view().focus({ preventScroll: true });
+    return true;
   }
   /* 主动关闭（✕ / Esc）：等 popstate 到达后再关 DOM，期间遮罩仍会阻止重复操作。 */
   function dismissTopOverlay() {
-    if (!document.getElementById('trainer') && !document.querySelector('.modal-mask')) return false;
+    if (!topOverlay()) return false;
     if (dismissPending) return true;
     dismissPending = true;
     Speech.stop();
-    const masks = document.querySelectorAll('.modal-mask');
-    const top = document.getElementById('trainer') || masks[masks.length - 1];
+    const top = topOverlay();
     if (top) {
       top.setAttribute('aria-busy', 'true');
       top.querySelectorAll('button, input, select, textarea').forEach(control => { control.disabled = true; });
@@ -291,14 +382,24 @@ const App = (() => {
   }
 
   /* ---------- 弹窗 ---------- */
-  function openModal(title, contentNode, { center = false } = {}) {
+  function openModal(title, contentNode, { center = false, emergency = false } = {}) {
     const mask = document.createElement('div');
     mask.className = 'modal-mask' + (center ? ' center' : '');
     const panel = document.createElement('div');
     panel.className = 'modal-panel';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.setAttribute('aria-label', title);
     const head = document.createElement('div');
     head.className = 'modal-head';
-    head.innerHTML = `<div class="m-title">${esc(title)}</div>`;
+    head.innerHTML = `<div class="m-title" tabindex="-1">${esc(title)}</div>`;
+    if (!emergency) {
+      const urgent = document.createElement('button');
+      urgent.className = 'btn-emergency';
+      urgent.textContent = '急救';
+      urgent.onclick = openEmergency;
+      head.appendChild(urgent);
+    }
     const closeBtn = document.createElement('button');
     closeBtn.className = 'modal-close';
     closeBtn.textContent = '✕';
@@ -309,20 +410,25 @@ const App = (() => {
     mask.appendChild(panel);
     document.getElementById('modal-root').appendChild(mask);
     overlayPush();
+    mountOverlay(mask, head.querySelector('.m-title'));
     const close = () => {
-      if (!mask.isConnected) return;   // 已经被返回键关过，别再退历史
+      if (!mask.isConnected || topOverlay() !== mask) return;
       dismissTopOverlay();
     };
     close.replace = openNext => {
-      if (!mask.isConnected || dismissPending) return false;
+      if (!mask.isConnected || topOverlay() !== mask || dismissPending) return false;
       Speech.stop();
+      overlayStack.pop();
       mask.remove();
       reuseOverlayEntry = true;
-      try { openNext(); } finally { reuseOverlayEntry = false; }
+      replacementFocus = mask._returnFocus;
+      try { openNext(); } finally { reuseOverlayEntry = false; replacementFocus = null; syncOverlays(); }
       return true;
     };
     closeBtn.onclick = close;
     mask.addEventListener('click', e => { if (e.target === mask) close(); });
+    close.onResume = callback => { mask._onResume = callback; };
+    close.active = () => mask.isConnected && topOverlay() === mask && !dismissPending;
     return close;
   }
   function nodeFromHTML(html) {
@@ -382,17 +488,17 @@ const App = (() => {
     let html = `
     <div class="today-hero">
       <div class="date-line">${now.getMonth() + 1}月${now.getDate()}日 ${Store.weekdayCN(now)}</div>
-      <div class="greet">${greet}${name} 🌱</div>
+      <h1 class="greet" tabindex="-1">${greet}${name}</h1>
       ${rd ? `<div class="rehab-day">今天是康复第 <b>${rd}</b> 天，每一天都算数</div>`
            : `<div class="rehab-day">坚持康复，每一天都算数</div>`}
       ${streakHTML}
     </div>
 
     <div class="card">
-      <div class="card-title">📋 今日三件事</div>
+      <h2 class="card-title">今日三件事</h2>
       <div class="today-summary">${summary}</div>
       <div class="check-item ${bpDone ? 'done' : ''}">
-        <div class="ci-icon">🩺</div>
+        <div class="ci-icon" aria-hidden="true">🩺</div>
         <div class="ci-body">
           <div class="ci-name">测量血压</div>
           <div class="ci-sub">${bpDone ? '今天记好了 ✓' : '每天固定时间测量并记录'}</div>
@@ -400,7 +506,7 @@ const App = (() => {
         <button class="ci-action ${bpDone ? 'done' : ''}" data-go="records" data-rec="bp">${bpDone ? '已完成' : '去记录'}</button>
       </div>
       <div class="check-item ${medDone ? 'done' : ''}">
-        <div class="ci-icon">💊</div>
+        <div class="ci-icon" aria-hidden="true">💊</div>
         <div class="ci-body">
           <div class="ci-name">按时服药</div>
           <div class="ci-sub">${mp.total
@@ -411,7 +517,7 @@ const App = (() => {
         <button class="ci-action ${medDone ? 'done' : ''}" data-go="meds">${medDone ? '已完成' : '去核对'}</button>
       </div>
       <div class="check-item ${trainDone ? 'done' : ''}">
-        <div class="ci-icon">💪</div>
+        <div class="ci-icon" aria-hidden="true">💪</div>
         <div class="ci-body">
           <div class="ci-name">康复训练</div>
           <div class="ci-sub">${esc(stageName)}${trainDone ? '推荐都练过了 ✓' : ' · ' + leftText(planDone, plan.length, '项')}</div>
@@ -422,7 +528,7 @@ const App = (() => {
     </div>
 
     <div class="card">
-      <div class="card-title">🎯 今日推荐训练 <span class="muted" style="font-weight:400">（${esc(stageName)}）</span></div>
+      <h2 class="card-title">今日推荐训练 <span class="card-meta">${esc(stageName)}</span></h2>
       ${plan.map(e => exItemHTML(e, doneIds.includes(e.id))).join('')}
       <div class="muted" style="margin-top:0.5rem">阶段不符？到「训练」页可切换康复阶段。</div>
     </div>
@@ -443,13 +549,13 @@ const App = (() => {
   function exItemHTML(e, done) {
     return `
     <div class="ex-item">
-      <div class="ex-icon">${e.icon}</div>
+      <div class="ex-icon" aria-hidden="true">${e.icon}</div>
       <div class="ex-body">
         <div class="ex-name">${e.name}</div>
         <div class="ex-dose">${e.dose}</div>
         ${done ? '<div class="ex-done-mark">✓ 今日已完成</div>' : ''}
       </div>
-      <button class="ex-start ${done ? 'done' : ''}" data-ex="${e.id}">${done ? '再练一次' : '开始'}</button>
+      <button class="ex-start ${done ? 'done' : ''}" data-ex="${e.id}" aria-label="${done ? '再练一次' : '开始'}：${esc(e.name)}">${done ? '再练一次' : '开始'}</button>
     </div>`;
   }
   function bindExItems(root) {
@@ -465,34 +571,41 @@ const App = (() => {
   function renderTrain() {
     const p = Store.data.profile;
     const doneIds = Store.exercisesDoneToday();
+    const stage = STAGES.find(s => s.key === p.stage) || STAGES[0];
 
     let html = `
-    <div class="card" style="margin-bottom:0.9rem">
-      <div class="card-title">🧭 当前康复阶段</div>
-      <div class="stage-picker" style="margin-bottom:0.3rem">
-        ${STAGES.map(s => `<button class="stage-chip ${p.stage === s.key ? 'active' : ''}" data-stage="${s.key}">${s.name}</button>`).join('')}
+    ${pageHeading('康复训练', '选一个动作，按自己的节奏慢慢练。')}
+    <details class="card disclosure stage-card" id="train-stage">
+      <summary><span><strong>当前阶段 · ${esc(stage.name)}</strong><span class="disclosure-hint">${esc(stage.desc)}</span></span><span class="disclosure-action">更换<span class="disclosure-arrow" aria-hidden="true">⌄</span></span></summary>
+      <div class="disclosure-body">
+      <div class="stage-picker" role="group" aria-label="当前康复阶段">
+        ${STAGES.map(s => `<button class="stage-chip ${p.stage === s.key ? 'active' : ''}" aria-pressed="${p.stage === s.key}" data-stage="${s.key}">${s.name}</button>`).join('')}
       </div>
-      <div class="muted">${esc((STAGES.find(s => s.key === p.stage) || {}).desc || '')}。阶段影响「肢体运动」列表和今日推荐。</div>
-    </div>
+      <div class="muted">阶段影响「肢体运动」列表和今日推荐。</div>
+      </div>
+    </details>
 
-    ${trainHistoryCardHTML()}
-
-    <div class="cat-tabs">
-      ${EX_CATS.map(c => `<button class="cat-tab ${catTab === c.key ? 'active' : ''}" data-cat="${c.key}">${c.icon} ${c.name}</button>`).join('')}
+    <h2 class="section-label">选择训练内容</h2>
+    <div class="cat-tabs" role="group" aria-label="训练内容">
+      ${EX_CATS.map(c => `<button class="cat-tab ${catTab === c.key ? 'active' : ''}" aria-pressed="${catTab === c.key}" aria-controls="ex-list" data-cat="${c.key}">${c.name}</button>`).join('')}
     </div>
     <div id="ex-list"></div>
-    <div class="disclaimer">训练动作应经康复医生/治疗师评估后进行；站立、步行类训练必须有家属保护。</div>`;
+    <div class="disclaimer">训练动作应经康复医生/治疗师评估后进行；站立、步行类训练必须有家属保护。</div>
+    ${trainHistoryCardHTML()}`;
 
     $view().innerHTML = html;
 
     $view().querySelectorAll('[data-stage]').forEach(b => b.onclick = () => {
+      if (Store.data.profile.stage === b.dataset.stage) return;
       Store.data.profile.stage = b.dataset.stage;
-      if (!stored(Store.save())) { renderTrain(); return; }
-      renderTrain();
+      if (!stored(Store.save())) return;
+      render('train', { keepScroll: true });
     });
     $view().querySelectorAll('[data-cat]').forEach(b => b.onclick = () => {
+      if (catTab === b.dataset.cat) return;
       catTab = b.dataset.cat;
-      renderTrain();
+      render('train', { keepScroll: true });
+      $view().querySelector(`[data-cat="${catTab}"]`).focus({ preventScroll: true });
     });
     const histBtn = document.getElementById('btn-ex-hist');
     if (histBtn) histBtn.onclick = openExerciseHistory;
@@ -517,13 +630,13 @@ const App = (() => {
   function exCardHTML(e, done, stageTag) {
     return `
     <div class="ex-item">
-      <div class="ex-icon">${e.icon}</div>
+      <div class="ex-icon" aria-hidden="true">${e.icon}</div>
       <div class="ex-body">
         <div class="ex-name">${e.name}${stageTag ? ` <span class="badge info" style="font-size:0.75rem">${stageTag}</span>` : ''}</div>
         <div class="ex-dose">${e.dose}</div>
         ${done ? '<div class="ex-done-mark">✓ 今日已完成</div>' : ''}
       </div>
-      <button class="ex-start ${done ? 'done' : ''}" data-ex="${e.id}">${done ? '再练' : '开始'}</button>
+      <button class="ex-start ${done ? 'done' : ''}" data-ex="${e.id}" aria-label="${done ? '再练' : '开始'}：${esc(e.name)}">${done ? '再练' : '开始'}</button>
     </div>`;
   }
 
@@ -563,8 +676,9 @@ const App = (() => {
           : `<div class="muted">${best > 1 ? `之前最长连着练过 ${best} 天。` : ''}中间歇几天很正常，今天做一个动作就又接上了。</div>`);
     }
     return `
-    <div class="card" style="margin-bottom:0.9rem">
-      <div class="card-title">📅 训练打卡记录</div>
+    <details class="disclosure card" id="train-history">
+      <summary><span><strong>训练打卡记录</strong><span class="disclosure-hint">${total ? `已积累 ${total} 天 · 查看近四周` : '查看日历与每日明细'}</span></span><span class="disclosure-arrow" aria-hidden="true">⌄</span></summary>
+      <div class="disclosure-body">
       ${line}
       ${calendarHTML(28)}
       <div class="cal-legend">
@@ -572,7 +686,8 @@ const App = (() => {
         <span class="cal-legend-scale">少 <i class="cal-dot"></i><i class="cal-dot lv1"></i><i class="cal-dot lv2"></i> 多</span>
       </div>
       ${hasHistory ? '<button class="btn ghost block" id="btn-ex-hist" style="margin-top:0.7rem">📄 查看每天练了什么</button>' : ''}
-    </div>`;
+      </div>
+    </details>`;
   }
 
   function exName(id) {
@@ -620,10 +735,14 @@ const App = (() => {
     /* 换一个动作（游戏里"换个不用算的"）时复用同一个历史条目：
        "训练引导页开着"始终只对应一个条目，返回键一次就退出。 */
     const hadTrainer = !!document.getElementById('trainer');
+    const trainerOrigin = document.getElementById('trainer')?._returnFocus;
     closeTrainer();
     const wrap = document.createElement('div');
     wrap.className = 'trainer';
     wrap.id = 'trainer';
+    wrap.setAttribute('role', 'dialog');
+    wrap.setAttribute('aria-modal', 'true');
+    wrap.setAttribute('aria-label', ex.name);
 
     let modeHTML = '';
     if (ex.mode.type === 'reps') {
@@ -658,7 +777,8 @@ const App = (() => {
     wrap.innerHTML = `
       <div class="trainer-head">
         <button class="modal-close" id="trainer-back" aria-label="返回">←</button>
-        <div class="t-name">${ex.name}</div>
+        <div class="t-name" tabindex="-1">${ex.name}</div>
+        <button class="btn-emergency" id="trainer-emergency">急救</button>
       </div>
       <div class="trainer-body">
         ${figureHTML(ex)}
@@ -676,6 +796,9 @@ const App = (() => {
 
     document.body.appendChild(wrap);
     if (!hadTrainer) overlayPush();
+    mountOverlay(wrap, wrap.querySelector('.t-name'));
+    if (trainerOrigin) wrap._returnFocus = trainerOrigin;
+    wrap.querySelector('#trainer-emergency').onclick = openEmergency;
 
     const finish = (gameResult = null) => {
       if (dismissPending) return;
@@ -694,7 +817,7 @@ const App = (() => {
     wrap.querySelector('#trainer-back').onclick = dismissTopOverlay;
     bindSpeak(wrap.querySelector('#trainer-speak'), () => exerciseSpeechText(ex));
     const doneBtn = wrap.querySelector('#trainer-done');
-    if (doneBtn) doneBtn.onclick = finish;
+    if (doneBtn) doneBtn.onclick = () => finish();
 
     if (ex.mode.type === 'reps') {
       const target = ex.mode.target;
@@ -741,6 +864,7 @@ const App = (() => {
         bar.style.width = `${Math.round((total - remain) / total * 100)}%`;
       };
       const stopT = () => { if (trainerTimer) { clearInterval(trainerTimer); trainerTimer = null; } running = false; tog.textContent = '▶ 继续'; };
+      wrap._pause = stopT;
       tog.onclick = () => {
         if (running) { stopT(); return; }
         running = true; tog.textContent = '⏸ 暂停';
@@ -779,7 +903,12 @@ const App = (() => {
     Speech.stop();   // 不停会在 iOS 上继续念
     Games.stop();
     const t = document.getElementById('trainer');
-    if (t) t.remove();
+    if (t) {
+      const index = overlayStack.indexOf(t);
+      if (index !== -1) overlayStack.splice(index, 1);
+      t.remove();
+      syncOverlays();
+    }
   }
 
   /* ============================================================
@@ -1052,7 +1181,7 @@ const App = (() => {
         if (confirm('删除这条记录？')) {
           if (!stored(Store.removeVital(kind, b.dataset.del))) return;
           paint();
-          renderRecords();
+          render('records', { keepScroll: true, preserveInputs: true });
         }
       });
       drawVitalChart(kind, node.querySelector('#vh-chart'), recent);
@@ -1062,9 +1191,10 @@ const App = (() => {
 
   function renderRecords() {
     let html = `
-    <div class="rec-tabs">
+    ${pageHeading('健康记录', '记录测量结果，复诊时方便核对。')}
+    <div class="rec-tabs" role="group" aria-label="记录类型">
       ${Object.entries(REC_KINDS).map(([k, v]) =>
-        `<button class="rec-tab ${recTab === k ? 'active' : ''}" data-rectab="${k}">${v.icon} ${v.name}</button>`).join('')}
+        `<button class="rec-tab ${recTab === k ? 'active' : ''}" aria-pressed="${recTab === k}" aria-controls="rec-body" data-rectab="${k}">${v.name}</button>`).join('')}
     </div>
     <div id="rec-body"></div>
     <button class="btn ghost block" id="btn-export" style="margin-top:0.2rem">📤 导出记录给医生看</button>
@@ -1072,8 +1202,11 @@ const App = (() => {
     $view().innerHTML = html;
 
     $view().querySelectorAll('[data-rectab]').forEach(b => b.onclick = () => {
+      if (recTab === b.dataset.rectab) return;
+      captureRecordDraft();
       recTab = b.dataset.rectab;
-      renderRecords();
+      render('records', { keepScroll: true });
+      $view().querySelector(`[data-rectab="${recTab}"]`).focus({ preventScroll: true });
     });
     document.getElementById('btn-export').onclick = openExport;
 
@@ -1081,6 +1214,58 @@ const App = (() => {
     if (recTab === 'bp') renderBP(body);
     else if (recTab === 'glucose') renderGlucose(body);
     else renderWeight(body);
+    restoreRecordDraft();
+    const form = body.querySelector('.vital-form');
+    const status = document.createElement('p');
+    status.className = 'form-status';
+    status.setAttribute('role', 'status');
+    form.appendChild(status);
+    const markDraft = () => {
+      form.dataset.dirty = 'true';
+      status.className = 'form-status';
+      status.textContent = '尚未保存，填写后请点保存。';
+      if (recordSaved?.kind === recTab) recordSaved = null;
+    };
+    form.addEventListener('input', markDraft);
+    form.addEventListener('change', markDraft);
+    if (recordDrafts[recTab]) markDraft();
+    else if (recordSaved?.kind === recTab) {
+      status.classList.add('saved');
+      status.textContent = recordSaved.message;
+    } else status.textContent = '填好后请点保存，记录仅保存在本机。';
+  }
+
+  function captureRecordDraft() {
+    const body = document.getElementById('rec-body');
+    if (!body) return;
+    const form = body.querySelector('.vital-form');
+    const typed = [...form.querySelectorAll('input[type="number"]')].some(el => el.value !== '');
+    if (!typed && !form.dataset.dirty) return;
+    recordDrafts[recTab] = {
+      values: [...form.querySelectorAll('input[id], select[id]')].map(el => [el.id, el.value]),
+      expanded: !form.querySelector('.dt-row').hidden,
+    };
+  }
+  function restoreRecordDraft() {
+    const draft = recordDrafts[recTab];
+    if (!draft) return;
+    draft.values.forEach(([id, value]) => { document.getElementById(id).value = value; });
+    const prefix = { bp: 'bp', glucose: 'glu', weight: 'wt' }[recTab];
+    document.getElementById(prefix + '-dt-row').hidden = !draft.expanded;
+    bindWhenToggle(prefix);
+  }
+  function recordSaveDone(message) {
+    delete recordDrafts[recTab];
+    recordSaved = { kind: recTab, message };
+    render('records', { keepScroll: true });
+    const status = document.querySelector('.form-status');
+    status.tabIndex = -1;
+    status.focus({ preventScroll: true });
+    toast('记录已保存');
+  }
+  function clearRecordSession() {
+    Object.keys(recordDrafts).forEach(key => delete recordDrafts[key]);
+    recordSaved = null;
   }
 
   function formDefaults() {
@@ -1089,6 +1274,7 @@ const App = (() => {
 
   /* 日期时间的口语化短显示：绝大多数记录就是"刚刚"，低频修改不值得占一级大字段 */
   function fmtWhen(date, time) {
+    if (!date) return '请选择日期';
     const today = Store.today();
     const head = date === today ? '今天'
       : date === Store.addDays(today, -1) ? '昨天'
@@ -1103,8 +1289,13 @@ const App = (() => {
     if (!row || !chip) return;
     const dateEl = document.getElementById(prefix + '-date');
     const timeEl = document.getElementById(prefix + '-time');
-    const fmt = () => { chip.textContent = fmtWhen(dateEl.value, timeEl ? timeEl.value : ''); };
-    chip.onclick = () => { row.hidden = !row.hidden; };
+    const fmt = () => { chip.textContent = fmtWhen(dateEl.value, timeEl ? timeEl.value : '') + ' · 修改'; };
+    chip.setAttribute('aria-controls', row.id);
+    chip.setAttribute('aria-expanded', String(!row.hidden));
+    chip.onclick = () => {
+      row.hidden = !row.hidden;
+      chip.setAttribute('aria-expanded', String(!row.hidden));
+    };
     dateEl.onchange = fmt;
     if (timeEl) timeEl.onchange = fmt;
     fmt();
@@ -1128,11 +1319,11 @@ const App = (() => {
 
     body.innerHTML = `
     <div class="card">
-      <div class="card-title">➕ 记一次血压</div>
+      <h2 class="card-title">记一次血压</h2>
       <div class="vital-form">
         <div class="form-row">
-          <div class="field"><label>高压<span class="label-opt">（收缩压）</span></label><input id="bp-sys" type="number" inputmode="numeric" placeholder="如 135"></div>
-          <div class="field"><label>低压<span class="label-opt">（舒张压）</span></label><input id="bp-dia" type="number" inputmode="numeric" placeholder="如 85"></div>
+          <div class="field"><label for="bp-sys">高压<span class="label-opt">（收缩压）</span></label><input id="bp-sys" type="number" inputmode="numeric" placeholder="如 135"></div>
+          <div class="field"><label for="bp-dia">低压<span class="label-opt">（舒张压）</span></label><input id="bp-dia" type="number" inputmode="numeric" placeholder="如 85"></div>
         </div>
         <div class="form-inline">
           <label class="fi-label" for="bp-pulse">脉搏<span class="label-opt">（选填）</span></label>
@@ -1143,14 +1334,14 @@ const App = (() => {
           <button type="button" class="dt-chip" id="bp-dt-chip"></button>
         </div>
         <div class="form-row dt-row" id="bp-dt-row" hidden>
-          <div class="field wide"><label>日期</label><input id="bp-date" type="date" value="${d}"></div>
-          <div class="field wide"><label>时间</label><input id="bp-time" type="time" value="${t}"></div>
+          <div class="field wide"><label for="bp-date">日期</label><input id="bp-date" type="date" value="${d}"></div>
+          <div class="field wide"><label for="bp-time">时间</label><input id="bp-time" type="time" value="${t}"></div>
         </div>
         <button class="btn block" id="bp-save">保存血压记录</button>
       </div>
     </div>
     <div class="card">
-      <div class="card-title">🩺 最近血压</div>
+      <h2 class="card-title">最近血压</h2>
       ${latestHTML}
       ${sorted.length >= 2 ? `${chartSummaryHTML('bp', sorted.slice(-14))}<div class="chart-box"><canvas id="bp-chart"></canvas></div>${chartLegendHTML('bp')}` : ''}
       ${histBtnHTML('bp', sorted.length)}
@@ -1158,17 +1349,19 @@ const App = (() => {
 
     bindWhenToggle('bp');
     document.getElementById('bp-save').onclick = () => {
+      clearFieldErrors(body);
       const sys = +document.getElementById('bp-sys').value;
       const dia = +document.getElementById('bp-dia').value;
       const pulse = document.getElementById('bp-pulse').value;
       const date = document.getElementById('bp-date').value;
       const time = document.getElementById('bp-time').value;
-      if (!sys || !dia || sys < 50 || sys > 300 || dia < 30 || dia > 200) { toast('请输入有效的血压数值'); return; }
-      if (!date) { toast('请选择日期'); return; }
+      if (!sys || sys < 50 || sys > 300) { fieldError('bp-sys', '请核对血压计上的高压读数，再填写高压。'); return; }
+      if (!dia || dia < 30 || dia > 200) { fieldError('bp-dia', '请核对血压计上的低压读数，再填写低压。'); return; }
+      if (pulse && !(+pulse > 0 && +pulse <= 400)) { fieldError('bp-pulse', '请核对脉搏读数，不记录时可以留空。'); return; }
+      if (!date) { fieldError('bp-date', '请选择这次测量的日期。'); return; }
       if (!stored(Store.addVital('bp', { date, time, sys, dia, pulse: pulse ? +pulse : '' }))) return;
       const [cls, txt] = bpBadge(sys, dia);
-      toast(cls === 'bad' ? '已保存。' + txt : '已保存 ✓');
-      renderRecords();
+      recordSaveDone(`✓ 已保存血压 ${sys}/${dia} mmHg · ${fmtWhen(date, time)}${cls === 'bad' ? '。' + txt : ''}`);
     };
     bindHist(body);
     drawVitalChart('bp', document.getElementById('bp-chart'), sorted.slice(-14));
@@ -1192,27 +1385,27 @@ const App = (() => {
 
     body.innerHTML = `
     <div class="card">
-      <div class="card-title">➕ 记一次血糖</div>
+      <h2 class="card-title">记一次血糖</h2>
       <div class="vital-form">
         <div class="form-row">
-          <div class="field"><label>测量类型</label>
+          <div class="field"><label for="glu-type">测量类型</label>
             <select id="glu-type"><option>空腹</option><option>餐后2小时</option><option>随机</option></select>
           </div>
-          <div class="field"><label>数值 mmol/L</label><input id="glu-val" type="number" step="0.1" inputmode="decimal" placeholder="如 6.2"></div>
+          <div class="field"><label for="glu-val">数值 mmol/L</label><input id="glu-val" type="number" step="0.1" inputmode="decimal" placeholder="如 6.2"></div>
         </div>
         <div class="form-inline">
           <span class="fi-label">记录时间</span>
           <button type="button" class="dt-chip" id="glu-dt-chip"></button>
         </div>
         <div class="form-row dt-row" id="glu-dt-row" hidden>
-          <div class="field wide"><label>日期</label><input id="glu-date" type="date" value="${d}"></div>
-          <div class="field wide"><label>时间</label><input id="glu-time" type="time" value="${t}"></div>
+          <div class="field wide"><label for="glu-date">日期</label><input id="glu-date" type="date" value="${d}"></div>
+          <div class="field wide"><label for="glu-time">时间</label><input id="glu-time" type="time" value="${t}"></div>
         </div>
         <button class="btn block" id="glu-save">保存血糖记录</button>
       </div>
     </div>
     <div class="card">
-      <div class="card-title">🩸 最近血糖</div>
+      <h2 class="card-title">最近血糖</h2>
       ${latestHTML}
       ${sorted.length >= 2 ? `${chartSummaryHTML('glucose', sorted.slice(-14))}<div class="chart-box"><canvas id="glu-chart"></canvas></div>${chartLegendHTML('glucose')}` : ''}
       ${histBtnHTML('glucose', sorted.length)}
@@ -1220,15 +1413,15 @@ const App = (() => {
 
     bindWhenToggle('glu');
     document.getElementById('glu-save').onclick = () => {
+      clearFieldErrors(body);
       const gtype = document.getElementById('glu-type').value;
       const value = +document.getElementById('glu-val').value;
       const date = document.getElementById('glu-date').value;
       const time = document.getElementById('glu-time').value;
-      if (!value || value < 1 || value > 40) { toast('请输入有效的血糖数值'); return; }
-      if (!date) { toast('请选择日期'); return; }
+      if (!value || value < 1 || value > 40) { fieldError('glu-val', '请核对血糖读数，按 mmol/L 填写。'); return; }
+      if (!date) { fieldError('glu-date', '请选择这次测量的日期。'); return; }
       if (!stored(Store.addVital('glucose', { date, time, gtype, value }))) return;
-      toast('已保存 ✓');
-      renderRecords();
+      recordSaveDone(`✓ 已保存${gtype}血糖 ${value} mmol/L · ${fmtWhen(date, time)}`);
     };
     bindHist(body);
     drawVitalChart('glucose', document.getElementById('glu-chart'), sorted.slice(-14));
@@ -1261,23 +1454,23 @@ const App = (() => {
 
     body.innerHTML = `
     <div class="card">
-      <div class="card-title">➕ 记一次体重</div>
+      <h2 class="card-title">记一次体重</h2>
       <div class="vital-form">
         <div class="form-row">
-          <div class="field"><label>体重（公斤）</label><input id="wt-val" type="number" step="0.1" inputmode="decimal" placeholder="如 62.5"></div>
+          <div class="field"><label for="wt-val">体重（公斤）</label><input id="wt-val" type="number" step="0.1" inputmode="decimal" placeholder="如 62.5"></div>
         </div>
         <div class="form-inline">
           <span class="fi-label">记录日期</span>
           <button type="button" class="dt-chip" id="wt-dt-chip"></button>
         </div>
         <div class="form-row dt-row" id="wt-dt-row" hidden>
-          <div class="field wide"><label>日期</label><input id="wt-date" type="date" value="${d}"></div>
+          <div class="field wide"><label for="wt-date">日期</label><input id="wt-date" type="date" value="${d}"></div>
         </div>
         <button class="btn block" id="wt-save">保存体重记录</button>
       </div>
     </div>
     <div class="card">
-      <div class="card-title">⚖️ 最近体重</div>
+      <h2 class="card-title">最近体重</h2>
       ${latestHTML}
       ${sorted.length >= 2 ? `${chartSummaryHTML('weight', sorted.slice(-14))}<div class="chart-box"><canvas id="wt-chart"></canvas></div>${chartLegendHTML('weight')}` : ''}
       ${histBtnHTML('weight', sorted.length)}
@@ -1285,13 +1478,13 @@ const App = (() => {
 
     bindWhenToggle('wt');
     document.getElementById('wt-save').onclick = () => {
+      clearFieldErrors(body);
       const value = +document.getElementById('wt-val').value;
       const date = document.getElementById('wt-date').value;
-      if (!value || value < 20 || value > 300) { toast('请输入有效的体重'); return; }
-      if (!date) { toast('请选择日期'); return; }
+      if (!value || value < 20 || value > 300) { fieldError('wt-val', '请核对体重读数，以公斤填写。'); return; }
+      if (!date) { fieldError('wt-date', '请选择这次测量的日期。'); return; }
       if (!stored(Store.addVital('weight', { date, value }))) return;
-      toast('已保存 ✓');
-      renderRecords();
+      recordSaveDone(`✓ 已保存体重 ${value} 公斤 · ${fmtWhen(date)}`);
     };
     bindHist(body);
     drawVitalChart('weight', document.getElementById('wt-chart'), sorted.slice(-14));
@@ -1347,7 +1540,7 @@ const App = (() => {
           ${slots[t].map(m => {
             const taken = Store.isMedTaken(m.id, t);
             return `
-            <div class="med-check ${taken ? 'checked' : ''}" data-med="${esc(m.id)}" data-time="${esc(t)}" role="button" tabindex="0">
+            <div class="med-check ${taken ? 'checked' : ''}" data-med="${esc(m.id)}" data-time="${esc(t)}" role="checkbox" aria-checked="${taken}" tabindex="0">
               <div class="mc-box">${taken ? '✓' : ''}</div>
               <div>
                 <div class="mc-name">${esc(m.name)}</div>
@@ -1384,8 +1577,9 @@ const App = (() => {
     }
 
     let html = `
+    ${pageHeading('用药核对', '按医生处方服药，吃完再做标记。')}
     <div class="card">
-      <div class="card-title">✅ 今日服药核对 <span class="muted" style="font-weight:400">（吃完点一下）</span></div>
+      <h2 class="card-title">今日服药核对 <span class="card-meta">吃完点一下</span></h2>
       ${todayLine}
       ${checkHTML}
     </div>
@@ -1402,8 +1596,8 @@ const App = (() => {
 
     $view().querySelectorAll('.med-check').forEach(elm => {
       const act = () => {
-        stored(Store.toggleMed(elm.dataset.med, elm.dataset.time));
-        renderMeds();
+        if (!stored(Store.toggleMed(elm.dataset.med, elm.dataset.time))) return;
+        render('meds', { keepScroll: true });
       };
       elm.onclick = act;
       elm.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } };
@@ -1431,7 +1625,7 @@ const App = (() => {
         <div class="mi-sub">${esc(m.dose || '')} · 每日${times.length}次（${times.map(esc).join('、')}）${m.note ? ' · ' + esc(m.note) : ''}</div>
         ${period ? `<div class="mi-period">${period}</div>` : ''}
       </div>
-      <button class="btn small outline" data-edit-med="${esc(m.id)}">${stopped ? '查看' : '修改'}</button>
+      <button class="btn small outline" data-edit-med="${esc(m.id)}" aria-label="${stopped ? '查看' : '修改'}：${esc(m.name)}">${stopped ? '查看' : '修改'}</button>
     </div>`;
   }
   function medListHTML() {
@@ -1439,7 +1633,7 @@ const App = (() => {
     const stopped = Store.stoppedMeds();
     return `
     <div class="card">
-      <div class="card-title">💊 我的药物清单</div>
+      <h2 class="card-title">我的药物清单</h2>
       ${active.map(m => medRowHTML(m, false)).join('')}
       ${!active.length && !stopped.length ? '' : ''}
       <button class="btn ghost block" id="btn-add-med" style="margin-top:0.7rem">＋ 添加药物</button>
@@ -1496,20 +1690,20 @@ const App = (() => {
     const node = nodeFromHTML(`
       <div class="vital-form">
         <div class="field" style="margin-bottom:0.7rem">
-          <label>药物名称（按处方填写）</label>
+          <label for="med-name">药物名称（按处方填写）</label>
           <input id="med-name" type="text" placeholder="如 阿司匹林肠溶片" value="${esc(formData.name || '')}">
           <div class="time-chip-row" style="margin-top:0.4rem">
             ${COMMON_MEDS.map(n => `<button class="time-chip" data-preset="${esc(n)}" style="font-size:0.88rem">${esc(n)}</button>`).join('')}
           </div>
         </div>
         <div class="field" style="margin-bottom:0.7rem">
-          <label>每次用量</label>
+          <label for="med-dose">每次用量</label>
           <input id="med-dose" type="text" placeholder="如 100mg，1片" value="${esc(formData.dose || '')}">
         </div>
         <div class="field" style="margin-bottom:0.7rem">
-          <label>每天服药时间（可多选）</label>
-          <div class="time-chip-row" id="time-chips">
-            ${COMMON_TIMES.map(t => `<button class="time-chip ${sel.has(t) ? 'active' : ''}" data-t="${t}">${t}</button>`).join('')}
+          <label for="custom-time" id="med-time-label">每天服药时间（可多选）</label>
+          <div class="time-chip-row" id="time-chips" role="group" aria-labelledby="med-time-label">
+            ${COMMON_TIMES.map(t => `<button class="time-chip ${sel.has(t) ? 'active' : ''}" data-t="${t}" aria-pressed="${sel.has(t)}">${t}</button>`).join('')}
           </div>
           <div style="display:flex;gap:0.5rem;margin-top:0.5rem;align-items:center">
             <input id="custom-time" type="time" style="flex:1">
@@ -1518,11 +1712,11 @@ const App = (() => {
           <div class="muted" style="margin-top:0.3rem">已选：<span id="sel-times">${[...sel].sort().join('、') || '无'}</span></div>
         </div>
         <div class="field" style="margin-bottom:0.7rem">
-          <label>备注（可不填）</label>
+          <label for="med-note">备注（可不填）</label>
           <input id="med-note" type="text" placeholder="如 饭后服、别嚼碎" value="${esc(formData.note || '')}">
         </div>
         <div class="field" style="margin-bottom:0.9rem">
-          <label>从哪天开始吃</label>
+          <label for="med-from">从哪天开始吃</label>
           <input id="med-from" type="date" value="${esc(formData.from || Store.today())}">
           <div class="muted" style="margin-top:0.3rem">用来算完成率：开始之前的日子不会算你漏服。</div>
         </div>
@@ -1541,7 +1735,7 @@ const App = (() => {
           <div class="sb-title">医生让停这个药了？</div>
           <div class="muted">选「已停用」——它会从每日核对里消失、不再算漏服，但记录留着（复诊时医生常问"吃到什么时候"）。<b>不要用删除</b>，删了历史里就查不到吃过这个药。</div>
           <div style="display:flex;gap:0.5rem;margin-top:0.5rem;align-items:center">
-            <input id="med-stop-date" type="date" value="${Store.today()}" min="${esc(med.from || '')}" max="${Store.today()}" style="flex:1;min-height:54px;border:1.5px solid var(--border);border-radius:12px;padding:0 0.6rem;font-size:1.05rem">
+            <input id="med-stop-date" aria-label="最后服药日期" type="date" value="${Store.today()}" min="${esc(med.from || '')}" max="${Store.today()}" style="flex:1;min-height:54px;border:1.5px solid var(--border);border-radius:12px;padding:0 0.6rem;font-size:1.05rem">
             <button class="btn small outline" id="med-stop">吃到这天为止</button>
           </div>
         </div>` : ''}
@@ -1552,8 +1746,10 @@ const App = (() => {
 
     const refreshSel = () => {
       node.querySelector('#sel-times').textContent = [...sel].sort().join('、') || '无';
-      node.querySelectorAll('#time-chips .time-chip').forEach(c =>
-        c.classList.toggle('active', sel.has(c.dataset.t)));
+      node.querySelectorAll('#time-chips .time-chip').forEach(c => {
+        c.classList.toggle('active', sel.has(c.dataset.t));
+        c.setAttribute('aria-pressed', String(sel.has(c.dataset.t)));
+      });
     };
     node.querySelectorAll('[data-preset]').forEach(b => b.onclick = () => {
       node.querySelector('#med-name').value = b.dataset.preset;
@@ -1568,37 +1764,38 @@ const App = (() => {
       if (v) { sel.add(v); refreshSel(); }
     };
     node.querySelector('#med-save').onclick = () => {
+      clearFieldErrors(node);
       const name = node.querySelector('#med-name').value.trim();
       const dose = node.querySelector('#med-dose').value.trim();
       const note = node.querySelector('#med-note').value.trim();
-      if (!name) { toast('请填写药物名称'); return; }
-      if (!sel.size) { toast('请至少选择一个服药时间'); return; }
+      if (!name) { fieldError('med-name', '请按医生处方填写药物名称。'); return; }
+      if (!sel.size) { showError(node, '请至少选择一个服药时间'); return; }
       const from = node.querySelector('#med-from').value;
-      if (!from) { toast('请选择开始服用日期'); return; }
-      if (seed && seed.from && from < seed.from) { toast('新疗程不能早于上次停药后的第一天'); return; }
+      if (!from) { showError(node, '请选择开始服用日期'); return; }
+      if (seed && seed.from && from < seed.from) { showError(node, '新疗程不能早于上次停药后的第一天'); return; }
       const payload = { name, dose, note, times: [...sel].sort(), from, previousCourseId: seed ? seed.previousCourseId || '' : formData.previousCourseId || '' };
       const ok = isEdit ? Store.updateMed(med.id, payload) : Store.addMed(payload);
       if (!stored(ok)) return;
       close();
       toast(isEdit ? '已保存修改' : seed ? '已登记新疗程' : '已添加药物');
-      renderMeds();
+      render('meds', { keepScroll: true });
     };
     const stopBtn = node.querySelector('#med-stop');
     if (stopBtn) stopBtn.onclick = () => {
       const d = node.querySelector('#med-stop-date').value || Store.today();
-      if (d > Store.today()) { toast('停用日期不能晚于今天'); return; }
-      if (med.from && d < med.from) { toast('停用日期不能早于开始服用日期'); return; }
+      if (d > Store.today()) { showError(node, '停用日期不能晚于今天'); return; }
+      if (med.from && d < med.from) { showError(node, '停用日期不能早于开始服用日期'); return; }
       if (!stored(Store.stopMed(med.id, d))) return;
       close();
       toast(`已记为停用（吃到 ${d}）`);
-      renderMeds();
+      render('meds', { keepScroll: true });
     };
     const undoStopBtn = node.querySelector('#med-undo-stop');
     if (undoStopBtn) undoStopBtn.onclick = () => {
       if (!stored(Store.undoStopMed(med.id))) return;
       close();
       toast('已撤销停用，重新进入每日核对');
-      renderMeds();
+      render('meds', { keepScroll: true });
     };
     const newCourseBtn = node.querySelector('#med-new-course');
     if (newCourseBtn) newCourseBtn.onclick = () => {
@@ -1612,7 +1809,7 @@ const App = (() => {
         if (!stored(Store.removeMed(med.id))) return;
         close();
         toast('已删除');
-        renderMeds();
+        render('meds', { keepScroll: true });
       }
     };
   }
@@ -1625,22 +1822,23 @@ const App = (() => {
     ARTICLES.forEach(a => { if (!groups.includes(a.group)) groups.push(a.group); });
 
     let html = `
+    ${pageHeading('康复知识', '常用知识，和家人一起慢慢了解。')}
     <div class="card" style="border:2px solid var(--red)">
       <div class="card-title" style="color:var(--red)">🚨 出现这些情况，立即拨打120</div>
       <div class="muted" style="margin-bottom:0.5rem">口角歪斜 · 单侧肢体无力 · 说话不清 · 突然看不清 · 走不稳</div>
       <button class="btn red block" id="btn-open-emergency">查看急救指引 + 拨打120</button>
     </div>
     ${groups.map(g => `
-      <div class="section-label">${esc(g)}</div>
+      <h2 class="section-label">${esc(g)}</h2>
       <div class="list-group">
         ${ARTICLES.filter(a => a.group === g).map(a => `
           <div class="art-item" data-art="${a.id}" role="button" tabindex="0">
-            <div class="art-icon">${a.icon}</div>
+            <div class="art-icon" aria-hidden="true">${a.icon}</div>
             <div class="art-body">
               <div class="art-title">${a.title}</div>
               <div class="art-sub">${a.sub}</div>
             </div>
-            <div class="art-arrow">›</div>
+            <div class="art-arrow" aria-hidden="true">›</div>
           </div>`).join('')}
       </div>
     `).join('')}
@@ -1661,7 +1859,7 @@ const App = (() => {
         }
       };
       elm.onclick = open;
-      elm.onkeydown = e => { if (e.key === 'Enter') open(); };
+      elm.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } };
     });
   }
 
@@ -1669,9 +1867,15 @@ const App = (() => {
      【区】紧急弹窗（BE-FAST + 拨 120）
      ============================================================ */
   function openEmergency() {
+    if (document.querySelector('.emergency-view')) return;
+    document.getElementById('trainer')?._pause?.();
     const node = nodeFromHTML(`
       <div class="emergency-view">
-        <div class="ev-title">疑似中风，立即行动！</div>
+        <div class="emergency-action">
+          <div class="ev-title">疑似中风，立即行动！</div>
+          <a class="call-120" href="tel:120">📞 立即拨打 120</a>
+          <p class="muted">未打开拨号界面时，请用手机直接拨打 120。</p>
+        </div>
         <div class="card" style="margin-bottom:0.8rem">
           ${BEFAST.map(b => `
             <div class="befast-item">
@@ -1688,9 +1892,8 @@ const App = (() => {
             <li>症状缓解了也要就医，不要"再观察观察"</li>
           </ul>
         </div>
-        <a class="call-120" href="tel:120">📞 立即拨打 120</a>
       </div>`);
-    openModal('紧急识别', node, { center: false });
+    openModal('紧急识别', node, { emergency: true });
   }
 
   /* ############################################################
@@ -1715,13 +1918,16 @@ const App = (() => {
     const closeConfirm = openModal('从备份恢复', confirmNode, { center: true });
     confirmNode.querySelector('#restore-confirm').onclick = () => {
       if (!Store.applyBackup(parsed.data)) {
-        toast(Store.backupError() || '恢复失败，原有数据未改变');
+        showError(confirmNode, Store.backupError() || '恢复失败，原有数据未改变');
+        renderStorageNotice();
         return;
       }
       applyFont(Store.data.profile.font);
       applyVoice(Store.data.profile.speechVoice);
+      settingsRevision++;
+      clearRecordSession();
       closeConfirm();
-      render(currentView);
+      render(currentView, { keepScroll: true });
       toast('已从备份恢复，可在设置中撤销一次');
     };
   }
@@ -1745,13 +1951,17 @@ const App = (() => {
     const button = node.querySelector('#restore-decrypt');
     const error = node.querySelector('#restore-password-error');
     node.querySelector('#restore-password-show').onchange = e => { input.type = e.target.checked ? 'text' : 'password'; };
+    let decrypting = false;
     const decrypt = async () => {
+      if (decrypting || !closePassword.active()) return;
       if (!input.value) { error.textContent = '请输入备份密码'; input.focus(); return; }
       button.disabled = true;
+      decrypting = true;
       button.textContent = '正在验证，请稍候…';
       error.textContent = '';
       try {
         const parsed = await Store.parseEncryptedBackup(jsonText, input.value);
+        if (!closePassword.active()) return;
         input.value = '';
         closePassword.replace(() => openRestorePreview(parsed, fileName));
       } catch (e) {
@@ -1759,17 +1969,19 @@ const App = (() => {
         input.focus();
         input.select();
       } finally {
-        button.disabled = false;
+        decrypting = false;
+        if (!dismissPending) button.disabled = false;
         button.textContent = '解密并查看内容';
       }
     };
     button.onclick = decrypt;
     input.onkeydown = e => { if (e.key === 'Enter') decrypt(); };
-    setTimeout(() => input.focus(), 80);
+    setTimeout(() => { if (closePassword.active()) input.focus(); }, 80);
   }
 
   function openSettings() {
     const p = Store.data.profile;
+    const revision = settingsRevision;
     /* 音色选项＝这台机器上真有的中文音色，只有两个以上才值得让用户选。
        不做"跟随系统"这一档：那是给开发者的概念，患者只想知道"现在是哪个声音"。
        高亮取真正在用的那个（存的名字在本机不存在时 Speech 已回落），
@@ -1783,15 +1995,15 @@ const App = (() => {
     const node = nodeFromHTML(`
       <div class="card">
         <div class="setting-row">
-          <div class="sr-label">怎么称呼您</div>
+          <label class="sr-label" for="set-name">怎么称呼您</label>
           <input id="set-name" class="set-input" type="text" value="${esc(p.name)}" placeholder="如 王叔叔">
         </div>
         <div class="setting-row">
-          <div class="sr-label">发病日期</div>
+          <label class="sr-label" for="set-stroke-date">发病日期</label>
           <input id="set-stroke-date" class="set-input" type="date" value="${esc(p.strokeDate)}">
         </div>
         <div class="setting-row">
-          <div class="sr-label">身高(cm)</div>
+          <label class="sr-label" for="set-height">身高(cm)</label>
           <input id="set-height" class="set-input" type="number" inputmode="numeric" value="${esc(p.height)}" placeholder="算BMI用">
         </div>
         <div class="setting-row">
@@ -1818,26 +2030,32 @@ const App = (() => {
       <div class="card">
         <div class="card-title">🎯 个人目标值（遵医嘱）</div>
         <div class="setting-row">
-          <div class="sr-label">血压高压目标</div>
+          <label class="sr-label" for="set-bpsys">血压高压目标</label>
           <input id="set-bpsys" class="set-input" type="number" inputmode="numeric" value="${esc(p.targets.bpSys)}"><span class="muted"> mmHg</span>
         </div>
         <div class="setting-row">
-          <div class="sr-label">血压低压目标</div>
+          <label class="sr-label" for="set-bpdia">血压低压目标</label>
           <input id="set-bpdia" class="set-input" type="number" inputmode="numeric" value="${esc(p.targets.bpDia)}"><span class="muted"> mmHg</span>
         </div>
         <div class="setting-row">
-          <div class="sr-label">血糖空腹目标</div>
+          <label class="sr-label" for="set-glufast">血糖空腹目标</label>
           <input id="set-glufast" class="set-input" type="number" step="0.1" inputmode="decimal" value="${esc(p.targets.gluFast)}"><span class="muted"> mmol/L</span>
         </div>
         <div class="setting-row">
-          <div class="sr-label">血糖餐后2h目标</div>
+          <label class="sr-label" for="set-glupost">血糖餐后2h目标</label>
           <input id="set-glupost" class="set-input" type="number" step="0.1" inputmode="decimal" value="${esc(p.targets.gluPost)}"><span class="muted"> mmol/L</span>
         </div>
         <div class="muted" style="margin-top:0.4rem">目标值按医生要求填写，图上会画出目标区、超过会提示"偏高"；血压 180/110、血糖极低/明显偏高等危险情况仍会单独警示。默认 140/90、空腹 7.0、餐后 10.0 仅为一般参考，以医嘱为准。</div>
       </div>
-      <div class="card">
+      <div class="section-label">使用帮助</div>
+      <div class="card action-list">
         <button class="btn ghost block" id="set-guide">❓ 查看使用指引</button>
         <button class="btn ghost block" id="set-export" style="margin-top:0.6rem">📤 导出健康记录（给医生）</button>
+      </div>
+      <div class="section-label">数据与备份</div>
+      <div class="card action-list">
+        <div class="notice">记录只在当前浏览器里。换手机、换浏览器或换网址前，请先下载备份。</div>
+        ${Store.originalData() !== null ? '<button class="btn outline block" id="set-original">下载原始数据副本（供排查）</button>' : ''}
         <button class="btn ghost block" id="set-backup" style="margin-top:0.6rem">📦 备份全部数据（下载文件）</button>
         <button class="btn ghost block" id="set-restore" style="margin-top:0.6rem">♻️ 从备份恢复</button>
         <input type="file" id="set-restore-input" accept=".json,application/json" style="display:none">
@@ -1847,9 +2065,25 @@ const App = (() => {
         <button class="btn outline block" id="set-reset" style="margin-top:0.6rem;color:var(--red)">清空全部数据</button>
         <div class="muted" style="margin-top:0.6rem">本应用不会上传数据。健康记录保存在这台设备的浏览器里；共用手机时，能使用这个浏览器的人可能看到这些记录。清空缓存或换手机会丢数据，请定期备份。</div>
       </div>
+      <p class="muted">称呼、发病日期、身高和目标值填写后，请按「保存设置」。</p>
       <button class="btn block" id="set-save">保存设置</button>`);
 
     const close = openModal('设置', node);
+    close.onResume(() => {
+      if (revision !== settingsRevision) {
+        const y = node.closest('.modal-panel').scrollTop;
+        close.replace(openSettings);
+        topOverlay().querySelector('.modal-panel').scrollTop = y;
+      }
+    });
+    const original = node.querySelector('#set-original');
+    if (original) original.onclick = () => {
+      if (!confirm('原始副本可能包含健康隐私，仅供本人或可信家人排查。继续下载吗？')) return;
+      try {
+        saveBackupFile(Store.originalData(), false, '原始数据待修复');
+        toast('已发起下载；这不是可直接恢复的备份，请妥善保存');
+      } catch (e) { showError(node, '没有下载成功，请重试；原始内容仍保留在浏览器里'); }
+    };
 
     /* 字号/语速是「即时生效」型设置：点一下就落盘。
        绝不能等「保存设置」——弹窗有 ✕/返回键/Esc/点遮罩四种关法，
@@ -1885,73 +2119,80 @@ const App = (() => {
     const tryBtn = node.querySelector('#set-rate-try');
     if (tryBtn) tryBtn.onclick = () =>
       Speech.speak('每天坚持一点，慢慢会好起来。', { rateKey: Store.data.profile.speechRate });
-    /* 连续弹窗复用当前浮层历史条目（硬约定 10），返回键一次退回设置 */
+    /* 帮助与独立任务作为子层打开，保留设置草稿；任务内部步骤才用 replace。 */
     const voiceGuideBtn = node.querySelector('#set-voice-guide');
-    if (voiceGuideBtn) voiceGuideBtn.onclick = () => close.replace(openVoiceGuide);
-    node.querySelector('#set-guide').onclick = () => close.replace(openGuide);
-    node.querySelector('#set-export').onclick = () => close.replace(openExport);
-    node.querySelector('#set-backup').onclick = () => close.replace(openBackupWarning);
+    if (voiceGuideBtn) voiceGuideBtn.onclick = openVoiceGuide;
+    node.querySelector('#set-guide').onclick = () => openGuide({ review: true });
+    node.querySelector('#set-export').onclick = openExport;
+    node.querySelector('#set-backup').onclick = openBackupWarning;
     node.querySelector('#set-restore').onclick = () => { node.querySelector('#set-restore-input').click(); };
     const undoRestore = node.querySelector('#set-undo-restore');
     if (undoRestore) undoRestore.onclick = () => {
       if (!confirm('撤销后，当前恢复进来的全部数据会被替换。确定回到恢复前的数据吗？')) return;
       if (!Store.undoLastRestore()) {
-        toast(Store.backupError() || '没有撤销成功，当前数据未改变');
+        showError(node, Store.backupError() || '没有撤销成功，当前数据未改变');
+        renderStorageNotice();
         return;
       }
       close();
+      clearRecordSession();
       applyFont(Store.data.profile.font);
       applyVoice(Store.data.profile.speechVoice);
-      render(currentView);
+      render(currentView, { keepScroll: true });
       toast('已撤销上次恢复');
     };
     node.querySelector('#set-restore-input').onchange = () => {
-      const file = node.querySelector('#set-restore-input').files[0];
+      const fileInput = node.querySelector('#set-restore-input');
+      const file = fileInput.files[0];
+      fileInput.value = ''; // 重选同一文件也必须触发 change。
       if (!file) return;
-      if (file.size > Store.backupLimits.maxEncryptedBytes) { toast('备份文件超过 8MB，未读取'); return; }
+      if (file.size > Store.backupLimits.maxEncryptedBytes) { showError(node, '备份文件超过 8MB，未读取'); return; }
       const reader = new FileReader();
       reader.onload = () => {
+        if (!close.active()) return;
         const jsonText = String(reader.result);
         try {
           if (Store.isEncryptedBackup(jsonText)) {
             if (!Store.encryptionSupported()) { toast('这个浏览器不能打开加密备份，请换用最新版手机浏览器'); return; }
-            close.replace(() => openEncryptedRestore(jsonText, file.name));
+            openEncryptedRestore(jsonText, file.name);
           } else {
             const parsed = Store.parseBackup(jsonText);
-            close.replace(() => openRestorePreview(parsed, file.name));
+            openRestorePreview(parsed, file.name);
           }
-        } catch (e) { toast('恢复失败：' + e.message); }
+        } catch (e) { showError(node, '恢复失败：' + e.message); }
       };
+      reader.onerror = () => { if (close.active()) showError(node, '文件没有读成功，请重新选择已下载到本机的备份文件'); };
       reader.readAsText(file);
     };
     node.querySelector('#set-reset').onclick = () => {
       if (confirm('确定清空全部数据？此操作无法恢复！')) {
         if (confirm('再次确认：血压记录、用药、训练打卡都会被删除。')) {
           if (!stored(Store.resetAll())) return;
+          clearRecordSession();
           close();
           applyFont('normal');
           applyVoice('');
-          render(currentView);
+          render(currentView, { keepScroll: true });
           toast('已清空');
         }
       }
     };
     node.querySelector('#set-save').onclick = () => {
-      const p2 = Store.data.profile;
-      p2.name = node.querySelector('#set-name').value.trim();
-      p2.strokeDate = node.querySelector('#set-stroke-date').value;
-      p2.height = node.querySelector('#set-height').value;
       /* 字号与语速不在这里读：它们点一下就已经落盘了（见上方 bindSegGroup）。
          若在此按 DOM 再赋一次值，任何时序差都会把已生效的偏好覆盖回旧值。 */
       const g = id => +node.querySelector(id).value;
       const bs = g('#set-bpsys'), bd = g('#set-bpdia'), gf = g('#set-glufast'), gp = g('#set-glupost');
-      if (!(bs >= 60 && bs <= 260) || !(bd >= 30 && bd <= 200)) { toast('请输入有效的血压目标值'); return; }
-      if (bs <= bd) { toast('高压目标应高于低压目标'); return; }
-      if (!(gf >= 3 && gf <= 20) || !(gp >= 3 && gp <= 30)) { toast('请输入有效的血糖目标值'); return; }
+      if (!(bs >= 60 && bs <= 260) || !(bd >= 30 && bd <= 200)) { showError(node, '请输入有效的血压目标值'); return; }
+      if (bs <= bd) { showError(node, '高压目标应高于低压目标'); return; }
+      if (!(gf >= 3 && gf <= 20) || !(gp >= 3 && gp <= 30)) { showError(node, '请输入有效的血糖目标值'); return; }
+      const p2 = Store.data.profile;
+      p2.name = node.querySelector('#set-name').value.trim();
+      p2.strokeDate = node.querySelector('#set-stroke-date').value;
+      p2.height = node.querySelector('#set-height').value;
       p2.targets = { bpSys: bs, bpDia: bd, gluFast: gf, gluPost: gp };
       if (!stored(Store.save())) return;
       close();
-      render(currentView);
+      render(currentView, { keepScroll: true, preserveInputs: true });
       toast('设置已保存');
     };
   }
@@ -2004,7 +2245,7 @@ const App = (() => {
   /* ============================================================
      【区】首次使用指引
      ============================================================ */
-  function openGuide() {
+  function openGuide({ review = false } = {}) {
     const node = nodeFromHTML(`
       <div class="guide">
         <div class="guide-hero">🌱 欢迎使用<br>脑梗康复助手</div>
@@ -2028,13 +2269,13 @@ const App = (() => {
           <div class="guide-line">算数、说话、走路变难，都是<b>脑子在恢复中的常见情况</b>，不是您不行。认知练习里算不出来可以看提示、可以跳过、也可以换成不用算的。</div>
         </div>
         <div class="disclaimer">本应用是家庭康复辅助工具，不能替代医生的诊断和治疗。<br>训练前请经康复医生评估，身体不适立即停止并就医。</div>
-        <button class="btn green block huge" id="guide-done" style="margin-top:0.7rem">我知道了，开始使用</button>
+        <button class="btn green block huge" id="guide-done" style="margin-top:0.7rem">${review ? '我知道了' : '我知道了，开始使用'}</button>
       </div>`);
-    const close = openModal('首次使用指引', node, { center: true });
+    const close = openModal(review ? '使用指引' : '首次使用指引', node, { center: true });
     node.querySelector('#guide-done').onclick = () => {
-      if (!stored(Store.markGuideSeen())) return;
+      if (!review && !stored(Store.markGuideSeen())) return;
       close();
-      toast('可以开始了！按「今日」页的提示做就行');
+      if (!review) toast('可以开始了，按页面上的提示慢慢来');
     };
   }
 
@@ -2048,25 +2289,28 @@ const App = (() => {
         <div class="guide-line">备份文件包含称呼、用药、血压、血糖、体重和训练记录，内容是可以直接阅读的。</div>
         <div class="guide-line">请保存在自己的设备或可信位置，不要发到群聊，也不要交给无关人员。</div>
       </div>
+      <div class="notice">
+        <b>换手机或换网址时</b><br>先在这里下载备份并确认文件已保存，再到新网址的「设置 → 从备份恢复」选择这份文件。核对记录齐全后再使用新网址；旧网址的数据不会自动搬过去。
+      </div>
       <button class="btn block" id="backup-plain">下载普通备份</button>
       ${Store.encryptionSupported() ? `
         <button class="btn outline block" id="backup-encrypted" style="margin-top:0.6rem">🔐 设置密码并加密</button>
         <div class="muted" style="margin-top:0.4rem">备份要放网盘或共享电脑时可选。应用不会保存密码，忘记后无法替您找回。</div>` : ''}`);
     const close = openModal('下载备份', node, { center: true });
     node.querySelector('#backup-plain').onclick = () => {
-      downloadBackup();
-      close();
+      try { downloadBackup(); close(); }
+      catch (e) { showError(node, e.message || '没有生成备份，请重试'); }
     };
     const encrypted = node.querySelector('#backup-encrypted');
     if (encrypted) encrypted.onclick = () => close.replace(openEncryptedBackup);
   }
 
-  function saveBackupFile(text, encrypted = false) {
+  function saveBackupFile(text, encrypted = false, label = '') {
     const blob = new Blob([text], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `脑梗康复助手-${encrypted ? '加密备份' : '备份'}-${Store.today()}.json`;
+    a.download = `脑梗康复助手-${label || (encrypted ? '加密备份' : '备份')}-${Store.today()}.json`;
     document.body.appendChild(a);
     a.click();
     setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
@@ -2074,7 +2318,7 @@ const App = (() => {
 
   function downloadBackup() {
     saveBackupFile(Store.exportBackup());
-    toast('普通备份已下载，请妥善保存，不要转发给无关人员');
+    toast('已发起备份下载，请到下载列表或「文件」中确认已保存');
   }
 
   function openEncryptedBackup() {
@@ -2104,28 +2348,33 @@ const App = (() => {
     node.querySelector('#backup-password-show').onchange = e => {
       password.type = again.type = e.target.checked ? 'text' : 'password';
     };
+    let encrypting = false;
     button.onclick = async () => {
+      if (encrypting || !close.active()) return;
       if (password.value.length < 8) { error.textContent = '密码至少需要 8 个字符'; password.focus(); return; }
       if (password.value !== again.value) { error.textContent = '两次输入的密码不一样'; again.focus(); return; }
       button.disabled = true;
+      encrypting = true;
       button.textContent = '正在加密，请稍候…';
       error.textContent = '';
       try {
         const text = await Store.exportEncryptedBackup(password.value);
+        if (!close.active()) return;
         password.value = again.value = '';
         saveBackupFile(text, true);
         close();
-        toast('加密备份已下载，请同时保管好密码');
+        toast('已发起加密备份下载，请确认文件已保存，并保管好密码');
       } catch (e) {
         error.textContent = e.message || '没有生成加密备份';
       } finally {
+        encrypting = false;
         if (!dismissPending) {
           button.disabled = false;
           button.textContent = '加密并下载';
         }
       }
     };
-    setTimeout(() => password.focus(), 80);
+    setTimeout(() => { if (close.active()) password.focus(); }, 80);
   }
 
   /* ############################################################
@@ -2139,20 +2388,49 @@ const App = (() => {
     learn: renderLearn,
   };
 
-  function render(view, { keepScroll = false } = {}) {
+  function render(view, { keepScroll = false, preserveInputs = false } = {}) {
+    if (preserveInputs) captureRecordDraft();
+    const details = keepScroll ? [...$view().querySelectorAll('details[id]')].map(el => [el.id, el.open]) : [];
+    const focused = keepScroll ? document.activeElement : null;
+    const focusSelector = focused?.id ? '#' + focused.id
+      : focused?.dataset.stage ? `[data-stage="${focused.dataset.stage}"]` : null;
+    const inputs = preserveInputs ? [...$view().querySelectorAll('input[id], select[id], textarea[id]')]
+      .map(el => ({ id: el.id, value: el.value, checked: el.checked })) : [];
     const y = window.scrollY;
     (RENDERERS[view] || renderToday)();
+    inputs.forEach(saved => {
+      const el = document.getElementById(saved.id);
+      if (el) { el.value = saved.value; el.checked = saved.checked; }
+    });
+    details.forEach(([id, open]) => { const el = document.getElementById(id); if (el) el.open = open; });
+    if (focused && !focused.isConnected && focusSelector) document.querySelector(focusSelector)?.focus({ preventScroll: true });
+    if (focused?.dataset.med && !focused.isConnected) {
+      [...$view().querySelectorAll('[data-med][data-time]')]
+        .find(el => el.dataset.med === focused.dataset.med && el.dataset.time === focused.dataset.time)?.focus({ preventScroll: true });
+    }
+    renderStorageNotice();
     /* 切页要回到顶部；但"数据变了重渲染"（打卡等）应该留在原处——
        否则在训练页往下翻着练，练完一个动作就被弹回页首。 */
     window.scrollTo(0, keepScroll ? y : 0);
   }
 
   function go(view) {
+    if (topOverlay()) return;
+    if (!RENDERERS[view]) view = 'today';
+    if (view === currentView && $view().children.length) return;
+    captureRecordDraft();
     Speech.stop();   // 切页停朗读，免得念着上一页的内容
     currentView = view;
-    document.querySelectorAll('.nav-item').forEach(b =>
-      b.classList.toggle('active', b.dataset.view === view));
+    document.querySelectorAll('.nav-item').forEach(b => {
+      b.classList.toggle('active', b.dataset.view === view);
+      if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+    });
+    const url = new URL(location.href);
+    url.searchParams.set('view', view);
+    history.replaceState(history.state, '', url.href);
     render(view);
+    document.title = { today: '今日', train: '康复训练', records: '健康记录', meds: '用药核对', learn: '康复知识' }[view] + ' · 脑梗康复助手';
+    $view().querySelector('h1')?.focus({ preventScroll: true });
   }
 
   function init() {
@@ -2170,12 +2448,39 @@ const App = (() => {
       dismissPending = false;
       closeTopOverlayDOM();
     });
+    // 同一双击手势不能从刚关闭的子窗口穿透到父窗口的另一个操作。
+    let clickSurface = null;
+    document.addEventListener('click', e => {
+      if (e.detail > 1 && clickSurface !== topOverlay()) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+      clickSurface = topOverlay();
+      openingTrigger = e.target.closest('button, a, [role="button"]');
+    }, true);
     /* 键盘：Esc 关浮层（家属用电脑帮着录数据时顺手） */
     document.addEventListener('keydown', e => {
-      if (e.key === 'Escape') dismissTopOverlay();
+      const top = topOverlay();
+      if (!top) return;
+      if (e.key === 'Escape') { e.preventDefault(); dismissTopOverlay(); }
+      if (e.key === 'Tab') {
+        const items = [...top.querySelectorAll('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]')]
+          .filter(el => el.tabIndex >= 0 && el.getClientRects().length);
+        const first = items[0], last = items[items.length - 1];
+        if (e.shiftKey && (!items.includes(document.activeElement) || document.activeElement === first)) {
+          e.preventDefault(); last?.focus();
+        } else if (!e.shiftKey && (!items.includes(document.activeElement) || document.activeElement === last)) {
+          e.preventDefault(); first?.focus();
+        }
+      }
     });
 
-    if (!Store.guideSeen()) openGuide();
+    document.addEventListener('focusin', e => {
+      const top = topOverlay();
+      if (top && !top.contains(e.target)) top.querySelector('.m-title, .t-name').focus({ preventScroll: true });
+    });
+    if (!Store.guideSeen() && !Store.storageStatus()) openGuide();
   }
 
   return { init, go };

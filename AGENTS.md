@@ -18,7 +18,7 @@
 7. **数据只走 `Store`**（`js/storage.js`），视图代码不要直接摸 localStorage；日期一律用 `Store.today()/addDays()` 的本地时区 `YYYY-MM-DD`，禁用 `toISOString()` 派生日期。
 8. **服药计数只走 `Store.medsOn(date)`**：药有 `from`/`to`（停药只写 `to`、不删记录）。别再遍历 `Store.data.meds` 数总数，否则停用的药会天天算漏服、历史分母也会被今天的改动带偏。
 9. **即时生效型设置必须即时落盘**（v0.2.25，加这类偏好时必须照做）：字号、语速、音色这种"点一下就看到/听到效果"的偏好，**不能挂在「保存设置」按钮上**——设置弹窗有 ✕ / 安卓返回键 / Esc / 点遮罩四种关法，只有一种会走保存按钮。两条规则：① 点一下立刻写 `Store`（走 `commitProfile()`）；② 选中态**只从 `Store` 派生**（`segGroupHTML()` + `bindSegGroup({current, commit})`），绝不用 DOM 上残留的 `.active` 反推真值。相关回归跑 `node test/settings.test.js`。
-10. **加浮层必须接返回键**（v0.2.22）：开浮层时 `overlayPush()` 压一个历史条目；**主动关闭（✕ / Esc）只发起 `history.back()`**，DOM 统一由 `popstate` → `closeTopOverlayDOM()` 关闭（没有 `overlayPop()` 这个函数，别照着旧文档写）。连续弹窗用 `close.replace(openNext)` 原位复用条目。数据变更后的重渲染用 `render(view, { keepScroll: true })`，别把人弹回页首。相关回归跑 `node test/overlay.test.js --stress`。
+10. **加浮层必须接返回键**（v0.2.22）：开浮层时 `overlayPush()` 压一个历史条目；**主动关闭（✕ / Esc）只发起 `history.back()`**，DOM 统一由 `popstate` → `closeTopOverlayDOM()` 关闭（没有 `overlayPop()` 这个函数，别照着旧文档写）。父窗口打开帮助或独立任务时叠加子浮层、保留父窗口；同一任务的连续步骤用 `close.replace(openNext)` 原位复用条目。数据变更后的重渲染用 `render(view, { keepScroll: true })`，别把人弹回页首。相关回归跑 `node test/overlay.test.js --stress`。
 11. **同类条目用分组列表，不要一条一张卡**（v0.2.26）：列表项是"一张卡内分行"（发丝线分隔），不是每项一张浮动卡片。按钮分三级：**实心蓝每屏只留一个主操作**（保存/打卡/拨 120），重复出现的行内动作用 `--primary-soft` 底 + `--primary-dark` 字，完成态用浅绿。分组标题用 `.section-label`/`.ex-group-label` 加粗成扫读锚点，不用小灰字。
 12. **朗读稿与显示文案分离**（v0.2.27）：屏幕上的写法是给眼睛的（`10～15次`、`130/80 mmHg`、`10次×2组`），原样送进 TTS 就是"机器味"的主因。要改朗读效果**只动 `js/speech.js` 的 `SPEAK_RULES`，绝不改数据文件里的显示文案**。该表顺序敏感（含 `/` 的单位排在裸 `/` 之前；去 emoji 排在箭头之后）；吃前后空白只能用 `[ \t]`，**用 `\s` 会连换行一起吃掉、把两句粘成一句**；`speech.js` 内**禁用 lookbehind**（老 WebView 不支持，会让整个文件解析失败、朗读全哑）。相关回归跑 `node test/speech.test.js`。
 13. **转义纪律**：用户输入插入 HTML 前必须过 `app.js` 内的 `esc()`（`data-*.js` 里的静态内容例外）。
@@ -59,7 +59,7 @@ python3 -m http.server 8080    # 本地预览（也可直接双击 index.html）
 
 **病一：同一件事写在两处，然后分叉出真错误。** 已经犯过两次——`CLAUDE.md` 与 `AGENTS.md` 曾各自演进（一边漏隐私红线、一边写着不存在的 `overlayPop()`）；`DEVELOPMENT.md` §7 与 `docs/MANUAL-TEST.md` 是同一份手工清单的两个副本，已分叉成 41 条 vs 45 条。规矩：
 
-- **每类信息只有一个真源**，别处只放一行指针。现有分工：硬约定→本文；接手状态与未验证项→`HANDOVER.md`；架构与扩展方法→`DEVELOPMENT.md`；真机执行清单→`MANUAL-TEST.md`（§7 只留指针，不再维护第二份勾选表）；医学出处→`RESEARCH.md`。
+- **每类信息只有一个真源**，别处只放一行指针。现有分工：硬约定→本文；接手状态与未验证项→`HANDOVER.md`；架构与扩展方法→`DEVELOPMENT.md`；UI/UX 组件与行为→`docs/DESIGN-SYSTEM.md`；域名迁移方法→`docs/DOMAIN-MIGRATION.md`；真机执行清单→`MANUAL-TEST.md`（§7 只留指针，不再维护第二份勾选表）；医学出处→`RESEARCH.md`。
 - 想在第二处复述时，改成写指针。**复述一次就是下一个分叉点。**
 
 **病二：变更记录写成长篇叙事，淹掉真正的约定。** §10 曾占全文 60%（5.8 万字节），单条最长 5154 字节，而"下次该怎么做"反而找不到。规矩：

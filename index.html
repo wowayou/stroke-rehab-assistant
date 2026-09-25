@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
-<meta name="theme-color" content="#2E6FE0">
+<meta name="theme-color" content="#245FC5">
 <meta name="description" content="脑梗康复助手：面向脑梗恢复期患者和家属的家庭康复工具。康复训练、血压记录、用药提醒、健康知识，数据仅保存在本机。">
 <title>脑梗康复助手</title>
 <link rel="manifest" href="manifest.json">
@@ -19,21 +19,24 @@
       <span id="header-app-name">脑梗康复助手</span>
     </div>
     <div class="header-actions">
-      <button id="btn-settings" class="btn-icon" aria-label="设置">⚙️<span class="btn-icon-label">设置</span></button>
+      <button id="btn-settings" class="btn-icon" aria-label="设置"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="9" cy="18" r="2"/></svg><span class="btn-icon-label">设置</span></button>
       <button id="btn-emergency" class="btn-emergency" aria-label="紧急情况">🚨 急救</button>
     </div>
   </div>
 </header>
 
-<main id="view" class="view-container" aria-live="polite"></main>
+<div class="app-layout">
+<div id="storage-notice" class="notice danger storage-notice" role="alert" hidden></div>
+<main id="view" class="view-container" tabindex="-1"></main>
 
 <nav class="bottom-nav" aria-label="主导航">
-  <button class="nav-item active" data-view="today"><span class="nav-icon">🏠</span><span>今日</span></button>
-  <button class="nav-item" data-view="train"><span class="nav-icon">💪</span><span>训练</span></button>
-  <button class="nav-item" data-view="records"><span class="nav-icon">📈</span><span>记录</span></button>
-  <button class="nav-item" data-view="meds"><span class="nav-icon">💊</span><span>用药</span></button>
-  <button class="nav-item" data-view="learn"><span class="nav-icon">📚</span><span>知识</span></button>
+  <button class="nav-item active" data-view="today"><span class="nav-icon"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg></span><span>今日</span></button>
+  <button class="nav-item" data-view="train"><span class="nav-icon"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="4" r="2"/><path d="m4 9 8-2 8 2M12 7v7m0 0-5 7m5-7 5 7"/></svg></span><span>训练</span></button>
+  <button class="nav-item" data-view="records"><span class="nav-icon"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 3v17h17M8 14l4-5 4 3 5-7"/></svg></span><span>记录</span></button>
+  <button class="nav-item" data-view="meds"><span class="nav-icon"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8.5 3.5a6.36 6.36 0 0 1 9 9l-5 5a6.36 6.36 0 0 1-9-9z" transform="translate(2 2)"/><path d="m8 8 9 9"/></svg></span><span>用药</span></button>
+  <button class="nav-item" data-view="learn"><span class="nav-icon"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5C9 3 5 3 2 4v16c3-1 7-1 10 1 3-2 7-2 10-1V4c-3-1-7-1-10 1zm0 0v16"/></svg></span><span>知识</span></button>
 </nav>
+</div>
 
 <div id="modal-root"></div>
 <div id="toast" class="toast" role="status"></div>

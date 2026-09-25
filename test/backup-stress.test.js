@@ -63,7 +63,9 @@ function buildLargeState(detailSize) {
   let plain, selectedDetailSize;
   for (const detailSize of [260, 320, 380, 440]) {
     buildLargeState(detailSize);
-    const candidate = Store.exportBackup();
+    let candidate;
+    try { candidate = Store.exportBackup(); }
+    catch (e) { assert.match(e.message, /超过/); continue; }
     if (Buffer.byteLength(candidate) < Store.backupLimits.maxBytes) {
       plain = candidate;
       selectedDetailSize = detailSize;

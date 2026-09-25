@@ -43,6 +43,9 @@ async function rejects(task, expected, message) {
   assert(!encrypted.includes('加密测试患者') && !encrypted.includes('测试药') && !encrypted.includes(password), '密文不得泄露健康数据或密码');
   assert(Store.isEncryptedBackup(encrypted) === true, '应识别加密备份');
   assert(Store.isEncryptedBackup(Store.exportBackup()) === false, '旧明文备份仍应识别为普通备份');
+  await rejects(() => Store.parseEncryptedBackup(encrypted + ' '.repeat(Store.backupLimits.maxEncryptedBytes), password),
+    '超过 8MB', '大于 8MB 的加密文件不能被错误地按 5MB 计数');
+  assert(Store.isEncryptedBackup(encrypted + ' '.repeat(6 * 1024 * 1024)), '5～8MB 的合法加密文件仍能识别');
 
   const parsed = await Store.parseEncryptedBackup(encrypted, password);
   assert(parsed.data.profile.name === '加密测试患者' && parsed.data.meds[0].name === '测试药', '正确密码应完整恢复数据');
