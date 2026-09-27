@@ -3,13 +3,13 @@
 > 写给接手本项目的下一位开发者/AI。目的：让你在**不了解任何历史对话**的情况下安全接手。
 > 交接日期：2026-08-01。交接时项目状态：**v0.2，功能完整，全部测试通过，无任何进行中的半成品工作。**
 
-## 当前版本（2026-09-26）
+## 当前版本（2026-09-27）
 
-v0.2.31（本地，**未提交、未部署**）：动作示意图调研的集成——临床角度护栏、修正 4 张与自身要领矛盾的简笔画（坐站转移/踝泵/桥式/原地踏步）、给康复医生的复核单；范围、验证与选型结论见 [DEVELOPMENT §10](DEVELOPMENT.md#10-变更记录) 与 §6 figures.js。生产仍为下面的 v0.2.30.1。
+v0.2.31 已提交（`f6a1907`）并部署上线：动作示意图调研的集成——临床角度护栏、修正 4 张与自身要领矛盾的简笔画（坐站转移/踝泵/桥式/原地踏步）、给康复医生的复核单、在动部位橙色高亮 + 运动弧线；范围、验证与选型结论见 [DEVELOPMENT §10](DEVELOPMENT.md#10-变更记录) 与 §6 figures.js。**5 张图仍全部是 `pending`（未经医生复核）**，下一步是用 `node test/preview-figures.js --review` 出复核单找医生。
 
-v0.2.30.1 在 v0.2.30 基础上继续打磨精致度/统一性（设置弹窗卡片标题层级对齐、展开折叠箭头改 CSS V 形），已提交（`714c435`）并部署上线；范围与验证见 [DEVELOPMENT §10](DEVELOPMENT.md#10-变更记录)，组件及分阶段加固标准见 [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md)。仍需真机核对读屏、原生键盘和返回手势。
+生产为 v0.2.31，地址 <https://stroke-rehab-assistant.pages.dev/>，Cloudflare 部署 `03608e86`，`index.html` 部署戳 `ver=20260927085953`；线上 `js/figures.js`、`css/style.css` 与本地逐字节 md5 一致，CSP/HSTS 响应头已核对。**git 尚未推送**（`origin/main` 仍为 `217f9d6`）。待复核：生产端 `settings.test.js`/`overlay.test.js --stress` 未重跑；真机上看图未做。
 
-生产为 v0.2.30.1，地址 <https://stroke-rehab-assistant.pages.dev/>；git 已推送 `origin/main`（本地=远程 `714c435`）。Cloudflare 部署 `03a2a862`（上一生产部署 `17399c3` 对应戳）。线上 `js/app.js`、`css/style.css` 与本地逐字节 md5 一致，`index.html` 带部署戳 `ver=20260925223544`。待复核：生产端 `settings.test.js`/`overlay.test.js --stress` 未重跑、安全响应头（CSP/HSTS/防嵌入/nosniff/Referrer/Permissions）未再核对。
+v0.2.30.1 在 v0.2.30 基础上继续打磨精致度/统一性（设置弹窗卡片标题层级对齐、展开折叠箭头改 CSS V 形），提交 `714c435`、部署 `03a2a862`；范围与验证见 [DEVELOPMENT §10](DEVELOPMENT.md#10-变更记录)，组件及分阶段加固标准见 [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md)。仍需真机核对读屏、原生键盘和返回手势。
 
 设计组件与交互标准见 [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md)，子域名迁移方法见 [DOMAIN-MIGRATION.md](DOMAIN-MIGRATION.md)。最终子域名尚未确定，未改 DNS 或旧站跳转；手机实际拨号、原生返回、读屏、备份文件落地与真实设备迁移仍需核对。下文早期交接状态为历史记录。
 
