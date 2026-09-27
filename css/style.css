@@ -289,6 +289,8 @@ h1[tabindex="-1"]:focus { outline: none; }
   margin: 0.3rem 0 0.8rem; text-align: center;
 }
 .ex-figure svg { width: 100%; max-width: 340px; height: auto; color: var(--primary-dark); }
+/* 这个动作真正在动的部位 + 运动弧线（js/figures.js 的 focus/motion） */
+.ex-figure .fig-focus { color: var(--orange); }
 .ex-figure figcaption {
   font-size: 0.9rem; color: var(--text-2); line-height: 1.55;
   margin-top: 0.4rem; text-align: left;

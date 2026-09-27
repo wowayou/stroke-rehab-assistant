@@ -3,3 +3,7 @@
 
 # 目视检查用的临时截图（test/preview-figures.js 生成，不提交）
 figures-preview.png
+
+# 给康复医生的复核单（test/preview-figures.js --review 生成，不提交；结论回填 js/figures.js 的 POSES[id].review）
+figures-review.pdf
+figures-review.png
