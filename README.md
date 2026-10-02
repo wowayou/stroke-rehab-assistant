@@ -56,7 +56,7 @@ python3 -m http.server 8080
 
 ## 技术说明
 
-- 纯 HTML/CSS/JS，无框架、无构建、无外部依赖，可离线打开（file:// 协议直接可用；线上地址打开过一次后，断网或网络卡住也能从缓存打开）
+- 纯 HTML/CSS/JS，无框架、无构建、无外部依赖；线上地址打开过一次后，断网或网络卡住也能从缓存打开（电脑上直接双击 `index.html` 也尽量保持可用）
 - `js/data-exercises.js` 训练动作库、`js/data-articles.js` 科普内容 —— 内容与代码分离，方便增改
 - `js/storage.js` localStorage 数据层；`js/charts.js` 零依赖 canvas 趋势图；`js/games.js` 认知训练小游戏
 - 适老化：基准字号 18px（可调至 22px）、触控目标 ≥48px、高对比度、底部大图标导航
