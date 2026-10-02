@@ -19,6 +19,20 @@ if ! "${WRANGLER[@]}" whoami 2>&1 | grep -q "Account Name\|Account ID"; then
   exit 1
 fi
 
+# 只从已提交的干净工作区部署（deploy.sh 拷的是工作区文件，不是某个提交）。
+# 2026-09 曾有一版直接从没提交的工作区部署，线上与仓库分叉了 4 天，差点被一次正常部署整体覆盖、
+# 把用户数据里的新字段抹掉（见 docs/HANDOVER.md「当前版本」）。确需临时部署：ALLOW_DIRTY=1 bash deploy.sh
+COMMIT_ARGS=()
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  if [ -n "$(git status --porcelain)" ] && [ "${ALLOW_DIRTY:-}" != "1" ]; then
+    echo "❌ 工作区有未提交的改动，拒绝部署。先提交并推送，再部署："
+    git status --short
+    exit 1
+  fi
+  COMMIT_ARGS=(--commit-hash "$(git rev-parse HEAD)" --commit-message "$(git log -1 --format=%s)")
+  echo "→ 部署提交 $(git rev-parse --short HEAD)：$(git log -1 --format=%s)"
+fi
+
 # 只部署应用运行时需要的文件和 Pages 响应头规则，不带上 .git/、docs/、test/、*.md
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -32,6 +46,7 @@ sed -i "s/?ver=[0-9]*/?ver=${STAMP}/g" "$TMP/index.html"
 "${WRANGLER[@]}" pages deploy "$TMP" \
   --project-name=stroke-rehab-assistant \
   --branch main \
+  ${COMMIT_ARGS[@]+"${COMMIT_ARGS[@]}"} \
   --commit-dirty=true
 
 echo "✅ 已部署。线上地址: https://stroke-rehab-assistant.pages.dev/"

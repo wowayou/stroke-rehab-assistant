@@ -5,15 +5,15 @@
 
 ## 当前版本（2026-10-02）
 
-v0.2.34 已提交（与 v0.2.32、v0.2.33 一样**未推送、未部署**）：`js/app.js` 按页面拆成 `js/app/` 下 10 个文件（纯搬移，逻辑未改；文件地图在 `js/app/core.js` 头部，加载约定见 DEVELOPMENT §4）。
+**生产**：笔记本线 v0.2.32，地址 <https://stroke-rehab-assistant.pages.dev/>，Cloudflare 部署 `f39824c7`（2026-09-28，`ver=20260928105230`）。它部署时**没有提交 Git**，2026-10-02 才补存为分支 `wip-laptop-2026-10-02`（`f9587fc`），核对过与线上 `js/app.js`、`js/storage.js` 逐字节一致。教训见 §3「部署只从干净的工作区做」。
 
-v0.2.33 已提交（`0d35949`），**未部署**：兼容老手机（语法降到 ES2018，Chrome 62 / iOS 11.3 起可用；打不开时显示兜底页并保留拨 120）与微信内置浏览器（备份改为复制、可粘贴恢复）；文档拆出 `CHANGELOG.md`、`DEVELOPMENT.md` 加 §0「改什么去哪里」。见 [CHANGELOG](CHANGELOG.md)、AGENTS 第 17 条。
+**待部署：v0.2.35 = 两条线合并**（分支 `merge-laptop-wip`）。笔记本线 v0.2.32：登记日 `trackFrom`、服药时间按版本 `timesHistory`、补记与 `medLate`、记录可修改、应用内两步确认、回车键盘流、撤销提示条。本机线 v0.2.32～v0.2.34：跨天与多页面同步、写入前校验、离线缓存、训练常亮、老手机与微信兼容、文档分层、`app.js` 拆成 `js/app/`。冲突怎么取舍见 [CHANGELOG](CHANGELOG.md) v0.2.35。
 
-v0.2.32 已提交（`98fd467`），**未部署**：修了 5 个会让患者看错/记错的逻辑问题（页面开过夜显示昨天的服药勾、记录日期取渲染时刻、锁屏计时冻结与 iOS 结束音不响、停用药改日期复活、未到点的药算漏服）并加了多页面同步、训练常亮、离线缓存等；清单与验证见 [CHANGELOG](CHANGELOG.md)，约定见 AGENTS.md 第 15、16 条。**部署后必须核对**：`curl -sI https://stroke-rehab-assistant.pages.dev/sw.js` 不应带 `content-security-policy`、应有 `cache-control: no-cache`（否则离线缓存安装失败，站点照常但没有离线能力）；再用真机走 [MANUAL-TEST.md](MANUAL-TEST.md) 的 v0.2.32 小节。
+**数据兼容（务必）**：线上用户数据已经带 `trackFrom`/`timesHistory`/`medLate`。合并版全部保留；**不要部署任何不认识这三个字段的版本**——`normalizeState()` 会在下次保存时把它们丢掉（补记标记、改时间前的服药安排、登记日都会丢，登记前的日子还会重新被算成漏服）。
 
-v0.2.31 已提交（`f6a1907`）并部署上线：动作示意图调研的集成——临床角度护栏、修正 4 张与自身要领矛盾的简笔画（坐站转移/踝泵/桥式/原地踏步）、给康复医生的复核单、在动部位橙色高亮 + 运动弧线；范围、验证与选型结论见 [CHANGELOG](CHANGELOG.md) 与 §6 figures.js。**5 张图仍全部是 `pending`（未经医生复核）**，下一步是用 `node test/preview-figures.js --review` 出复核单找医生。
+**部署后必须核对**：`curl -sI https://stroke-rehab-assistant.pages.dev/sw.js` 不应带 `content-security-policy`、应有 `cache-control: no-cache`；真机按 [MANUAL-TEST](MANUAL-TEST.md) 走 v0.2.32/v0.2.33 两节与补记/修改相关项。**5 张示意图仍全部是 `pending`**（未经医生复核），用 `node test/preview-figures.js --review` 出复核单找医生。
 
-生产为 v0.2.31，地址 <https://stroke-rehab-assistant.pages.dev/>，Cloudflare 部署 `03608e86`，`index.html` 部署戳 `ver=20260927085953`；线上 `js/figures.js`、`css/style.css` 与本地逐字节 md5 一致，CSP/HSTS 响应头已核对；git 已推送 `origin/main`。待复核：生产端 `settings.test.js`/`overlay.test.js --stress` 未重跑；真机上看图未做。
+更早：v0.2.31 已提交（`f6a1907`），曾部署 `03608e86`（动作示意图临床角度护栏等）。
 
 v0.2.30.1 在 v0.2.30 基础上继续打磨精致度/统一性（设置弹窗卡片标题层级对齐、展开折叠箭头改 CSS V 形），提交 `714c435`、部署 `03a2a862`；范围与验证见 [CHANGELOG](CHANGELOG.md)，组件及分阶段加固标准见 [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md)。仍需真机核对读屏、原生键盘和返回手势。
 
@@ -63,6 +63,8 @@ python3 -m http.server 8080   # 浏览器访问 http://localhost:8080
 注意：`test/storage.test.js` 运行时会打印 `QuotaExceededError` 和 `SyntaxError ... JSON` 两段告警——**这是预期输出**（测试故意模拟写盘失败和损坏 JSON，验证回滚/兜底逻辑），只要最后一行是"✅ storage.js 全部断言通过"就是成功。
 
 ## 3. 环境备忘（本机实测）
+
+- **部署只从已提交的干净工作区做**：`deploy.sh` 拷的是工作区文件。2026-09 笔记本上直接从没提交的工作区部署了 v0.2.32，线上与仓库分叉 4 天，另一台机器差点用一次正常部署把它整体覆盖（会抹掉用户数据里的 `trackFrom`/`timesHistory`/`medLate`）。现在 `deploy.sh` 遇到未提交改动会拒绝（确需临时部署设 `ALLOW_DIRTY=1`），并把提交号记到 Cloudflare 的部署上；部署后照旧提交、推送。**接手时先核对线上文件与 `main` 是否一致**（`curl` 线上 js 求 md5 对照 `git show main:<文件>`），不一致先查清楚再动。
 
 - WSL2（Linux 6.6.114.1-microsoft-standard-WSL2），Node v24.18.0，Python 3.12.3。
 - 无头浏览器：`~/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell`（smoke.sh 会自动找最新版本；不存在时 `npx playwright install chromium`）。

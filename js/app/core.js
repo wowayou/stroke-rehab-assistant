@@ -10,12 +10,13 @@
    全局名同名（同名会悄悄盖掉 window 上的东西）。
 
    各文件：
-     core.js      共享状态 + 工具(esc/toast/stored/beep/Awake) + 少算数 + 分段控件 + 朗读稿
+     core.js      共享状态 + 工具(esc/toast/stored/beep/Awake) + 高频增删改(confirmInPlace/tick/bindEnterFlow)
+                  + 少算数 + 分段控件 + 朗读稿
      overlay.js   浮层与返回键(overlayPush/closeTopOverlayDOM/dismissTopOverlay) + openModal（硬约定 10）
      today.js     今日页
-     train.js     训练页 → 打卡历史(日历+明细) → 训练引导器(计次/计时/游戏、常亮与提示音)
-     records.js   记录页：判定 → 比上次 → 图表 → 三个表单(记录时间跟着现在走) → 导出
-     meds.js      用药页：核对表 → 药物清单 → 服药历史 → 登记/停用/新疗程
+     train.js     训练页 → 打卡历史·补记(openExerciseHistory/openExerciseDay) → 训练引导器(计次/计时/游戏、常亮与提示音)
+     records.js   记录页：判定 → 比上次 → 图表 → 历史与修改(openVitalHistory/openVitalEdit) → 三个表单(readVital/whenOf) → 导出
+     meds.js      用药页：核对表(medCheckListHTML/bindMedChecks) → 药物清单 → 服药历史·补记(openMedHistory/openMedDay) → 登记/停用/新疗程
      learn.js     知识页 + 急救弹窗(BE-FAST + 拨 120)
      settings.js  设置弹窗 + 字号/音色套用 + 换声音引导 + 首次指引
      backup.js    从备份恢复(选文件/粘贴/解密/预览) + 下载/复制/加密备份
@@ -26,6 +27,7 @@
    ============================================================ */
 
 let currentView = 'today';
+let renderedDay = null;   // 上次渲染时的日期，用于跨天自动重画
 let recTab = 'bp';      // 记录页当前标签
 let catTab = 'limb';    // 训练页当前分类
 let trainerTimer = null;
@@ -53,12 +55,45 @@ function esc(s) {
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
 }
-function toast(msg) {
+function hideToast(t) {
+  /* 撤销键消失时若焦点正落在它上（键盘/读屏用户），把焦点接回顶层弹窗，别丢到 body。 */
+  const hadFocus = t.contains(document.activeElement);
+  t.inert = true; // 隐藏后退出键盘导航与无障碍树，防止透明的撤销键误删记录。
+  t.classList.remove('show', 'has-action');
+  const top = topOverlay();
+  const title = hadFocus && top && top.querySelector('.m-title, .t-name');
+  if (title) title.focus({ preventScroll: true });
+}
+/* 提示条。action = { label, onClick }（可选）：带一个可点的动作按钮（如“撤销”），
+   按一次即失效（used），提示条也随之隐去。无 action 时与旧行为一致（纯文本、5 秒消失）。 */
+function toast(msg, action) {
   const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.classList.add('show');
   clearTimeout(t._tid);
-  t._tid = setTimeout(() => t.classList.remove('show'), 5000);
+  t.innerHTML = '';
+  const span = document.createElement('span');
+  span.className = 'toast-msg';
+  span.textContent = msg;
+  t.appendChild(span);
+  if (action && action.label && typeof action.onClick === 'function') {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'toast-action';
+    btn.textContent = action.label;
+    let used = false;
+    btn.onclick = () => {
+      if (used) return;            // 一次撤销后按钮失效
+      used = true;
+      action.onClick();
+      hideToast(t);
+    };
+    t.appendChild(btn);
+    t.classList.add('has-action');
+    t._tid = setTimeout(() => hideToast(t), 8000);   // 带动作的留久一点，给患者时间点撤销
+  } else {
+    t._tid = setTimeout(() => hideToast(t), 5000);
+  }
+  t.inert = false;
+  t.classList.add('show');
 }
 function showError(node, message) {
   let feedback = node.querySelector('.save-feedback');
@@ -145,6 +180,66 @@ function beep() {
     }
   } catch (e) { /* 没有声音也不影响训练：还有震动、文字和 toast */ }
   if (navigator.vibrate) navigator.vibrate(300);
+}
+/* 轻触反馈：勾选/补记这类高频动作给一下短震动，不支持静默 */
+function tick() {
+  try { if (navigator.vibrate) navigator.vibrate(15); } catch (_) { /* 静默 */ }
+}
+/* 应用内两步确认：高频删除不用原生 confirm()（微信里会弹带网址的系统框）。
+   原位把触发元素换成 .confirm-box（说明 + 红色确认 + outline 取消），焦点落到取消；
+   取消恢复原节点并聚焦它。不压历史条目（不是浮层）。 */
+function confirmInPlace(el, { message, confirmLabel, cancelLabel = '不删了', onConfirm }) {
+  if (!el || !el.parentNode) return;
+  const box = document.createElement('div');
+  box.className = 'confirm-box';
+  box.innerHTML = `
+    <div class="cb-msg" role="alert">${esc(message)}</div>
+    <div class="cb-actions">
+      <button type="button" class="btn red" data-confirm="yes">${esc(confirmLabel)}</button>
+      <button type="button" class="btn outline" data-confirm="no">${esc(cancelLabel)}</button>
+    </div>`;
+  const next = el.nextSibling;
+  const parent = el.parentNode;
+  parent.removeChild(el);
+  parent.insertBefore(box, next);
+  box.querySelector('[data-confirm="no"]').onclick = () => {
+    parent.insertBefore(el, box.nextSibling);
+    box.remove();
+    if (el.focus) el.focus({ preventScroll: true });
+  };
+  let confirmed = false;
+  box.querySelector('[data-confirm="yes"]').onclick = e => {
+    if (confirmed) return;           // 连点两下不能执行两次删除
+    confirmed = true;
+    const yes = e.currentTarget, no = box.querySelector('[data-confirm="no"]');
+    yes.disabled = true;
+    no.disabled = true;
+    /* onConfirm() 返回 false = 保存失败（存储满/跨页面冲突）：行里没有 ✕ 可退，
+       必须把两个键重新点亮、焦点回取消键，否则确认框卡死。其他返回值当成功，不恢复（
+       成功时弹窗内 close()→dismissTopOverlay() 会统一禁用控件，无条件恢复反而把它们重新点亮）。 */
+    if (onConfirm() === false) {
+      confirmed = false;
+      yes.disabled = false;
+      no.disabled = false;
+      if (no.focus) no.focus({ preventScroll: true });
+    }
+  };
+  box.querySelector('[data-confirm="no"]').focus({ preventScroll: true });
+}
+/* 手机键盘「下一项/完成」：给输入设 enterkeyhint，回车跳下一框，最后一框保存。
+   中文输入法组字时（isComposing / keyCode 229）不触发，否则会打断拼音。 */
+function bindEnterFlow(inputs, onDone) {
+  const list = inputs.filter(Boolean);
+  list.forEach((el, i) => {
+    const last = i === list.length - 1;
+    el.setAttribute('enterkeyhint', last ? 'done' : 'next');
+    el.addEventListener('keydown', e => {
+      if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+      e.preventDefault();
+      if (last) onDone();
+      else list[i + 1].focus();
+    });
+  });
 }
 
 /* 训练时屏幕常亮：老人把手机放在一边照着做，屏幕 30 秒就黑了，

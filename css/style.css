@@ -527,22 +527,22 @@ input[aria-invalid="true"], select[aria-invalid="true"] { border: 2px solid var(
 /* ---------- 用药页 ---------- */
 .med-time-group { margin-bottom: 0.5rem; }
 .med-time-label { font-weight: 700; color: var(--primary); margin: 0.5rem 0 0.2rem; font-size: 1rem; }
-.med-check {
+.med-check, .check-row {
   display: flex; align-items: center; gap: 0.7rem;
   min-height: 60px; padding: 0.5rem 0.2rem;
   border-bottom: 1px solid var(--border);
 }
-.med-check:last-child { border-bottom: none; }
-.med-check .mc-box {
+.med-check:last-child, .check-row:last-child { border-bottom: none; }
+.med-check .mc-box, .check-row .mc-box {
   width: 34px; height: 34px; border-radius: 10px;
   border: 2.5px solid var(--border); background: #fff;
   display: flex; align-items: center; justify-content: center;
   font-size: 1.25rem; color: #fff; flex-shrink: 0;
 }
-.med-check.checked .mc-box { background: var(--green); border-color: var(--green); }
-.med-check .mc-name { font-weight: 600; font-size: 1.05rem; }
-.med-check .mc-dose { font-size: 0.88rem; color: var(--text-2); }
-.med-check.checked .mc-name { text-decoration: line-through; color: var(--text-2); }
+.med-check.checked .mc-box, .check-row.checked .mc-box { background: var(--green); border-color: var(--green); }
+.med-check .mc-name, .check-row .mc-name { font-weight: 600; font-size: 1.05rem; }
+.med-check .mc-dose, .check-row .mc-dose { font-size: 0.88rem; color: var(--text-2); }
+.med-check.checked .mc-name, .check-row.checked .mc-name { text-decoration: line-through; color: var(--text-2); }
 
 .med-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.65rem 0.1rem; border-bottom: 1px solid var(--border); }
 .med-item:last-child { border-bottom: none; }
@@ -765,6 +765,20 @@ body.overlay-open { overflow: hidden; }
   transition: opacity 0.2s, transform 0.2s; z-index: 300; width: max-content; max-width: 90vw; text-align: center;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+/* 带动作按钮的提示条（如“撤销”）：整条改为可点，排成一行。 */
+.toast.has-action {
+  pointer-events: auto;
+  display: inline-flex; align-items: center; gap: 0.8rem;
+  padding-right: 0.5rem;
+}
+.toast-action {
+  flex: none; min-height: 48px; min-width: 48px; padding: 0 0.9rem;
+  border: none; border-radius: 12px; cursor: pointer;
+  background: rgba(255, 255, 255, 0.18); color: #fff;
+  font-size: 1rem; font-weight: 700;
+}
+.toast-action:hover { background: rgba(255, 255, 255, 0.3); }
+.toast-action:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 
 /* ---------- 免责声明 ---------- */
 .disclaimer {
@@ -812,9 +826,43 @@ body.overlay-open { overflow: hidden; }
    ============================================================ */
 
 /* 按下反馈：老人常怀疑"我到底点上没有"，所以要立刻给变化 */
-.med-check:active, .art-item:active {
+.med-check:active, .art-item:active, .check-row:active {
   background: var(--surface-hover);
 }
+/* 服药历史/训练历史行改成整行按钮（可点进补记子弹窗） */
+button.day-row, button.hist-day {
+  width: 100%; text-align: left; background: none; border: none;
+  border-bottom: 1px solid var(--border); border-radius: 0;
+  min-height: 56px; padding: 0.6rem 0.2rem; cursor: pointer;
+  display: flex; flex-direction: column; gap: 0.3rem;
+}
+button.day-row:last-child, button.hist-day:last-child { border-bottom: none; }
+button.day-row:active, button.hist-day:active { background: var(--surface-hover); }
+.day-go .dg-top { display: flex; align-items: center; gap: 0.5rem; width: 100%; }
+.day-go .dg-top .day-date, .day-go .dg-top .hd-date { flex: 1; min-width: 0; color: var(--text); font-size: 0.95rem; font-weight: 700; }
+.day-go .dg-arrow { color: var(--text-2); font-size: 1.3rem; flex-shrink: 0; }
+.day-go .hd-right { color: var(--text-2); font-size: 0.9rem; flex-shrink: 0; }
+.day-go .day-score { flex-shrink: 0; }
+.day-score.pending { color: var(--orange); }
+/* 记录历史行：主体可点开修改，行尾删除 */
+.rec-open {
+  flex: 1; min-height: 48px; min-width: 0;
+  display: flex; align-items: center; gap: 0.6rem;
+  background: none; border: none; text-align: left; cursor: pointer;
+  font-size: 0.98rem; padding: 0.1rem 0;
+}
+.rec-open:active { background: var(--surface-hover); }
+.rec-open .rec-date { color: var(--text-2); font-size: 0.88rem; width: 7.2em; flex-shrink: 0; }
+.rec-open .rec-val { font-weight: 700; font-variant-numeric: tabular-nums; flex: 1; min-width: 0; }
+.rec-open .dg-arrow { color: var(--text-2); font-size: 1.3rem; flex-shrink: 0; }
+/* 应用内两步确认（代替原生 confirm） */
+.confirm-box {
+  background: var(--red-soft); border-left: 4px solid var(--red);
+  border-radius: 10px; padding: 0.7rem 0.8rem; margin: 0.4rem 0;
+}
+.confirm-box .cb-msg { margin-bottom: 0.6rem; line-height: 1.4; }
+.confirm-box .cb-actions { display: flex; gap: 0.5rem; }
+.confirm-box .cb-actions .btn { flex: 1; }
 .btn:active, .ci-action:active, .ex-start:active,
 .rec-tab:active, .cat-tab:active, .stage-chip:active,
 .answer-btn:active, .level-btn:active, .time-chip:active,
@@ -826,12 +874,12 @@ body.overlay-open { overflow: hidden; }
   transition: transform 0.08s ease, background 0.15s ease;
   touch-action: manipulation;   /* 去掉移动端双击缩放带来的 ~300ms 点击延迟 */
 }
-.med-check, .art-item { transition: background 0.15s ease; }
+.med-check, .art-item, .check-row { transition: background 0.15s ease; }
 
 /* 悬停仅用于鼠标；触屏不会留下粘住的 hover，也不给不可点的整行假反馈。 */
 @media (hover: hover) and (pointer: fine) {
   .btn:not(:disabled):hover { box-shadow: inset 0 0 0 2px currentColor; }
-  .btn-icon:hover, .modal-close:hover, .art-item:hover, .med-check:hover,
+  .btn-icon:hover, .modal-close:hover, .art-item:hover, .med-check:hover, .check-row:hover,
   .action-list > .btn:hover, .disclosure summary:hover { background: var(--surface-hover); }
   .nav-item:not(.active):hover, .cat-tab:not(.active):hover, .rec-tab:not(.active):hover { background: var(--surface-hover); }
 }

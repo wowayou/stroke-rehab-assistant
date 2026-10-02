@@ -1,6 +1,6 @@
 /* ============================================================
    记录页：判定(bp/glu/bmiBadge) → 格式化 → 比上次 → 图表(VITAL_SERIES/targetConfig)
-   → 血压/血糖/体重三个表单（记录时间默认跟着现在走：whenValue）→ 导出报告
+   → 历史与修改（openVitalEdit）→ 血压/血糖/体重三个表单（共用校验 readVital；记录时间未改过取保存那刻：whenOf）→ 导出报告
    医学阈值改动前读 docs/RESEARCH.md §八。
    ============================================================ */
 
@@ -233,11 +233,12 @@ function bindHist(body) {
   body.querySelectorAll('[data-hist]').forEach(b => b.onclick = () => openVitalHistory(b.dataset.hist));
 }
 
-/* 历史弹窗：趋势图 + 全部记录（每条带红黄绿状态点），可删除 */
+/* 历史弹窗：趋势图 + 全部记录（每条可点开修改、行尾删除），分页 60+60 */
 function openVitalHistory(kind) {
   const meta = REC_KINDS[kind];
   const node = document.createElement('div');
-  openModal(`${meta.icon} ${meta.name}历史`, node);
+  const close = openModal(`${meta.icon} ${meta.name}历史`, node);
+  let shown = 60;
 
   const paint = () => {
     const sorted = Store.vitalsSorted(kind);
@@ -246,16 +247,21 @@ function openVitalHistory(kind) {
       return;
     }
     const recent = sorted.slice(-30);
-    const rows = [...sorted].reverse().map(v => {
+    const all = [...sorted].reverse();
+    const rows = all.slice(0, shown).map(v => {
       const [cls, txt] = vitalStatus(kind, v);
       return `
       <div class="rec-row">
-        <span class="rec-dot ${cls}"></span>
-        <span class="rec-date">${esc(v.date)}<br>${esc(v.time || '')}</span>
-        <span class="rec-val">${VITAL_FMT[kind](v)}${txt ? `<br><span class="rec-note ${cls}">${txt}</span>` : ''}</span>
-        <button class="rec-del" data-del="${esc(v.id)}" aria-label="删除">🗑</button>
+        <button class="rec-open" id="vital-row-${esc(v.id)}" data-vital="${esc(v.id)}">
+          <span class="rec-dot ${cls}"></span>
+          <span class="rec-date">${esc(v.date)}<br>${esc(v.time || '')}</span>
+          <span class="rec-val">${VITAL_FMT[kind](v)}${txt ? `<br><span class="rec-note ${cls}">${txt}</span>` : ''}</span>
+          <span class="dg-arrow" aria-hidden="true">›</span>
+        </button>
+        <button class="rec-del" data-del="${esc(v.id)}" aria-label="删除这条记录">🗑</button>
       </div>`;
     }).join('');
+    const remain = Math.max(0, all.length - shown);
 
     node.innerHTML = `
     ${recent.length >= 2 ? `
@@ -268,18 +274,96 @@ function openVitalHistory(kind) {
     <div class="card">
       <div class="card-title">📄 全部记录（${sorted.length} 条）</div>
       <div class="rec-list">${rows}</div>
+      ${remain ? `<button class="btn ghost block" id="rec-more" style="margin-top:0.6rem">显示更早的记录（还有 ${remain} 条）</button>` : ''}
     </div>`;
 
+    node.querySelectorAll('[data-vital]').forEach(b => b.onclick = () => openVitalEdit(kind, b.dataset.vital));
     node.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
-      if (confirm('删除这条记录？')) {
-        if (!stored(Store.removeVital(kind, b.dataset.del))) return;
-        paint();
-        render('records', { keepScroll: true, preserveInputs: true });
-      }
+      const v = Store.vitalsSorted(kind).find(x => x.id === b.dataset.del);
+      const plain = !v ? '' : kind === 'bp' ? `${v.sys}/${v.dia} mmHg`
+        : kind === 'glucose' ? `${v.value} mmol/L ${v.gtype}` : `${v.value} 公斤`;
+      confirmInPlace(b.closest('.rec-row'), {
+        message: `删除这条记录（${v ? v.date + (v.time ? ' ' + v.time : '') + ' · ' + plain : ''}）？删除后无法恢复。`,
+        confirmLabel: '删除',
+        cancelLabel: '不删了',
+        onConfirm: () => {
+          if (!stored(Store.removeVital(kind, b.dataset.del))) return false;
+          paint();
+          render('records', { keepScroll: true, preserveInputs: true });
+        },
+      });
     });
+    const moreBtn = node.querySelector('#rec-more');
+    if (moreBtn) moreBtn.onclick = () => { shown += 60; paint(); };
     drawVitalChart(kind, node.querySelector('#vh-chart'), recent);
   };
   paint();
+  close.onResume(paint);
+}
+
+/* 修改一条记录（子弹窗）：预填数值与日期时间，max=今天；保存/删除后刷新背后页。 */
+function openVitalEdit(kind, id) {
+  const v = Store.data.vitals[kind].find(x => x.id === id);
+  if (!v) return;
+  const meta = REC_KINDS[kind];
+  const hasTime = kind !== 'weight';
+  let fields;
+  if (kind === 'bp') {
+    fields = `
+      <div class="form-row">
+        <div class="field"><label for="ev-sys">高压<span class="label-opt">（收缩压）</span></label><input id="ev-sys" type="number" inputmode="numeric" value="${esc(v.sys)}"></div>
+        <div class="field"><label for="ev-dia">低压<span class="label-opt">（舒张压）</span></label><input id="ev-dia" type="number" inputmode="numeric" value="${esc(v.dia)}"></div>
+      </div>
+      <div class="form-inline">
+        <label class="fi-label" for="ev-pulse">脉搏<span class="label-opt">（选填）</span></label>
+        <input id="ev-pulse" type="number" inputmode="numeric" value="${esc(v.pulse || '')}">
+      </div>`;
+  } else if (kind === 'glucose') {
+    fields = `
+      <div class="form-row">
+        <div class="field"><label for="ev-type">测量类型</label>
+          <select id="ev-type">${['空腹', '餐后2小时', '随机'].map(o => `<option ${o === v.gtype ? 'selected' : ''}>${o}</option>`).join('')}</select></div>
+        <div class="field"><label for="ev-val">数值 mmol/L</label><input id="ev-val" type="number" step="0.1" inputmode="decimal" value="${esc(v.value)}"></div>
+      </div>`;
+  } else {
+    fields = `<div class="form-row"><div class="field"><label for="ev-val">体重（公斤）</label><input id="ev-val" type="number" step="0.1" inputmode="decimal" value="${esc(v.value)}"></div></div>`;
+  }
+  const node = nodeFromHTML(`
+    <div class="vital-form">
+      ${fields}
+      <div class="form-row">
+        <div class="field wide"><label for="ev-date">日期</label><input id="ev-date" type="date" value="${esc(v.date)}" max="${Store.today()}"></div>
+        ${hasTime ? `<div class="field wide"><label for="ev-time">时间</label><input id="ev-time" type="time" value="${esc(v.time || '')}"></div>` : ''}
+      </div>
+      <button class="btn block" id="ev-save">保存修改</button>
+      <button class="btn red block" id="ev-del" style="margin-top:0.6rem">删除这条记录</button>
+    </div>`);
+  const close = openModal(`修改${meta.name}记录`, node);
+  const flowIds = kind === 'bp' ? ['ev-sys', 'ev-dia', 'ev-pulse'] : ['ev-val'];
+  bindEnterFlow(flowIds.map(i => node.querySelector('#' + i)), () => node.querySelector('#ev-save').click());
+  node.querySelector('#ev-save').onclick = () => {
+    clearFieldErrors(node);
+    const when = { date: node.querySelector('#ev-date').value, time: hasTime ? node.querySelector('#ev-time').value : '' };
+    const entry = readVital(kind, 'ev', when);
+    if (!entry) return;
+    if (!stored(Store.updateVital(kind, id, entry))) return;
+    close();
+    toast('已保存修改');
+    render('records', { keepScroll: true, preserveInputs: true });
+  };
+  node.querySelector('#ev-del').onclick = () => {
+    confirmInPlace(node.querySelector('#ev-del'), {
+      message: '删除后无法恢复。确定删除这条记录吗？',
+      confirmLabel: '删除',
+      cancelLabel: '不删了',
+      onConfirm: () => {
+        if (!stored(Store.removeVital(kind, id))) return false;
+        close();
+        toast('已删除');
+        render('records', { keepScroll: true, preserveInputs: true });
+      },
+    });
+  };
 }
 
 function renderRecords() {
@@ -334,24 +418,20 @@ function captureRecordDraft() {
   const form = body.querySelector('.vital-form');
   const typed = [...form.querySelectorAll('input[type="number"]')].some(el => el.value !== '');
   if (!typed && !form.dataset.dirty) return;
-  const prefix = WHEN_PREFIX[recTab];
-  const pinned = !whenFollowsNow(prefix);
   recordDrafts[recTab] = {
-    /* 日期时间没改过就不存：恢复草稿时让它继续跟着现在走，不把旧时刻带回来 */
-    values: [...form.querySelectorAll('input[id], select[id]')]
-      .filter(el => pinned || !el.closest('.dt-row'))
-      .map(el => [el.id, el.value]),
+    values: [...form.querySelectorAll('input[id], select[id]')].map(el => [el.id, el.value]),
     expanded: !form.querySelector('.dt-row').hidden,
-    pinned,
+    touched: form.querySelector('.dt-row').dataset.touched === 'true',
   };
 }
 function restoreRecordDraft() {
   const draft = recordDrafts[recTab];
   if (!draft) return;
   draft.values.forEach(([id, value]) => { const el = document.getElementById(id); if (el) el.value = value; });
-  const prefix = WHEN_PREFIX[recTab];
-  if (draft.pinned) document.getElementById(prefix + '-dt-chip').closest('.vital-form').dataset.when = 'set';
-  document.getElementById(prefix + '-dt-row').hidden = !draft.expanded;
+  const prefix = { bp: 'bp', glucose: 'glu', weight: 'wt' }[recTab];
+  const row = document.getElementById(prefix + '-dt-row');
+  row.hidden = !draft.expanded;
+  if (draft.touched) row.dataset.touched = 'true';
   bindWhenToggle(prefix);
 }
 function recordSaveDone(message) {
@@ -382,55 +462,71 @@ function fmtWhen(date, time) {
   return time ? `${head} ${time}` : head;
 }
 
-/* 「记录时间」收敛成一个小条：点开才显示日期/时间原生输入（同前缀约定：*-dt-chip / *-dt-row / *-date / *-time）。
-   默认"跟着现在走"：没动过日期时间时，保存那一刻才取当前时间。以前是渲染页面那一刻
-   填进输入框的——页面开着过了一夜，第二天早上量的血压会被记成昨天的日期。
-   用户改过日期或时间（表单上 data-when="set"）才按他填的记。 */
-const WHEN_PREFIX = { bp: 'bp', glucose: 'glu', weight: 'wt' };
-function whenFollowsNow(prefix) {
-  const chip = document.getElementById(prefix + '-dt-chip');
-  return !chip || chip.closest('.vital-form').dataset.when !== 'set';
-}
-function whenValue(prefix) {
-  const timeEl = document.getElementById(prefix + '-time');
-  if (whenFollowsNow(prefix)) return { date: Store.today(), time: timeEl ? Store.timeStr() : '' };
-  return { date: document.getElementById(prefix + '-date').value, time: timeEl ? timeEl.value : '' };
-}
+/* 「记录时间」收敛成一个小条：未改过时显“现在 · 修改”（体重“今天 · 修改”），
+   改过显 fmtWhen(...)。未改过 → 保存时取此刻（whenOf）；日期/时间 change 置 touched，日期 max=今天。 */
 function bindWhenToggle(prefix) {
   const row = document.getElementById(prefix + '-dt-row');
   const chip = document.getElementById(prefix + '-dt-chip');
   if (!row || !chip) return;
-  const form = chip.closest('.vital-form');
   const dateEl = document.getElementById(prefix + '-date');
   const timeEl = document.getElementById(prefix + '-time');
-  const syncNow = () => {
-    if (!whenFollowsNow(prefix)) return;
-    dateEl.value = Store.today();
-    dateEl.max = Store.today();
-    if (timeEl) timeEl.value = Store.timeStr();
-  };
+  const isWeight = prefix === 'wt';
   const fmt = () => {
-    chip.textContent = (whenFollowsNow(prefix) ? (timeEl ? '现在' : '今天')
-      : fmtWhen(dateEl.value, timeEl ? timeEl.value : '')) + ' · 修改';
+    chip.textContent = (row.dataset.touched === 'true'
+      ? fmtWhen(dateEl.value, timeEl ? timeEl.value : '')
+      : (isWeight ? '今天' : '现在')) + ' · 修改';
   };
-  const pin = () => { form.dataset.when = 'set'; fmt(); };
+  dateEl.max = Store.today();
   chip.setAttribute('aria-controls', row.id);
   chip.setAttribute('aria-expanded', String(!row.hidden));
   chip.onclick = () => {
-    syncNow();   // 展开时给出此刻的日期时间作为修改起点
     row.hidden = !row.hidden;
     chip.setAttribute('aria-expanded', String(!row.hidden));
+    if (!row.hidden && row.dataset.touched !== 'true') {
+      dateEl.value = Store.today();
+      if (timeEl) timeEl.value = Store.timeStr();
+    }
+    dateEl.max = Store.today();
   };
-  dateEl.onchange = pin;
-  if (timeEl) timeEl.onchange = pin;
-  syncNow();
+  const touch = () => { row.dataset.touched = 'true'; fmt(); };
+  dateEl.onchange = touch;
+  if (timeEl) timeEl.onchange = touch;
   fmt();
 }
-/* 保存前核对日期：不能是将来（时间跟着现在走时不会出错，只有手改过才需要拦） */
-function whenProblem(prefix, date) {
-  if (!date) return [prefix + '-date', '请选择这次测量的日期。'];
-  if (date > Store.today()) return [prefix + '-date', '日期不能晚于今天，请核对。'];
-  return null;
+/* 未改过返回此刻；改过返回输入值。体重无时间输入，time 为 ''。 */
+function whenOf(prefix) {
+  const row = document.getElementById(prefix + '-dt-row');
+  const dateEl = document.getElementById(prefix + '-date');
+  const timeEl = document.getElementById(prefix + '-time');
+  if (!row || row.dataset.touched !== 'true') {
+    return { date: Store.today(), time: timeEl ? Store.timeStr() : '' };
+  }
+  return { date: dateEl.value, time: timeEl ? timeEl.value : '' };
+}
+/* 共享校验：页面三表单与修改弹窗共用。通过返回干净 entry，失败 fieldError 并返回 null。 */
+function readVital(kind, prefix, when) {
+  const id = suf => prefix + '-' + suf;
+  const val = suf => document.getElementById(id(suf));
+  if (!when.date) { fieldError(id('date'), '请选择这次测量的日期。'); return null; }
+  if (when.date > Store.today()) { fieldError(id('date'), '日期不能晚于今天，请核对这次测量的日期。'); return null; }
+  if (kind === 'bp') {
+    const sys = +val('sys').value, dia = +val('dia').value, pulse = val('pulse').value;
+    if (!sys || sys < 50 || sys > 300) { fieldError(id('sys'), '请核对血压计上的高压读数，再填写高压。'); return null; }
+    if (!dia || dia < 30 || dia > 200) { fieldError(id('dia'), '请核对血压计上的低压读数，再填写低压。'); return null; }
+    /* 高压一定比低压高：反过来几乎都是两格填反了，存进去会被判成"偏低" */
+    if (sys <= dia) { fieldError(id('dia'), '低压应该比高压低，请核对是不是两格填反了。'); return null; }
+    if (pulse && !(+pulse > 0 && +pulse <= 400)) { fieldError(id('pulse'), '请核对脉搏读数，不记录时可以留空。'); return null; }
+    return { date: when.date, time: when.time, sys, dia, pulse: pulse ? +pulse : '' };
+  }
+  if (kind === 'glucose') {
+    const gtype = val('type').value;
+    const value = +val('val').value;
+    if (!value || value < 1 || value > 40) { fieldError(id('val'), '请核对血糖读数，按 mmol/L 填写。'); return null; }
+    return { date: when.date, time: when.time, gtype, value };
+  }
+  const value = +val('val').value;
+  if (!value || value < 20 || value > 300) { fieldError(id('val'), '请核对体重读数，以公斤填写。'); return null; }
+  return { date: when.date, value };
 }
 
 function renderBP(body) {
@@ -480,23 +576,16 @@ function renderBP(body) {
   </div>`;
 
   bindWhenToggle('bp');
-  document.getElementById('bp-save').onclick = () => {
+  const bpSave = () => {
     clearFieldErrors(body);
-    const sys = +document.getElementById('bp-sys').value;
-    const dia = +document.getElementById('bp-dia').value;
-    const pulse = document.getElementById('bp-pulse').value;
-    const { date, time } = whenValue('bp');
-    if (!sys || sys < 50 || sys > 300) { fieldError('bp-sys', '请核对血压计上的高压读数，再填写高压。'); return; }
-    if (!dia || dia < 30 || dia > 200) { fieldError('bp-dia', '请核对血压计上的低压读数，再填写低压。'); return; }
-    /* 高压一定比低压高：反过来几乎都是两格填反了，存进去会被判成"偏低" */
-    if (sys <= dia) { fieldError('bp-dia', '低压应该比高压低，请核对是不是两格填反了。'); return; }
-    if (pulse && !(+pulse > 0 && +pulse <= 400)) { fieldError('bp-pulse', '请核对脉搏读数，不记录时可以留空。'); return; }
-    const badWhen = whenProblem('bp', date);
-    if (badWhen) { fieldError(...badWhen); return; }
-    if (!stored(Store.addVital('bp', { date, time, sys, dia, pulse: pulse ? +pulse : '' }))) return;
-    const [cls, txt] = bpBadge(sys, dia);
-    recordSaveDone(`✓ 已保存血压 ${sys}/${dia} mmHg · ${fmtWhen(date, time)}${cls === 'bad' ? '。' + txt : ''}`);
+    const entry = readVital('bp', 'bp', whenOf('bp'));
+    if (!entry) return;
+    if (!stored(Store.addVital('bp', entry))) return;
+    const [cls, txt] = bpBadge(entry.sys, entry.dia);
+    recordSaveDone(`✓ 已保存血压 ${entry.sys}/${entry.dia} mmHg · ${fmtWhen(entry.date, entry.time)}${cls === 'bad' ? '。' + txt : ''}`);
   };
+  bindEnterFlow(['bp-sys', 'bp-dia', 'bp-pulse'].map(i => document.getElementById(i)), bpSave);
+  document.getElementById('bp-save').onclick = bpSave;
   bindHist(body);
   drawVitalChart('bp', document.getElementById('bp-chart'), sorted.slice(-14));
 }
@@ -546,17 +635,15 @@ function renderGlucose(body) {
   </div>`;
 
   bindWhenToggle('glu');
-  document.getElementById('glu-save').onclick = () => {
+  const gluSave = () => {
     clearFieldErrors(body);
-    const gtype = document.getElementById('glu-type').value;
-    const value = +document.getElementById('glu-val').value;
-    const { date, time } = whenValue('glu');
-    if (!value || value < 1 || value > 40) { fieldError('glu-val', '请核对血糖读数，按 mmol/L 填写。'); return; }
-    const badWhen = whenProblem('glu', date);
-    if (badWhen) { fieldError(...badWhen); return; }
-    if (!stored(Store.addVital('glucose', { date, time, gtype, value }))) return;
-    recordSaveDone(`✓ 已保存${gtype}血糖 ${value} mmol/L · ${fmtWhen(date, time)}`);
+    const entry = readVital('glucose', 'glu', whenOf('glu'));
+    if (!entry) return;
+    if (!stored(Store.addVital('glucose', entry))) return;
+    recordSaveDone(`✓ 已保存${entry.gtype}血糖 ${entry.value} mmol/L · ${fmtWhen(entry.date, entry.time)}`);
   };
+  bindEnterFlow([document.getElementById('glu-val')], gluSave);
+  document.getElementById('glu-save').onclick = gluSave;
   bindHist(body);
   drawVitalChart('glucose', document.getElementById('glu-chart'), sorted.slice(-14));
 }
@@ -611,16 +698,15 @@ function renderWeight(body) {
   </div>`;
 
   bindWhenToggle('wt');
-  document.getElementById('wt-save').onclick = () => {
+  const wtSave = () => {
     clearFieldErrors(body);
-    const value = +document.getElementById('wt-val').value;
-    const { date } = whenValue('wt');
-    if (!value || value < 20 || value > 300) { fieldError('wt-val', '请核对体重读数，以公斤填写。'); return; }
-    const badWhen = whenProblem('wt', date);
-    if (badWhen) { fieldError(...badWhen); return; }
-    if (!stored(Store.addVital('weight', { date, value }))) return;
-    recordSaveDone(`✓ 已保存体重 ${value} 公斤 · ${fmtWhen(date)}`);
+    const entry = readVital('weight', 'wt', whenOf('wt'));
+    if (!entry) return;
+    if (!stored(Store.addVital('weight', entry))) return;
+    recordSaveDone(`✓ 已保存体重 ${entry.value} 公斤 · ${fmtWhen(entry.date)}`);
   };
+  bindEnterFlow([document.getElementById('wt-val')], wtSave);
+  document.getElementById('wt-save').onclick = wtSave;
   bindHist(body);
   drawVitalChart('weight', document.getElementById('wt-chart'), sorted.slice(-14));
 }

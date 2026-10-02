@@ -60,7 +60,11 @@ assert(Store.isMedTaken(med.id, '08:00'), 'isMedTaken 应为 true');
 Store.toggleMed(med.id, '08:00');
 assert(Store.medProgressToday().done === 0, '取消打勾');
 Store.toggleMed(med.id, '08:00');
-assert(Store.adherence7d() !== null, '有药物时依从率不应为 null');
+/* 今天只勾一半：今天没全核对，不计入统计 → adherence7d 为 null */
+assert(Store.adherence7d() === null, '今天只勾一半时依从率应为 null');
+Store.toggleMed(med.id, '20:00');
+assert(Store.adherence7d() === 100, '今天全核对后依从率应为 100');
+Store.toggleMed(med.id, '20:00');   // 还原成"今日2次已服1次"，后面断言仍成立
 
 /* --- 健康记录 --- */
 Store.addVital('bp', { date: t, time: '08:00', sys: 135, dia: 85, pulse: 72 });
@@ -296,24 +300,29 @@ Store.data.exerciseLog['2026-03-10'] = [];
 assert(Store.lastExerciseDate() === '2026-03-09', '空数组的日期不应算作打卡日');
 assert(Store.bestStreak() === 3, '空数组的日期不应接长连续段');
 
-/* medFullDays：只统计有应服次数的天数，全部核对才算"全吃到" */
+/* medFullDays：只统计“计入日”（total>0 且 过去日/今天已全核对），全部核对才算"全吃到" */
 Store.data.meds = [];
 Store.data.medLog = {};
 assert(Store.medFullDays(7).days === 0, '没有药物时 medFullDays.days 应为0');
 Store.addMed({ name: '阿司匹林肠溶片', dose: '100mg', times: ['08:00', '20:00'] });
 const mid = Store.data.meds[0].id;
-/* 新登记的药默认 from=今天：登记之前的日子不该算漏服 */
-assert(Store.data.meds[0].from === t, '新增药物应默认 from=今天，实际 ' + Store.data.meds[0].from);
-/* 统计「吃没吃到」只看已到点的次数，跟当前钟点有关：断言一律传固定时刻，免得测试结果随运行时间变 */
-const at = hm => new Date(t + 'T' + hm + ':00');
-assert(Store.medFullDays(7, at('21:00')).days === 1, '今天才登记的药：只有今天该计入，实际 ' + Store.medFullDays(7, at('21:00')).days);
-/* 把开始日期往前挪，才覆盖整个 7 天窗口 */
-Store.updateMed(mid, { from: Store.addDays(t, -10) });
+/* 新登记的药 from===trackFrom===今天：登记之前的日子不算漏服 */
+assert(Store.data.meds[0].from === t && Store.data.meds[0].trackFrom === t, '新增药物 from 与 trackFrom 都应为今天');
+assert(Store.medFullDays(7).days === 0, '今天才登记、未全核对时今天不计入，days 应为0，实际 ' + Store.medFullDays(7).days);
+/* 把 from 往前挪到 60 天前：但 trackFrom 仍是今天，登记前的日子仍不算 */
+Store.updateMed(mid, { from: Store.addDays(t, -60) });
+assert(Store.medStatusOn(Store.addDays(t, -1)).total === 0, '登记前（今天之前）应服次数应为0');
+assert(Store.medStatusOn(Store.addDays(t, -1)).beforeTracking === true, '登记前的日子 beforeTracking 应为 true');
+assert(Store.toggleMed(mid, '08:00', Store.addDays(t, -1)) === false, '登记前的日子不开放补记，toggleMed 应拒绝');
 Store.toggleMed(mid, '08:00');
 Store.toggleMed(mid, '20:00');
+const fdReg = Store.medFullDays(7);
+assert(fdReg.days === 1 && fdReg.full === 1, '登记当天全核对：days===1 && full===1，实际 ' + fdReg.days + '/' + fdReg.full);
+/* 显式设 trackFrom=10天前模拟早登记，补记昨天一次后 7 天都计入 */
+Store.data.meds[0].trackFrom = Store.addDays(t, -10);
 Store.toggleMed(mid, '08:00', Store.addDays(t, -1));   // 昨天只吃了一次
-const fd = Store.medFullDays(7, at('21:00'));
-assert(fd.days === 7, '有药物时 7 天都应计入，实际 ' + fd.days);
+const fd = Store.medFullDays(7);
+assert(fd.days === 7, '早登记后 7 天都应计入，实际 ' + fd.days);
 assert(fd.full === 1, '只有今天全部核对，full 应为1，实际 ' + fd.full);
 
 /* --- 停药/重新开药：停药不删记录，重新服用保留旧疗程空档 --- */
@@ -332,7 +341,7 @@ assert(Store.medProgressToday().total === 0, '停用的药不应出现在今日�
 assert(Store.medStatusOn(t).total === 0, '停用后今天的应服次数应为0（不再天天显示漏服）');
 assert(Store.medStatusOn(stopDay).total === 2, '停药当天的应服次数仍应为2');
 const fdStop = Store.medFullDays(7);
-assert(fdStop.days === 4, '停药后 7 天窗口内只有 4 天该计入（今天往前到停药日），实际 ' + fdStop.days);
+assert(fdStop.days === 4, '7 天窗口里停药日及之前的 4 天计入，实际 ' + fdStop.days);
 /* 导出报告要把停用的药单独列出来，并写明吃到哪天 */
 const repStop = Store.exportReport();
 assert(/已停用的药/.test(repStop), '导出报告应有「已停用的药」小节');
@@ -349,7 +358,9 @@ assert(restarted === true, 'restartMed 应保存成功');
 assert(Store.data.meds.length === 2, '重新服用应创建新疗程并保留旧疗程');
 assert(Store.stoppedMeds().length === 1 && Store.activeMeds().length === 1, '重新服用后应同时保留旧停用疗程和新疗程');
 assert(Store.medsOn(Store.addDays(stopDay, 1)).length === 0, '停药到重新服用之间不应计为应服');
-assert(Store.medsOn(restartDay).length === 1 && Store.medProgressToday().total === 2, '新疗程开始后应重新进入核对');
+/* 新疗程 trackFrom=今天：重开日（昨天）在登记前，今天才重新进入核对 */
+assert(Store.medStatusOn(restartDay).total === 0 && Store.medStatusOn(restartDay).beforeTracking === true, '新疗程重开日（昨天）在 trackFrom 之前，total===0 且 beforeTracking===true');
+assert(Store.medsOn(t).length === 1 && Store.medProgressToday().total === 2, '新疗程今天起重新进入核对');
 assert(/已停用的药/.test(Store.exportReport()), '重新服用后旧停用疗程仍应保留在报告中');
 const oldCourse = Store.stoppedMeds()[0];
 assert(Store.canUndoStop(oldCourse.id) === false, '已有后续疗程时旧疗程不应允许撤销停用');
@@ -387,27 +398,24 @@ assert(Store.toggleMed(medA2.id, '09:00') === false, '不在服药时间表里�
 assert(Store.toggleMed(medA.id, '08:00') === false, '已停用的疗程今天不能核对');
 assert(Store.toggleMed(medA2.id, '08:00') === true && Store.isMedTaken(medA2.id, '08:00'), '今天在吃的药可以核对');
 
-/* 只算已到点的次数：早上看"最近 7 天"不能因为晚上那次还没到点就少一天 */
-Store.data.meds = []; Store.data.medLog = {};
+/* 统计口径（与线上一致，AGENTS 硬约定 8）：今天要全核对完才计入，没到点的不算"没吃到"——
+   早上 9 点看"最近 7 天"，不能因为晚上那次还没到点就少一天"全吃到"、拉低完成率 */
+Store.data.meds = []; Store.data.medLog = {}; Store.data.medLate = {};
 Store.save();
 Store.addMed({ name: '丙药', times: ['08:00', '20:00'], from: Store.addDays(t, -10) });
 const medC = Store.data.meds[0];
+medC.trackFrom = Store.addDays(t, -10);   // 模拟 10 天前就在本应用登记
+Store.save();
 for (let i = 1; i <= 6; i++) {
   Store.toggleMed(medC.id, '08:00', Store.addDays(t, -i));
   Store.toggleMed(medC.id, '20:00', Store.addDays(t, -i));
 }
-assert(Store.medFullDays(7, at('07:00')).days === 6, '早上 7 点今天一次都没到点，今天不计入');
-Store.toggleMed(medC.id, '08:00');
-assert(Store.adherence7d(at('09:00')) === 100, '早上 9 点：前 6 天全吃+今早已吃，完成率应为 100，实际 ' + Store.adherence7d(at('09:00')));
-assert(JSON.stringify(Store.medFullDays(7, at('09:00'))) === '{"full":7,"days":7}', '早上 9 点 7 天都应算全吃到，实际 ' + JSON.stringify(Store.medFullDays(7, at('09:00'))));
-assert(JSON.stringify(Store.medFullDays(7, at('21:00'))) === '{"full":6,"days":7}', '晚上 9 点 20:00 那次没核对，今天不算全吃到');
-assert(Store.adherence7d(at('21:00')) === 93, '晚上 9 点完成率应为 13/14≈93，实际 ' + Store.adherence7d(at('21:00')));
-const st9 = Store.medStatusOn(t, at('09:00'));
-assert(st9.total === 2 && st9.done === 1 && st9.dueTotal === 1 && st9.dueDone === 1, '今日状态：全天 2 次、到点 1 次且已核对');
-assert(st9.items[1].due === false && st9.items[0].due === true, '每项应标出到没到点');
-assert(Store.isDoseDue(t, '20:00', true, at('09:00')) === true, '提前核对的也算到点（提前吃了也算数）');
-assert(Store.medHistory(14, at('09:00'))[0].dueTotal === 1, 'medHistory 今天一行也按到点计算');
-assert(Store.medProgressToday().total === 2, '今日核对表仍按全天的次数（还差几次没核对）');
+Store.toggleMed(medC.id, '08:00');            // 今早那次吃了，晚上那次还没到
+assert(JSON.stringify(Store.medFullDays(7)) === '{"full":6,"days":6}', '今天没全核对：今天不计入，前 6 天都全吃到，实际 ' + JSON.stringify(Store.medFullDays(7)));
+assert(Store.adherence7d() === 100, '今天没全核对时完成率不被晚上那次拉低，实际 ' + Store.adherence7d());
+assert(Store.medProgressToday().total === 2 && Store.medProgressToday().done === 1, '今日核对表仍按全天的次数（还差几次没核对）');
+Store.toggleMed(medC.id, '20:00');
+assert(JSON.stringify(Store.medFullDays(7)) === '{"full":7,"days":7}', '今天全核对后计入');
 assert(/近7天服药完成率/.test(Store.exportReport()), '导出报告仍带完成率');
 
 /* 新增健康记录：过不了规范化就拒绝，不能显示"已保存"然后记录消失 */
@@ -556,6 +564,320 @@ exportRefused = false;
 try { Store.exportBackup(); } catch (_) { exportRefused = true; }
 assert(exportRefused, '普通导出也要拒绝无法导入的超限备份');
 Store.load();
+
+/* ============================================================
+   v0.2.32 新增断言：时间归属 / 补记 / 高频增删改查
+   （针对本次缺陷的断言在旧代码上应失败，反向验证见交付说明）
+   ============================================================ */
+function v32Fresh() {
+  localStorage.removeItem('strokeRehab.recovery.v1');
+  localStorage.removeItem('strokeRehab.v1');
+  Store.load();
+}
+const T = t;
+
+/* --- 用户场景：药 from=60天前、今天登记 → 登记前不计入 7/14 天统计与报告 --- */
+v32Fresh();
+Store.addMed({ name: '氯吡格雷', dose: '75mg', times: ['08:00'] });
+const v32med = Store.data.meds[0].id;
+Store.updateMed(v32med, { from: Store.addDays(T, -60) });
+assert(Store.data.meds[0].trackFrom === T, 'v32 今天登记的药 trackFrom=今天');
+assert(Store.medFullDays(7).days === 0 && Store.medFullDays(14).days === 0, 'v32 登记前的日子不计入 7/14 天统计');
+assert(Store.medAdherence(7) === null && Store.medAdherence(14) === null, 'v32 登记前不计入 → 依从率为 null');
+assert(!/近7天服药完成率/.test(Store.exportReport()), 'v32 尚无计入日时报告不写完成率');
+Store.toggleMed(v32med, '08:00');
+assert(Store.medFullDays(7).days === 1 && Store.medFullDays(7).full === 1, 'v32 今天核对后才计入');
+const v32rep = Store.exportReport();
+assert(/近7天服药完成率：100%（统计 1 天，登记前的日子不计入）/.test(v32rep), 'v32 报告完成率行含统计天数与说明');
+
+/* --- 今天未完成不计入 --- */
+v32Fresh();
+Store.addMed({ name: '双药', dose: 'x', times: ['08:00', '20:00'] });
+const v32m2 = Store.data.meds[0].id;
+Store.data.meds[0].from = Store.addDays(T, -3);
+Store.data.meds[0].trackFrom = Store.addDays(T, -3);
+Store.toggleMed(v32m2, '08:00');   // 今天只勾一半
+assert(Store.medFullDays(7).days === 3, 'v32 今天未全核对不计入，只剩过去 3 天，实际 ' + Store.medFullDays(7).days);
+Store.toggleMed(v32m2, '20:00');
+assert(Store.medFullDays(7).days === 4, 'v32 今天全核对后计入（四天）');
+
+/* --- toggleMed / checkAllMedsOn 拒绝 --- */
+v32Fresh();
+Store.addMed({ name: '甲药', dose: 'x', times: ['08:00'] });
+const v32m3 = Store.data.meds[0].id;
+Store.data.meds[0].from = Store.addDays(T, -5);
+Store.data.meds[0].trackFrom = Store.addDays(T, -2);
+assert(Store.toggleMed(v32m3, '08:00', Store.addDays(T, 1)) === false, 'v32 toggleMed 拒绝未来日期');
+assert(Store.toggleMed(v32m3, '08:00', Store.addDays(T, -4)) === false, 'v32 toggleMed 拒绝登记前的日子');
+assert(Store.toggleMed(v32m3, '11:11', T) === false, 'v32 toggleMed 拒绝未排期的时间点');
+assert(Store.checkAllMedsOn(Store.addDays(T, 1)) === false, 'v32 checkAllMedsOn 拒绝未来');
+assert(Store.checkAllMedsOn(Store.addDays(T, -4)) === false, 'v32 checkAllMedsOn 拒绝登记前（当天无 items）');
+assert(Store.checkAllMedsOn(Store.addDays(T, -1)) === true, 'v32 checkAllMedsOn 一次补齐昨天');
+assert(Store.medStatusOn(Store.addDays(T, -1)).done === Store.medStatusOn(Store.addDays(T, -1)).total, 'v32 checkAllMedsOn 后当天全核对');
+
+/* --- 改时间点后的版本（timesHistory） --- */
+v32Fresh();
+Store.addMed({ name: '他汀', dose: 'x', times: ['08:00'] });
+const v32m4 = Store.data.meds[0].id;
+Store.data.meds[0].from = Store.addDays(T, -10);
+Store.data.meds[0].trackFrom = Store.addDays(T, -10);
+Store.toggleMed(v32m4, '08:00', Store.addDays(T, -5));   // 过去按旧时间点核对
+Store.updateMed(v32m4, { times: ['20:00'] });            // 改时间点
+assert(Store.data.meds[0].timesHistory.length === 1, 'v32 改时间点应生成一条版本');
+assert(Store.data.meds[0].timesHistory[0].until === Store.addDays(T, -1) && Store.data.meds[0].timesHistory[0].times[0] === '08:00', 'v32 版本 until=昨天、存旧时间点');
+assert(Store.medStatusOn(Store.addDays(T, -5)).items[0].time === '08:00', 'v32 过去日子仍按旧时间点');
+assert(Store.medStatusOn(Store.addDays(T, -5)).items[0].taken === true, 'v32 改时间点后过去已勾仍计入');
+assert(Store.medStatusOn(T).items[0].time === '20:00', 'v32 今天用新时间点');
+assert(Store.toggleMed(v32m4, '08:00', Store.addDays(T, -3)) === true, 'v32 可按旧时间点补记改前的日子');
+Store.updateMed(v32m4, { times: ['21:00'] });            // 同日再改一次
+assert(Store.data.meds[0].timesHistory.length === 1, 'v32 同日改两次仅一条版本');
+Store.updateMed(v32m4, { note: '饭后服' });               // 只改备注
+assert(Store.data.meds[0].timesHistory.length === 1, 'v32 只改备注不加版本');
+/* 登记当天改不留版本 */
+v32Fresh();
+Store.addMed({ name: '今日药', dose: 'x', times: ['08:00'] });
+const v32m5 = Store.data.meds[0].id;
+Store.updateMed(v32m5, { times: ['09:00'] });
+assert(Store.data.meds[0].timesHistory.length === 0, 'v32 登记当天改时间点不留版本');
+
+/* --- timesHistory 消每与 51 条拒绝 --- */
+const thEnv = th => JSON.stringify({ app: 'stroke-rehab-assistant', schema: 1, data: { meds: [{ id: 'm1', name: '药', times: ['08:00'], timesHistory: th }] } });
+let th51 = false;
+try { Store.parseBackup(thEnv(Array.from({ length: 51 }, (_, i) => ({ until: '2026-01-0' + (i % 9 + 1), times: ['08:00'] })))); }
+catch (e) { th51 = /服药时间调整次数/.test(e.message); }
+assert(th51, 'v32 timesHistory 超 50 条应拒绝且文案含“服药时间调整次数”');
+const thClean = Store.parseBackup(thEnv([
+  { until: 'bad-date', times: ['08:00'] },
+  { until: '2026-01-01', times: ['bad', '08:00'] },
+  { until: '2026-01-01', times: ['09:00'] },   // 重复 until 去重
+  { until: '2026-01-02', times: [] },           // 空 times 丢弃
+]));
+const thm = thClean.data.meds[0].timesHistory;
+assert(thm.length === 1 && thm[0].until === '2026-01-01' && thm[0].times.join(',') === '08:00', 'v32 timesHistory 消每：丢非法 until/时间/空、按 until 去重');
+
+/* --- 停用药开始日晚于停用日被拒且仍停用；疗程重叠/接受 --- */
+v32Fresh();
+Store.addMed({ name: '停用药', dose: 'x', times: ['08:00'] });
+const v32m6 = Store.data.meds[0].id;
+Store.data.meds[0].from = Store.addDays(T, -10);
+Store.data.meds[0].trackFrom = Store.addDays(T, -10);
+Store.stopMed(v32m6, Store.addDays(T, -3));
+assert(Store.updateMed(v32m6, { from: Store.addDays(T, -1) }) === false, 'v32 开始日晚于停用日被拒');
+assert(Store.isMedStopped(Store.data.meds[0]) && Store.data.meds[0].to === Store.addDays(T, -3), 'v32 被拒后药仍停用');
+assert(Store.addMed({ name: '重叠疗程', times: ['08:00'], previousCourseId: v32m6, from: Store.addDays(T, -3) }) === false, 'v32 新疗程与上一疗程重叠被拒');
+const nextDay = Store.addDays(T, -2);   // 停药次日（早于今天）
+assert(Store.addMed({ name: '新疗程', times: ['08:00'], previousCourseId: v32m6, from: nextDay }) === true, 'v32 停药次日开始被接受（可早于今天）');
+
+/* --- 训练补记/撤销 --- */
+v32Fresh();
+assert(Store.logExercise('bobath', Store.addDays(T, -1)) === true, 'v32 可补记昨天训练');
+assert(Store.logExercise('bobath', Store.addDays(T, 1)) === false, 'v32 训练未来被拒');
+Store.logExercise('bobath', T);
+assert(Store.streak() === 2, 'v32 补记昨天后 streak 接上，实际 ' + Store.streak());
+assert(Store.unlogExercise('bobath', Store.addDays(T, -1)) === true, 'v32 撤销昨天成功');
+assert(!(Store.addDays(T, -1) in Store.data.exerciseLog), 'v32 撤销后空天删日期键');
+assert(Store.unlogExercise('bobath', Store.addDays(T, -9)) === true && Store.exercisesOn(Store.addDays(T, -9)).length === 0, 'v32 没打过的日撤销返回 true、不报错');
+
+/* --- updateVital / addVital --- */
+v32Fresh();
+Store.addVital('bp', { date: Store.addDays(T, -1), time: '08:00', sys: 120, dia: 80 });
+Store.addVital('bp', { date: Store.addDays(T, -1), time: '08:00', sys: 130, dia: 85 });
+const vId = Store.data.vitals.bp[0].id, vIdx = Store.data.vitals.bp.findIndex(v => v.id === vId);
+assert(Store.updateVital('bp', vId, { sys: 145 }) === true, 'v32 updateVital 成功');
+assert(Store.data.vitals.bp[vIdx].id === vId && Store.data.vitals.bp[vIdx].sys === 145, 'v32 updateVital 保 id 与数组位置');
+assert(Store.data.vitals.bp.length === 2, 'v32 updateVital 不改变条数');
+assert(Store.updateVital('bp', 'nope', { sys: 100 }) === false, 'v32 updateVital 找不到被拒');
+assert(Store.updateVital('bp', vId, { date: Store.addDays(T, 1) }) === false, 'v32 updateVital 未来日期被拒');
+assert(Store.updateVital('bp', vId, { sys: 'oops' }) === false, 'v32 updateVital 非法值被拒');
+assert(Store.addVital('bp', { date: Store.addDays(T, 1), sys: 120, dia: 80 }) === false, 'v32 addVital 未来日期被拒');
+
+/* --- 备份往返保留 trackFrom/timesHistory + 规范化幂等 --- */
+v32Fresh();
+Store.addMed({ name: '备份药', dose: 'x', times: ['08:00'] });
+const v32m7 = Store.data.meds[0].id;
+Store.data.meds[0].from = Store.addDays(T, -10);
+Store.data.meds[0].trackFrom = Store.addDays(T, -8);
+Store.updateMed(v32m7, { times: ['20:00'] });
+Store.save();
+const v32round = Store.parseBackup(Store.exportBackup());
+assert(v32round.data.meds[0].trackFrom === Store.addDays(T, -8), 'v32 备份往返保留 trackFrom');
+assert(v32round.data.meds[0].timesHistory.length === 1, 'v32 备份往返保留 timesHistory');
+assert(JSON.stringify(v32round.data) === JSON.stringify(Store.data), 'v32 规范化幂等：备份往返与当前数据逐字相等');
+
+/* --- 旧数据推断 trackFrom：最早核对日 → 今天（不回退 from）；load() 落盘固定 --- */
+v32Fresh();
+// F1：from 可被旧表单回填成更早的日期，不是登记日，故不参与推断。
+// ①有 from 有核对→最早核对日（不取更早的 from）；②有 from 无核对→今天；③无 from 有核对→最早核对日；④无 from 无核对→今天
+const legacyRaw = JSON.stringify({
+  meds: [
+    { id: 'a', name: '有from有核对', times: ['08:00'], from: Store.addDays(T, -30) },
+    { id: 'b', name: '有from无核对', times: ['08:00'], from: Store.addDays(T, -30) },
+    { id: 'c', name: '无from有核对', times: ['08:00'] },
+    { id: 'd', name: '无from无核对', times: ['08:00'] },
+  ],
+  medLog: { [Store.addDays(T, -20)]: { 'a@08:00': true, 'c@08:00': true }, [Store.addDays(T, -15)]: { 'a@08:00': true } },
+});
+localStorage.setItem('strokeRehab.v1', legacyRaw);
+Store.load();
+const legMeds = Store.data.meds;
+assert(legMeds.find(m => m.id === 'a').trackFrom === Store.addDays(T, -20), 'v32 有 from 有核对 →最早核对日（from 可被回填，不当登记日）');
+assert(legMeds.find(m => m.id === 'b').trackFrom === T, 'v32 有 from 无核对 →今天');
+assert(legMeds.find(m => m.id === 'c').trackFrom === Store.addDays(T, -20), 'v32 无 from 有核对 →最早核对日');
+assert(legMeds.find(m => m.id === 'd').trackFrom === T, 'v32 无 from 无核对 →今天');
+// P1：推断结果必须在 load() 里落盘固定（不再是“load 不写盘”）
+const persisted = JSON.parse(localStorage.getItem('strokeRehab.v1')).meds;
+assert(persisted.find(m => m.id === 'a').trackFrom === Store.addDays(T, -20)
+  && persisted.find(m => m.id === 'd').trackFrom === T, 'v32 load() 将推断的 trackFrom 落盘固定');
+
+/* --- F1 回填开始日期的老药：from=-90、首核对=-3、此后每天核对；装应用前的日子不得出现漏服 --- */
+v32Fresh();
+const bfLog = {};
+for (let i = 0; i <= 3; i++) bfLog[Store.addDays(T, -i)] = { 'bf@08:00': true };  // 今天回溯到 3 天前
+localStorage.setItem('strokeRehab.v1', JSON.stringify({
+  meds: [{ id: 'bf', name: '回填开始日期的老药', times: ['08:00'], from: Store.addDays(T, -90) }],
+  medLog: bfLog,
+}));
+Store.load();
+assert(Store.data.meds[0].trackFrom === Store.addDays(T, -3), 'F1 回填药 trackFrom=最早核对日(-3)、不是 from(-90)');
+assert(Store.medStatusOn(Store.addDays(T, -10)).beforeTracking === true, 'F1 装应用前(-10) beforeTracking=true');
+assert(Store.medStatusOn(Store.addDays(T, -10)).total === 0, 'F1 装应用前(-10) 应服次数=0（不算漏服）');
+assert(Store.checkAllMedsOn(Store.addDays(T, -10)) === false, 'F1 装应用前(-10) 不开放补记');
+const bfAd = Store.medAdherence(14);
+assert(bfAd && bfAd.days === 4, 'F1 近14天只含 -3 起的 4 个计入日（-3~今天），实际 ' + (bfAd && bfAd.days));
+
+/* --- P1 跨天：第二天重新读取，登记日必须不变（不随 today() 往后漂） --- */
+v32Fresh();
+// 最容易漂的情形：无 from、无核对的老药，首次 load 推断为今天
+localStorage.setItem('strokeRehab.v1', JSON.stringify({ meds: [{ id: 'z', name: '无依据老药', times: ['08:00'] }] }));
+Store.load();
+const day1TrackFrom = Store.data.meds[0].trackFrom;
+assert(day1TrackFrom === T, 'P1 首次 load 无依据老药 trackFrom=今天');
+assert(JSON.parse(localStorage.getItem('strokeRehab.v1')).meds[0].trackFrom === T, 'P1 load 已把推断结果落盘（否则第二天会漂）');
+// 模拟“第二天”：把系统日期推到明天后重新 load
+const RealDate = Date;
+const tomorrow = Store.addDays(T, 1);
+global.Date = class extends RealDate {
+  constructor(...args) { super(...(args.length ? args : [tomorrow + 'T12:00:00'])); }
+  static now() { return new RealDate(tomorrow + 'T12:00:00').getTime(); }
+};
+assert(Store.today() === tomorrow, 'P1 日期 mock 生效（今天已是明天）');
+Store.load();
+global.Date = RealDate;
+assert(Store.data.meds[0].trackFrom === day1TrackFrom, 'P1 第二天重新读取，登记日必须不变（已落盘，不重推）');
+v32Fresh();
+
+/* --- 未来 trackFrom 钳到今天 --- */
+v32Fresh();
+localStorage.setItem('strokeRehab.v1', JSON.stringify({ meds: [{ id: 'x', name: '未来药', times: ['08:00'], from: T, trackFrom: Store.addDays(T, 5) }] }));
+Store.load();
+assert(Store.data.meds[0].trackFrom === T, 'v32 未来 trackFrom 钳到今天');
+v32Fresh();
+
+/* --- P2#1：补记单独标记 medLate（medLog 仍只存 true） --- */
+v32Fresh();
+Store.addMed({ name: '补记药', dose: 'x', times: ['08:00', '12:00', '20:00'] });
+const lateMed = Store.data.meds[0].id;
+Store.data.meds[0].from = Store.addDays(T, -10);
+Store.data.meds[0].trackFrom = Store.addDays(T, -10);
+const yLate = Store.addDays(T, -1);
+Store.toggleMed(lateMed, '08:00', yLate);
+assert(Store.data.medLate[yLate] && Store.data.medLate[yLate][lateMed + '@08:00'] === true, 'P2#1 昨天 toggleMed 写 medLate');
+assert(Store.data.medLog[yLate][lateMed + '@08:00'] === true, 'P2#1 medLog 仍记 true');
+Store.toggleMed(lateMed, '08:00', yLate);   // 再次 toggle 取消
+assert(!Store.data.medLog[yLate] && !Store.data.medLate[yLate], 'P2#1 取消核对后 medLog/medLate 同删空日期键');
+Store.toggleMed(lateMed, '08:00', T);   // 今天核对
+assert(Store.data.medLog[T][lateMed + '@08:00'] === true, 'P2#1 今天核对写 medLog');
+assert(!Store.data.medLate[T], 'P2#1 今天的核对不算补记（medLate 无）');
+
+/* checkAllMedsOn：昨天已有 1 项当日核对（非补记）、另 2 项未核对 → 一键只给新勾的 2 项写 medLate */
+v32Fresh();
+Store.addMed({ name: '一键药', times: ['08:00', '12:00', '20:00'] });
+const allMed = Store.data.meds[0].id;
+Store.data.meds[0].from = Store.addDays(T, -10);
+Store.data.meds[0].trackFrom = Store.addDays(T, -10);
+const y2 = Store.addDays(T, -1);
+Store.data.medLog[y2] = { [allMed + '@08:00']: true };   // 模拟当天已核对 08:00（不写 medLate）
+Store.checkAllMedsOn(y2);
+assert(Store.medStatusOn(y2).done === 3, 'P2#1 checkAllMedsOn 补齐三项');
+const lateKeys = Object.keys(Store.data.medLate[y2] || {});
+assert(lateKeys.length === 2 && !lateKeys.includes(allMed + '@08:00'), 'P2#1 checkAllMedsOn 只给新勾的 2 项写 medLate，原已核对不动');
+
+/* uncheckMedsOn（撤销一键补齐）：只回退传入的 2 项、保留原 08:00、清 medLate、一次 save；再撤无副作用 */
+const added2 = [{ medId: allMed, time: '12:00' }, { medId: allMed, time: '20:00' }];
+assert(Store.uncheckMedsOn(y2, added2) === true, 'P2#1 uncheckMedsOn 撤销成功');
+assert(Store.medStatusOn(y2).done === 1, 'P2#1 uncheckMedsOn 只回退新勾的 2 项');
+assert(Store.isMedTaken(allMed, '08:00', y2), 'P2#1 uncheckMedsOn 保留原已核对项');
+assert(!Store.data.medLate[y2], 'P2#1 uncheckMedsOn 清掉本次补记标记');
+assert(Store.uncheckMedsOn(y2, added2) === true, 'P2#1 uncheckMedsOn 再撤已无可撤仍返回 true（无副作用）');
+assert(Store.medStatusOn(y2).done === 1, 'P2#1 uncheckMedsOn 再撤不改动数据');
+assert(Store.uncheckMedsOn(Store.addDays(T, 1), added2) === false, 'P2#1 uncheckMedsOn 拒绝未来日期');
+assert(Store.uncheckMedsOn(y2, []) === true, 'P2#1 uncheckMedsOn 空列表视作成功、不写盘');
+
+/* 撤销时写盘失败：必须返回 false 且内存回滚 —— 数据仍是「全吃到」、补记标记不丢，
+   与画面（历史行「全吃到 ✓」）保持一致（硬约定 §6「补记标记与一键撤销」写盘失败一支）。 */
+Store.checkAllMedsOn(y2);                                        // 重新补齐三项，作为最近一次成功保存
+assert(Store.medStatusOn(y2).done === 3, 'P2#1 写盘失败测试前先补齐三项');
+const lateBeforeFail = Object.keys(Store.data.medLate[y2] || {}).length;
+failWrites = true;
+assert(Store.uncheckMedsOn(y2, added2) === false, 'P2#1 撤销写盘失败返回 false');
+failWrites = false;
+assert(Store.medStatusOn(y2).done === 3, 'P2#1 撤销写盘失败后内存回滚，仍是全核对');
+assert(Object.keys(Store.data.medLate[y2] || {}).length === lateBeforeFail, 'P2#1 撤销写盘失败后补记标记不丢');
+
+/* 规范化丢弃 medLog 中不存在的孤立 medLate */
+v32Fresh();
+localStorage.setItem('strokeRehab.v1', JSON.stringify({
+  meds: [{ id: 'o', name: '孤立药', times: ['08:00'], trackFrom: Store.addDays(T, -5) }],
+  medLog: { [Store.addDays(T, -1)]: { 'o@08:00': true } },
+  medLate: { [Store.addDays(T, -1)]: { 'o@08:00': true, 'o@20:00': true }, [Store.addDays(T, -2)]: { 'o@08:00': true } },
+}));
+Store.load();
+assert(Store.data.medLate[Store.addDays(T, -1)] && Store.data.medLate[Store.addDays(T, -1)]['o@08:00'] === true, 'P2#1 medLog 有对应的 medLate 保留');
+assert(!Store.data.medLate[Store.addDays(T, -1)]['o@20:00'], 'P2#1 medLog 无对应的孤立 medLate 键丢弃');
+assert(!Store.data.medLate[Store.addDays(T, -2)], 'P2#1 整天无对应 medLog 的 medLate 丢弃');
+
+/* 备份导出→恢复往返保留 medLate */
+v32Fresh();
+Store.addMed({ name: '备份补记药', times: ['08:00'] });
+const bkMed = Store.data.meds[0].id;
+Store.data.meds[0].from = Store.addDays(T, -5);
+Store.data.meds[0].trackFrom = Store.addDays(T, -5);
+Store.toggleMed(bkMed, '08:00', Store.addDays(T, -1));
+const bkRound = Store.parseBackup(Store.exportBackup());
+assert(bkRound.data.medLate[Store.addDays(T, -1)][bkMed + '@08:00'] === true, 'P2#1 备份往返保留 medLate');
+
+/* 超限 medLate 被 validateBackupLimits 拒绝 */
+const lateOverEnv = n => {
+  const day = {};
+  for (let i = 0; i < n; i++) day['m' + i + '@08:00'] = true;
+  return JSON.stringify({ app: 'stroke-rehab-assistant', schema: 1, data: { meds: [{ id: 'm1', name: '药', times: ['08:00'] }], medLog: { '2026-01-01': { 'm1@08:00': true } }, medLate: { '2026-01-01': day } } });
+};
+let lateOver = false;
+try { Store.parseBackup(lateOverEnv(Store.backupLimits.medChecksPerDay + 1)); }
+catch (e) { lateOver = /服药补记数量/.test(e.message); }
+assert(lateOver, 'P2#1 超限 medLate 被 validateBackupLimits 拒绝（文案含“服药补记数量”）');
+
+/* medAdherence(n).late 数值正确 + exportReport 含/不含“事后补记” */
+v32Fresh();
+Store.addMed({ name: '依从补记药', times: ['08:00', '20:00'] });
+const adMed = Store.data.meds[0].id;
+Store.data.meds[0].from = Store.addDays(T, -3);
+Store.data.meds[0].trackFrom = Store.addDays(T, -3);
+Store.toggleMed(adMed, '08:00', Store.addDays(T, -1));
+Store.toggleMed(adMed, '20:00', Store.addDays(T, -1));
+Store.toggleMed(adMed, '08:00', Store.addDays(T, -2));
+const adL = Store.medAdherence(7);
+assert(adL.late === 3, 'P2#1 medAdherence(7).late=计入日内补记次数(3)，实际 ' + adL.late);
+assert(/其中 3 次为事后补记/.test(Store.exportReport()), 'P2#1 报告 late>0 时含事后补记次数');
+v32Fresh();
+Store.addMed({ name: '无补记药', times: ['08:00'] });
+const nlMed = Store.data.meds[0].id;
+Store.data.meds[0].from = Store.addDays(T, -3);
+Store.data.meds[0].trackFrom = Store.addDays(T, -3);
+Store.toggleMed(nlMed, '08:00', T);   // 只今天核对，非补记
+assert(!/事后补记/.test(Store.exportReport()), 'P2#1 无补记时报告不含事后补记');
+assert(Store.medAdherence(7).late === 0, 'P2#1 无补记时 late=0');
+v32Fresh();
 
 if (failed) {
   console.error(`❌ ${failed} 项断言失败`);

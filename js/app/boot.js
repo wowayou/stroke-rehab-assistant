@@ -18,7 +18,6 @@ const RENDERERS = {
    而且一保存就被冲突保护拦下。所以切回本页、拿到焦点、别的页面写过数据、
    以及开着时每分钟一次，都检查"日子换没换、数据换没换"，换了就重画。
    有浮层开着时先不动它（正在填的表单不能被冲掉），等浮层全关了再重画。 */
-let renderedDay = '';
 let refreshPending = false;
 function refreshIfStale() {
   const synced = Store.reloadIfChanged();
@@ -28,7 +27,15 @@ function refreshIfStale() {
     settingsRevision++;
   }
   if (!synced && !refreshPending && Store.today() === renderedDay) return false;
-  if (topOverlay()) { refreshPending = true; renderStorageNotice(); return true; }
+  const top = topOverlay();
+  if (top) {
+    /* 绑定到某一天的弹窗（如"今天的服药核对"）跨天后，里面点的会记到已经过去的昨天，
+       且标题仍写"今天"。关掉它，逼用户回到今天重开——比默默改标题更不易误操作。 */
+    if (top._dayBound && top._dayBound !== Store.today()) dismissTopOverlay();
+    refreshPending = true;
+    renderStorageNotice();
+    return true;
+  }
   refreshPending = false;
   render(currentView, { keepScroll: true, preserveInputs: true });
   return true;
@@ -149,9 +156,17 @@ function init() {
       const items = [...top.querySelectorAll('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]')]
         .filter(el => el.tabIndex >= 0 && el.getClientRects().length);
       const first = items[0], last = items[items.length - 1];
-      if (e.shiftKey && (!items.includes(document.activeElement) || document.activeElement === first)) {
-        e.preventDefault(); if (last) last.focus();
-      } else if (!e.shiftKey && (!items.includes(document.activeElement) || document.activeElement === last)) {
+      /* 撤销提示条在弹窗外（DOM 里还排在弹窗之前），原生 Tab 到不了；把它接到焦点环末尾，
+         键盘/读屏在历史弹窗开着时也够得到撤销键（DESIGN-SYSTEM 承诺“可键盘聚焦”，AC4.3）。 */
+      const undo = document.querySelector('#toast.show.has-action .toast-action:not(:disabled)');
+      const active = document.activeElement;
+      if (active === undo) {
+        e.preventDefault(); const to = e.shiftKey ? last : first; if (to) to.focus();
+      } else if (e.shiftKey && (!items.includes(active) || active === first)) {
+        e.preventDefault(); const to = undo || last; if (to) to.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault(); const to = undo || first; if (to) to.focus();
+      } else if (!e.shiftKey && !items.includes(active)) {
         e.preventDefault(); if (first) first.focus();
       }
     }
@@ -159,7 +174,8 @@ function init() {
 
   document.addEventListener('focusin', e => {
     const top = topOverlay();
-    if (top && !top.contains(e.target)) top.querySelector('.m-title, .t-name').focus({ preventScroll: true });
+    /* #toast 例外：撤销提示条不受焦点圈拉回（它是弹窗外唯一允许获得焦点的东西）。 */
+    if (top && !top.contains(e.target) && !e.target.closest('#toast')) top.querySelector('.m-title, .t-name').focus({ preventScroll: true });
   });
   if (!Store.guideSeen() && !Store.storageStatus()) openGuide();
   registerOffline();

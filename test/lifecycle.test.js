@@ -258,18 +258,18 @@ const exceptionsOf = cdp => cdp.events.filter(e => e.method === 'Runtime.excepti
       const t = Store.today();
       Store.addMed({ name: '到点测试药', times: ['08:00', '20:00'], from: Store.addDays(t, -6) });
       const id = Store.data.meds[0].id;
+      Store.data.meds[0].trackFrom = Store.addDays(t, -6); Store.save();   // 模拟 6 天前就在本应用登记
       for (let i = 1; i <= 6; i++) { Store.toggleMed(id, '08:00', Store.addDays(t, -i)); Store.toggleMed(id, '20:00', Store.addDays(t, -i)); }
     })()`);
     await cdp.eval('__goto(0, 9, 0); App.go("today"); App.go("meds");');
     await click(cdp, '.med-check');   // 今早 08:00 那次
     await waitFor(cdp, "document.body.textContent.includes('每天该吃的都核对到了')", '早上看 7 天都算吃全');
     await click(cdp, '#btn-med-hist');
-    await waitFor(cdp, "document.querySelector('.dose-dot.pending')", '历史里晚上那次显示为还没到时间');
-    assert(await cdp.eval("document.querySelector('.day-row .day-score').textContent === '到点的都吃了'"), '今天一行不说"差 1 次"');
+    await waitFor(cdp, "document.querySelector(`#med-day-${Store.today()} .day-score`)?.textContent === '还有 1 次'", '今天一行说"还有 1 次"而不是"没记上"');
     assert(await cdp.eval("document.querySelector('.modal-panel').textContent.includes('完成率 100%')"), '14 天完成率只算到点的');
     await click(cdp, '.modal-close');
     await waitFor(cdp, "!document.querySelector('.modal-mask')", '关闭服药历史');
-    console.log('PASS  早上 9 点：还没到点的晚间药不算漏服（7 天卡片、历史圆点、完成率）');
+    console.log('PASS  早上 9 点：还没到点的晚间药不算漏服（7 天卡片、历史当天一行、完成率）');
 
     /* ③b 已停用的药改"开始日期"晚于停用日：以前会悄悄复活回每日核对；现在必须拦下并说明原因 */
     await cdp.eval(`(() => {
@@ -329,7 +329,13 @@ const exceptionsOf = cdp => cdp.events.filter(e => e.method === 'Runtime.excepti
     await click(cdp, '#bp-save');
     await waitFor(cdp, "document.querySelector('#bp-date-error')", '将来日期报错');
     await cdp.eval("App.go('today'); App.go('records');");
-    await cdp.eval("document.querySelector('#bp-sys').value = '80'; document.querySelector('#bp-dia').value = '120';");
+    /* 共用校验先查日期：先把上一步故意填的将来日期改回今天，才轮得到高低压的检查 */
+    await cdp.eval(`(() => {
+      const d = document.querySelector('#bp-date');
+      d.value = Store.today();
+      d.dispatchEvent(new Event('change', { bubbles: true }));
+      document.querySelector('#bp-sys').value = '80'; document.querySelector('#bp-dia').value = '120';
+    })()`);
     await click(cdp, '#bp-save');
     await waitFor(cdp, "document.querySelector('#bp-dia-error')", '高低压填反报错');
     assert.strictEqual(await cdp.eval('Store.data.vitals.bp.length'), 2, '被拦下的不得写入');

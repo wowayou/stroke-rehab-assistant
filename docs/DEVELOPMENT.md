@@ -16,8 +16,10 @@
 | 数据结构、校验、统计口径 | `js/storage.js`：`normalizeState` / `medProblem` / `medCountOn` | §5 · §6 storage · 硬约定 7、8、16 | storage |
 | 某个页面的显示与交互 | `js/app/` 下对应的一个文件：`today.js` `train.js` `records.js` `meds.js` `learn.js` `settings.js` `backup.js`，文件内搜 `【区】` | `js/app/core.js` 头部的文件地图 · DESIGN-SYSTEM | overlay · settings · smoke |
 | 加弹窗/浮层 | `js/app/overlay.js`：`openModal()`、`overlayPush()` | §6 应用层 浮层 · 硬约定 10 | overlay --stress |
+| 补记服药/训练、修改健康记录 | `js/app/meds.js` 的 `openMedDay()`、`js/app/train.js` 的 `openExerciseDay()`、`js/app/records.js` 的 `openVitalEdit()` | 硬约定 8、18 · DESIGN-SYSTEM §4 | storage · overlay |
+| 删除确认、回车跳下一框、撤销提示条 | `js/app/core.js` 的 `confirmInPlace()`、`bindEnterFlow()`、`toast()` | 硬约定 18 · DESIGN-SYSTEM §3 | overlay |
 | 点一下就生效的设置 | `js/app/core.js`：`segGroupHTML` / `bindSegGroup` / `commitProfile` | 硬约定 9 | settings |
-| 跨天、锁屏计时、多页面同步 | `js/app/boot.js` 的 `refreshIfStale()`、`js/app/records.js` 的 `whenValue()`、`js/app/train.js` 的 `openTrainer()` 计时段 | §6 应用层 · 硬约定 15 | lifecycle |
+| 跨天、锁屏计时、多页面同步 | `js/app/boot.js` 的 `refreshIfStale()`、`js/app/records.js` 的 `whenOf()`、`js/app/train.js` 的 `openTrainer()` 计时段 | §6 应用层 · 硬约定 15 | lifecycle |
 | 备份、恢复、加密、粘贴恢复 | `storage.js` 备份段 + `js/app/backup.js` | §5 隐私边界 · DESIGN-SYSTEM §5 | storage · encryption · overlay · backup-stress · compat |
 | 离线缓存 | `sw.js`、`_headers` 的 `/sw.js` 规则 | §6 sw.js | sw |
 | 老手机、微信内置浏览器 | 语法上限、`js/boot-check.js`、`js/app/core.js` 的 `IN_WECHAT` | §6 兼容性 · 硬约定 17 | contracts · compat |
@@ -139,12 +141,17 @@ data-exercises.js → data-articles.js → storage.js → charts.js → games.js
   meds: [                // 药物清单
     // from = 开始吃的日期（新登记默认当天，避免把登记之前的日子算成漏服）
     // to   = 最后一次服药的日期（含当天），'' 表示还在吃
+    // trackFrom = 在本应用登记那天（v0.2.32）；计数起点 = max(from, trackFrom)，登记前不算漏服/不补记。旧数据缺字时由 normalizeState 推断（最早核对日 → 今天，**不回退 from**：线上表单的 from 可被回填、不等于登记日），结果由 load() 立即落盘固定（否则无核对的药会每天重算成今天、漏服永不计入）
+    // timesHistory = [{until:'YYYY-MM-DD', times:['HH:MM']}]（v0.2.32）；改服药时间点时把旧时间点归档，过去日期按当时的时间点算（timesOn）；上限 50 条。剂量/名称改动不留版本（只影响显示）
     // 停药只写 to、**不删记录**：删了复诊查不到吃过什么，留着不管又会天天算漏服。
-    // 所有服药计数都走 Store.medsOn(date)，所以停药/加药不影响历史日期的分母。
-    { id, name, dose, times: ['08:00','20:00'], note, from: 'YYYY-MM-DD', to: '', previousCourseId: '' }
+    // 所有服药计数都走 Store.medsOn(date) × timesOn(m,date)，所以停药/加药不影响历史日期的分母。
+    { id, name, dose, times: ['08:00','20:00'], note, from: 'YYYY-MM-DD', to: '', trackFrom: 'YYYY-MM-DD', timesHistory: [], previousCourseId: '' }
   ],
   medLog: {              // 服药核对记录
     'YYYY-MM-DD': { '<medId>@<HH:MM>': true }
+  },
+  medLate: {             // 事后补记标记（v0.2.32 P2#1）：与 medLog 并行，date<today() 时的核对才写。
+    'YYYY-MM-DD': { '<medId>@<HH:MM>': true }   // medLog 仍只存 true；旧版读新数据只丢标记，核对不受影响
   },
   vitals: {
     bp:      [{ id, date, time, sys, dia, pulse }],   // 血压
@@ -181,7 +188,7 @@ data-exercises.js → data-articles.js → storage.js → charts.js → games.js
 - **即时生效型设置必须即时落盘（v0.2.25，加这类偏好时必须照做）**：字号、语速这类"点一下就看到/听到效果"的偏好，**不能挂在「保存设置」按钮上**。设置弹窗有 ✕、安卓返回键、Esc、点遮罩四种关法，只有一种会走保存按钮——挂在保存上等于四分之三的关法都会丢设置。两条规则：① 点一下立刻写 `Store`（走 `commitProfile()`，同训练页阶段 chip 的 `Store.save()` 范式）；② 选中态**只从 `Store` 派生**（`segGroupHTML()` 渲染 + `bindSegGroup({ current, commit })` 重刷），绝不用 DOM 上残留的 `.active` 反推真值。用 `.active` 反推是 v0.2.25 修掉的那个 bug 的根源：DOM 与 `Store` 成了两个真相来源，点完特大再用 ✕ 关掉，字号已生效但没落盘，重开回显"标准"、刷新后字号直接掉回标准。相关回归必须跑 `node test/settings.test.js`。
 - **同类条目用分组列表，不要一条一张卡（v0.2.26，加列表/按钮时必须照做）**：同一页出现三个以上同构条目（训练动作、科普文章）时，用「分组标题 + 一张卡内分行」（`.section-label` + `.list-group` / `#ex-list` + `.ex-item`），不要每条一张带阴影的浮动卡片——十几张同款卡叠起来是"卡片墙"，看不出哪项是今天该做的。按钮分三级：**实心蓝（`.btn`）每屏只允许一个主操作**（保存、拨 120），列表行里重复出现的操作用浅蓝（`.ex-start` / `.ci-action`，`--primary-soft` 底 + `--primary-dark` 字，对比度约 6.4:1），完成态用浅绿。一屏六七个实心蓝按钮会让真正的主操作消失在其中。触控目标仍是 48px 起，分级只改颜色不改尺寸。
 - **重渲染不要跳页首**：`render(view, { keepScroll })`。切页用默认（回顶部），"数据变了重渲染"（如训练打卡）传 `keepScroll: true`——否则在训练页往下翻着练，练完一个就被弹回顶部。
-- **跨天与跨页面（v0.2.32，硬约定 15）**：手机切后台不重载页面——晚上打开的用药页第二天切回来，曾显示昨天全打了勾。`refreshIfStale()` 在切回本页（`visibilitychange`/`pageshow`/`focus`）、别的页面写过数据（`storage` 事件）和开着时每分钟检查一次：日子换了或 `Store.reloadIfChanged()` 读到新数据就重画（保留滚动与记录草稿）；有浮层开着时只记 `refreshPending`，最后一层关掉再画。用药核对点击前也先检查一次，旧屏幕上的那一下不记账。记录表单的日期时间默认"跟着现在走"（`whenValue()`，表单上 `data-when="set"` 才按用户所填），草稿也不冻结旧时刻。
+- **跨天与跨页面（v0.2.32，硬约定 15）**：手机切后台不重载页面——晚上打开的用药页第二天切回来，曾显示昨天全打了勾。`refreshIfStale()` 在切回本页（`visibilitychange`/`pageshow`/`focus`）、别的页面写过数据（`storage` 事件）和开着时每分钟检查一次：日子换了或 `Store.reloadIfChanged()` 读到新数据就重画（保留滚动与记录草稿）；有浮层开着时只记 `refreshPending`，最后一层关掉再画。主页面的用药核对（`bindMedChecks` 绑在 `$view()` 上时）点击前也先检查一次，旧屏幕上的那一下不记账（否则会记成昨天的补记）。**绑定到某一天的浮层例外**：「今天的服药核对」子弹窗（`openMedDay(today)`）记 `_dayBound=date`，跨天时 `refreshIfStale` 直接 `dismissTopOverlay()` 关掉它，逼用户回到今天重开（回归在 overlay.test.js 第 6b 节）。记录表单的日期时间见下条「记录时间与键盘流」。（2026-10 合并时，笔记本线的 `refreshIfNewDay` 并进了这里：它只看日子、有浮层时不重画；这里还管跨页面数据，且浮层关掉后补画。）
 - **训练引导器 `openTrainer(ex)`**：全屏覆盖层，按 `ex.mode.type` 三种形态：
   - `reps`：大圆按钮计次，**大数字是"还差几次"的倒数**（不是已完成数），到量显示 ✓、超量说"比目标还多 N 次"，达标震动+提示音；
   - `timer`：倒计时（开始/暂停/重置）+ 人话时长与进度条，归零提示。**按截止时刻现算剩余**（`deadline - Date.now()`），不按每秒减一：锁屏/后台时定时器会被冻结或降频，减一式计时会停在半路；锁屏期间到点的，切回来由 `_tick()` 立刻报"时间到"。到点后再点从头计；
@@ -190,12 +197,18 @@ data-exercises.js → data-articles.js → storage.js → charts.js → games.js
   - **关闭时必须清理**：`closeTrainer()` 负责 `clearInterval` + `Games.stop()` + `Awake.stop()` + `releaseAudio()`，新增异步资源要在这里一并清理。
   - **屏幕常亮与提示音（v0.2.32）**：训练页开着时 `Awake` 请求 Screen Wake Lock（不支持就静默放弃），10 分钟没碰屏幕且不在计时就放掉；页面切走浏览器会自动释放，切回来 `Awake.poke()` 再要。提示音共用一个在点按里创建/恢复的 `AudioContext`（`unlockAudio()`）——iOS 上不在点按里建的 AudioContext 是静音的，计时结束那一声由定时器触发，以前每次新建所以不响。
 - **历史视图**：三个入口都是 `openModal` 弹窗，不占主页面高度——`openVitalHistory(kind)`（趋势图 + 全部记录 + 状态点 + 删除，删除后 `paint()` 重画弹窗并 `renderRecords()` 刷新背后页面）、`openExerciseHistory()`、`openMedHistory()`。血压/血糖/体重的判定统一走 `vitalStatus(kind, v)`（复用 `bpBadge/gluBadge/bmiBadge`），趋势图统一走 `drawVitalChart(kind, canvas, recent)`——**加新指标时改这两个函数即可**。打卡日历 `calendarHTML(n)` 由 `Store.exerciseCalendar(n)` 驱动，训练页与弹窗共用。
+- **补记与修改（v0.2.32）**：服药核对行抽为 `medCheckListHTML(items)` + `bindMedChecks(root, date, after)`，今日核对与补记子弹窗共用。`openMedHistory()`/`openExerciseHistory()` 标题带“· 补记”，内容由 `paint()` 生成并 `close.onResume(paint)`；每天一行是整行按钮（`.day-go`/`.hist-day`），点开 `openMedDay(date)`/`openExerciseDay(date)` **子弹窗**（叠在历史上、保留父窗，返回键只关子弹窗）；行内勾选**原位更新**（不整块重画、焦点不丢）并 `render(currentView, {keepScroll:true})` 刷新背后页。登记前的日子（`beforeTracking`）显“登记前”且不可点。健康记录历史行 = `.rec-open`（点开 `openVitalEdit(kind, id)` 修改弹窗，`updateVital` 保 id 与数组位置）+ 行尾 🗑（`confirmInPlace` 两步确认）；历史分页 60+60。**删除统一用 `confirmInPlace`，不用原生 `confirm()`**（硬约定 #14）。
+- **记录时间与键盘流（v0.2.32）**：`bindWhenToggle(prefix)` 维护 `row.dataset.touched`，未改过时小条显“现在 · 修改”（体重“今天”），`whenOf(prefix)` 未改过取保存那刻、改过取输入值；日期 `max=今天`。三表单与修改弹窗共用 `readVital(kind, prefix, when)`。`bindEnterFlow(inputs, onDone)` 设 `enterkeyhint`、回车跳下一框、最后一框 `onDone`（`isComposing`/keyCode 229 时不触发）。
+- **应用内确认与轻震（v0.2.32，硬约定 18）**：`confirmInPlace/tick/bindEnterFlow` 在 `js/app/core.js`；`confirmInPlace` 的确认键点一次后禁用双键（防连点双删）；**`onConfirm()` 返回 `false`（保存失败）时解除禁用、焦点回取消键**（行里无 ✕ 可退，不恢复就卡死；F2 修）；三处调用方失败分支 `return false`。
+- **改服药时间后的“孤儿”核对（v0.2.32，已知取舍）**：`updateMed` 改时间点时今天旧时间点的核对会落在当天时间表之外，而 `toggleMed` 拒绝不在排期的时间点，所以用户当天无法取消这些旧记录（只能留在数据里，不影响计数：历史日按 `timesOn` 分版本，今天用新时间点统计）。影响小，未改代码。
+- **补记计数与改时间点/开始日期的偏差（v0.2.32，已知取舍）**：`medAdherence` 的 `late` 直接数 `data.medLate[date]` 的键，而 `done/total` 只按当天 `timesOn` 计；若先补记、再改服药时间点或把开始日期回填得更早，个别 medLate 会落在当天时间表外成为孤儿，使报告「其中 N 次为事后补记」的 N 偏大（可能超过实际计入 `done` 的补记数）。概率极低，只影响给医生看的补记条数、不动主依从率与患者主界面，未改代码。
+- **补记标记与一键撤销（v0.2.32 P2#1）**：`date<today()` 时的核对算补记，写 `Store.medLate`（`medLog` 仍只存 true）。“这天的都吃了”（`openMedDay` 内 `#med-day-all`）**不加两步确认**，成功后 `toast(msg, {label:'撤销', onClick})` 带一个可点撤销键（≥48px、一次后失效）。提示条在弹窗外、DOM 里排在弹窗之前：`init` 的 Tab 处理把 `#toast.show.has-action .toast-action` 接到焦点环末尾，`focusin` 对 `#toast` 置例外。`hideToast` 在设 `inert=true` 前记下提示条是否持有焦点，有焦点才接回顶层弹窗；`toast` 重建内容后恢复 `inert=false`。交互契约见 [DESIGN-SYSTEM](DESIGN-SYSTEM.md#3-组件契约)。撤销走 `Store.uncheckMedsOn(date, added)` **一次性回退本次新勾上的键**（原已核对的保留）并只 save 一次；写盘失败经 `stored()` 提示、内存回滚，数据与历史行仍是“全吃到”两边一致（不会逐项 toggle 到一半）；成功后重画背景页并调 `topOverlay()?._onResume?.()` 同步历史行文案。报告与“给医生看的数字”折叠区在 `late>0` 时加“其中 N 次为事后补记”；患者主界面（核对列表/圆点/每天那行）不区分补记（§5 不指责）。回归在 `storage.test.js`（medLate 读写/规范化/备份往返/限额/late 数值/报告，及撤销写盘失败回滚）与 `overlay.test.js`（AC4.3 从自动恢复焦点的日期行发真实 Tab、双向循环、回车撤销与焦点回标题；AC4.4 真实 8 秒超时、隐藏键不可达、无障碍树、持久化及新提示再次可撤销）。Chromium 检查不替代真机读屏，执行项见 [MANUAL-TEST](MANUAL-TEST.md) 20a-2/20a-3。
 - **安全/转义纪律**：所有**用户输入**（姓名、药名、剂量、备注等）插入 HTML 前必须过 `esc()`。`data-*.js` 里的静态内容是我们自己写的，直接插入；**如果未来文章/动作内容改为用户可编辑或远程下发，必须改为全量转义或消毒**。
-- 提示反馈：`toast(msg)`（5s 自动消失）；需用户处理的错误用 `showError()` 持续显示，存储问题另由 `renderStorageNotice()` 显示；`beep()`（WebAudio 提示音+震动，失败静默）。
+- 提示反馈：`toast(msg[, action])`（默认 5s 自动消失；带 `action={label,onClick}` 时整条可点、留 8s、含一个撤销按钮）；需用户处理的错误用 `showError()` 持续显示，存储问题另由 `renderStorageNotice()` 显示；`beep()`（WebAudio 提示音+震动，失败静默）。
 
 ### storage.js
 
-纯数据层，无 DOM 依赖（因此可以在 Node 里测试）。公开 API 见文件头部注释和 `return` 清单。**写入 API 先校验再改数据（硬约定 16）**：`addMed/updateMed` 走 `medProblem()`（药名、时间、`from ≤ to`、新旧疗程不重叠），`toggleMed` 只接受当天确实要吃的那一次、不能提前勾，`addVital` 先过与读盘同一套 `VITAL_CLEAN`、拒绝将来日期；不通过就 `refuse(原因)`，界面经 `stored()` 显示 `Store.actionError()`。**服药统计分两种口径**：今日核对表（`medProgressToday`）数全天；"吃没吃到"（`adherence7d`/`medFullDays`/`medStatusOn().dueTotal`）只数已到点的（`isDoseDue`），这些函数都接受 `now` 参数，测试必须传固定时刻。`reloadIfChanged()` 供跨页面同步。`save()` 在规范化前检查容量、保存前对照 `persistedRaw` 检测过期快照，失败回滚到 `persistedJSON`；不会自动合并另一标签页的数据。`exportBackup()` 也走解析校验，拒绝不可恢复的文件。改这里必须同步跑 `node test/storage.test.js`。
+纯数据层，无 DOM 依赖（因此可以在 Node 里测试）。公开 API 见文件头部注释和 `return` 清单。**写入 API 先校验再改数据（硬约定 16）**：`addMed/updateMed` 走 `medProblem()`（药名、时间、`from ≤ to`、新旧疗程不重叠），`toggleMed` 只接受当天确实要吃的那一次、不能提前勾，`addVital` 先过与读盘同一套 `VITAL_CLEAN`、拒绝将来日期；不通过就 `refuse(原因)`，界面经 `stored()` 显示 `Store.actionError()`。**服药统计口径见硬约定 8**：今日核对表（`medProgressToday`）数全天；"吃没吃到"（`medAdherence`/`adherence7d`/`medFullDays`）只在"计入日"上算（今天全核对完才计入），登记日 `trackFrom` 之前不算、时间点按 `timesOn` 分版本。`reloadIfChanged()` 供跨页面同步。`save()` 在规范化前检查容量、保存前对照 `persistedRaw` 检测过期快照，失败回滚到 `persistedJSON`；不会自动合并另一标签页的数据。`exportBackup()` 也走解析校验，拒绝不可恢复的文件。改这里必须同步跑 `node test/storage.test.js`。
 
 ### data-exercises.js
 
@@ -388,9 +401,9 @@ for f in js/*.js; do node --check "$f"; done
 - 图表为最近 N 条的索引轴，不是严格时间轴
 - 全部训练有文字分步和语音朗读，但仅 5 个动作有两帧示意图、无视频；示意姿势仍需康复医生/治疗师复核后才能继续铺开（复核状态见 `POSES[id].review`，复核单见 §6 figures.js）
 - 不做摄像头动作识别/评分（MediaPipe 类方案与零依赖、隐私、CSP、摄像头禁用多条红线冲突，理由见 §6 figures.js 选型结论）
-- ~~训练/用药/游戏历史无应用内视图~~ ——已补齐（v0.2.9，见 [CHANGELOG](CHANGELOG.md)）。~~**遗留取舍**：服药历史每天的"应服次数"按当前药物清单计算，改过处方后更早日期的分母会跟着变~~ ——**已解决**（v0.2.15：药物带 `from`/`to`，计数走 `Store.medsOn(date)`，停药/加药不再影响历史日期的分母）。**剩余取舍**：同一种药中途改剂量或改服药时间点没有版本记录，改完之后历史日期会按新的时间点显示
+- ~~训练/用药/游戏历史无应用内视图~~ ——已补齐（v0.2.9，见 [CHANGELOG](CHANGELOG.md)）。~~**遗留取舍**：服药历史每天的"应服次数"按当前药物清单计算，改过处方后更早日期的分母会跟着变~~ ——**已解决**（v0.2.15：药物带 `from`/`to`，计数走 `Store.medsOn(date)`，停药/加药不再影响历史日期的分母）。~~**剩余取舍**：同一种药中途改剂量或改服药时间点没有版本记录~~ ——服药时间点已按 `timesHistory` 分版本（v0.2.32）；**剩余取舍**：剂量/名称改动不留版本（只影响显示，不影响计数）
 - ~~记录页历史列表位于输入表单下方、小屏易漏~~ ——已解决（v0.2.9：入口上移到"最近血压/血糖/体重"卡内，全部记录进弹窗）
-- 训练日历固定看最近 4 周；训练历史弹窗一次渲染全部有记录的日期，长期使用（数百天）后需要分页或折叠
+- 训练日历固定看最近 4 周；训练历史与服药/记录历史均已分页（v0.2.32：训练更早日期 30+30、记录 60+60）
 - **v0.2.12「少算数」的剩余缺口**：血压/血糖**录入**仍要求患者读血压计并输入数字（这是数据源头，无法回避；可考虑的缓解是"上次是 138/86，这次差不多吗"式的就近微调输入）；导出给医生的报告仍是精确数字与百分比（**这是刻意保留的**，医生需要原始数据）；训练日历格子里仍是当天项数的数字（颜色深浅已是主要通道，数字只作补充）。语音朗读已在 v0.2.13 完成；当前更重要的是用真机和真实患者验证可读性、朗读可用性及操作负担，并由专业人员复核训练示意和医学文案
 
 建议的演进顺序（先看患者恢复价值与风险，再看开发成本；调研依据见 docs/RESEARCH.md §五/§六）：

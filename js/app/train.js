@@ -1,5 +1,5 @@
 /* ============================================================
-   训练页 → 打卡历史 → 训练引导器（全屏：计次 / 计时 / 认知游戏）
+   训练页 → 打卡历史·补记（openExerciseDay）→ 训练引导器（全屏：计次 / 计时 / 认知游戏）
    计时按截止时刻现算、训练时屏幕常亮（硬约定 15，回归：node test/lifecycle.test.js）
    ============================================================ */
 
@@ -101,7 +101,6 @@ function calendarHTML(n) {
 function trainHistoryCardHTML() {
   const total = Store.exerciseDaysTotal();
   const streak = Store.streak();
-  const hasHistory = Store.activeDates().length > 0;
   /* 累计天数是"越攒越多"的正向数字，放在最前面；连续天数断了也先肯定历史最长 */
   let line;
   if (!total) {
@@ -123,7 +122,7 @@ function trainHistoryCardHTML() {
       <span>近 4 周</span>
       <span class="cal-legend-scale">少 <i class="cal-dot"></i><i class="cal-dot lv1"></i><i class="cal-dot lv2"></i> 多</span>
     </div>
-    ${hasHistory ? '<button class="btn ghost block" id="btn-ex-hist" style="margin-top:0.7rem">📄 查看每天练了什么</button>' : ''}
+    ${'<button class="btn ghost block" id="btn-ex-hist" style="margin-top:0.7rem">📄 每天练了什么 · 补记</button>'}
     </div>
   </details>`;
 }
@@ -139,31 +138,116 @@ function gameName(key) {
 function weekdayOf(date) {
   return Store.weekdayCN(new Date(date + 'T00:00:00'));
 }
+/* 补记子弹窗标题用的日期文案：“9月2日（星期一）” */
+function dayLabel(date) {
+  return `${+date.slice(5, 7)}月${+date.slice(8, 10)}日（${weekdayOf(date)}）`;
+}
 
 function openExerciseHistory() {
-  const dates = Store.activeDates();
-  const days = dates.map(d => {
-    const ids = Store.exercisesOn(d);
-    const games = Store.gamesOn(d);
-    return `
-    <div class="hist-day">
-      <div class="hd-date">${esc(d)} ${weekdayOf(d)}<span class="hd-count">${ids.length} 项</span></div>
-      ${ids.length ? `<div class="chip-row">${ids.map(i => `<span class="chip">${esc(exName(i))}</span>`).join('')}</div>` : ''}
-      ${games.length ? `<div class="hd-games">🎮 ${games.map(g => `${esc(gameName(g.game))} ${esc(g.detail || g.score)}`).join('　·　')}</div>` : ''}
-    </div>`;
-  }).join('');
+  const node = document.createElement('div');
+  const close = openModal('训练历史 · 补记', node);
+  let olderShown = 30;
+  const paint = () => {
+    const t = Store.today();
+    const recent = Store.recentDates(7).reverse();   // 今天在上
+    const recentRows = recent.map(d => {
+      const ids = Store.exercisesOn(d);
+      const games = Store.gamesOn(d);
+      const label = `${dayLabel(d)}${d === t ? '·今天' : ''}`;
+      const right = ids.length ? `练了 ${ids.length} 项 ›` : '还没有记录 · 补记 ›';
+      return `<button type="button" class="hist-day day-go" id="ex-day-${esc(d)}" data-exday="${esc(d)}" aria-label="${esc(label)} ${ids.length ? '练了 ' + ids.length + ' 项' : '还没有记录'}，点这里补记">
+        <span class="dg-top"><span class="hd-date">${esc(label)}</span><span class="hd-right">${esc(right)}</span></span>
+        ${ids.length ? `<span class="chip-row">${ids.map(i => `<span class="chip">${esc(exName(i))}</span>`).join('')}</span>` : ''}
+        ${games.length ? `<span class="hd-games">🎮 ${games.map(g => `${esc(gameName(g.game))} ${esc(g.detail || g.score)}`).join('　·　')}</span>` : ''}
+      </button>`;
+    }).join('');
 
-  const node = nodeFromHTML(`
-    <div class="card">
-      <div class="card-title">📅 最近 4 周</div>
-      ${calendarHTML(28)}
-      <div class="cal-legend"><span>已经练了 ${Store.exerciseDaysTotal()} 天${Store.streak() > 0 ? ` · 目前连着 ${Store.streak()} 天` : ''}</span></div>
-    </div>
-    <div class="card">
-      <div class="card-title">📄 每天练了什么</div>
-      ${days || '<div class="empty-tip">还没有训练打卡记录，做一个动作就有了</div>'}
-    </div>`);
-  openModal('训练历史', node);
+    const cutoff = Store.addDays(t, -6);
+    const older = Store.activeDates().filter(d => d < cutoff);
+    const olderRows = older.slice(0, olderShown).map(d => {
+      const ids = Store.exercisesOn(d);
+      const games = Store.gamesOn(d);
+      return `<div class="hist-day">
+        <div class="hd-date">${esc(dayLabel(d))}<span class="hd-count">${ids.length} 项</span></div>
+        ${ids.length ? `<div class="chip-row">${ids.map(i => `<span class="chip">${esc(exName(i))}</span>`).join('')}</div>` : ''}
+        ${games.length ? `<div class="hd-games">🎮 ${games.map(g => `${esc(gameName(g.game))} ${esc(g.detail || g.score)}`).join('　·　')}</div>` : ''}
+      </div>`;
+    }).join('');
+    const remain = Math.max(0, older.length - olderShown);
+
+    node.innerHTML = `
+      <div class="card">
+        <div class="card-title">📅 最近 4 周</div>
+        ${calendarHTML(28)}
+        <div class="cal-legend"><span>已经练了 ${Store.exerciseDaysTotal()} 天${Store.streak() > 0 ? ` · 目前连着 ${Store.streak()} 天` : ''}</span></div>
+      </div>
+      <div class="card">
+        <div class="card-title">📄 最近 7 天</div>
+        <div class="muted" style="margin-bottom:0.4rem">最近 7 天练了但忘了打卡的，点那一天补上。</div>
+        ${recentRows}
+      </div>
+      ${older.length ? `<div class="card">
+        <div class="card-title">🗓 更早的记录</div>
+        ${olderRows}
+        ${remain ? `<button class="btn ghost block" id="ex-more" style="margin-top:0.6rem">显示更早的（还有 ${remain} 天）</button>` : ''}
+      </div>` : ''}`;
+
+    node.querySelectorAll('[data-exday]').forEach(b => b.onclick = () => openExerciseDay(b.dataset.exday));
+    const moreBtn = node.querySelector('#ex-more');
+    if (moreBtn) moreBtn.onclick = () => { olderShown += 30; paint(); };
+  };
+  paint();
+  close.onResume(paint);
+}
+
+/* 补记某天的训练（子弹窗）：当前阶段推荐 + 其他动作（折叠），原位切换、刷新背后页。 */
+function openExerciseDay(date) {
+  const isToday = date === Store.today();
+  const title = isToday ? '今天练过的' : `补记 ${dayLabel(date)}`;
+  const hint = '那天练过、只是忘了打卡的，点一下补上；点错了再点一下就取消。';
+  const stage = STAGES.find(s => s.key === Store.data.profile.stage) || STAGES[0];
+  const planIds = DAILY_PLAN[stage.key] || [];
+  const planSet = new Set(planIds);
+  const node = document.createElement('div');
+  const rowHTML = ex => {
+    const done = Store.exercisesOn(date).includes(ex.id);
+    return `<div class="check-row ${done ? 'checked' : ''}" role="checkbox" aria-checked="${done}" tabindex="0" data-exid="${esc(ex.id)}">
+      <div class="mc-box">${done ? '✓' : ''}</div>
+      <div><div class="mc-name">${esc(ex.name)}</div><div class="mc-dose">${esc(ex.dose || '')}</div></div>
+    </div>`;
+  };
+  const planExs = planIds.map(id => EXERCISES.find(e => e.id === id)).filter(Boolean);
+  const otherRecorded = Store.exercisesOn(date).filter(id => !planSet.has(id)).length;
+  const otherGroups = EX_CATS.map(cat => {
+    const exs = EXERCISES.filter(e => e.cat === cat.key && !planSet.has(e.id));
+    if (!exs.length) return '';
+    return `<div class="ex-group-label">${esc(cat.name)}</div>${exs.map(rowHTML).join('')}`;
+  }).join('');
+  node.innerHTML = `
+    <p class="muted" style="margin-bottom:0.5rem">${esc(hint)}</p>
+    <div class="ex-group-label">当前阶段推荐（${esc(stage.name)}）</div>
+    <div class="check-list">${planExs.map(rowHTML).join('')}</div>
+    <details class="disclosure" style="margin-top:0.5rem">
+      <summary><span><strong>其他动作${otherRecorded ? `（已记 ${otherRecorded} 项）` : ''}</strong></span><span class="disclosure-arrow" aria-hidden="true"></span></summary>
+      <div class="disclosure-body check-list">${otherGroups}</div>
+    </details>`;
+  openModal(title, node);
+  node.querySelectorAll('[data-exid]').forEach(row => {
+    const act = () => {
+      const id = row.dataset.exid;
+      const isDone = Store.exercisesOn(date).includes(id);
+      const ok = isDone ? Store.unlogExercise(id, date) : Store.logExercise(id, date);
+      if (!stored(ok)) return;
+      tick();
+      const now = Store.exercisesOn(date).includes(id);
+      row.classList.toggle('checked', now);
+      row.setAttribute('aria-checked', String(now));
+      row.querySelector('.mc-box').textContent = now ? '✓' : '';
+      render(currentView, { keepScroll: true });
+    };
+    row.onclick = act;
+    row.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } };
+  });
 }
 
 /* ============================================================

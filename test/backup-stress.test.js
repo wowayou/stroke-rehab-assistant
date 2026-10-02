@@ -32,6 +32,8 @@ function buildLargeState(detailSize) {
     note: '仅用于压力测试'.repeat(20),
     from: Store.addDays(Store.today(), -365),
     to: '',
+    trackFrom: Store.addDays(Store.today(), -365),
+    timesHistory: [],
     previousCourseId: '',
   }));
   data.vitals.bp = Array.from({ length: Store.backupLimits.vitalsPerKind }, (_, i) => ({
