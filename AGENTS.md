@@ -25,6 +25,7 @@
 14. 用户未要求时不做 git 提交/推送（注意：上级目录的 `.git` 是空目录，非有效仓库；本项目自己的仓库是有效的，远程见 HANDOVER §1.2）。
 15. **页面会开着跨天、会和别的页面同开**（v0.2.32）：手机切后台不重载页面，屏幕上的"今天"可能是昨天、数据可能已被另一标签改过。① 日期时间在**动作发生时**现取 `Store.today()/timeStr()`，不要用渲染时刻填进 DOM 的值（记录表单的"跟着现在走"见 `whenValue()`）；② 跨天/别处改过数据的重画统一走 `refreshIfStale()`，按日显示的新视图不用自己处理；③ "吃没吃到"类统计只算**已到点**的次数（`dueOnly`），今日核对表才数全天。相关回归跑 `node test/lifecycle.test.js`。
 16. **Store 的写入 API 先校验再改数据**（v0.2.32）：不合法就 `refuse(原因)` 返回 false、原因由 `Store.actionError()` 给界面；**不能依赖 `normalizeState()` 去"修正"**——它会把条目静默丢掉或改掉，而 `save()` 照样报成功（曾让停用的药复活、让记录"保存成功"却消失）。
+17. **运行时脚本的语法与 API 不超过 ES2018**（v0.2.33）：目标是 Chrome 62 / iOS 11.3 以上都能打开（老人常用旧手机、旧系统自带浏览器）。**不用 `?.`、`??`、`||=`、省略参数的 `catch {}`，不用 `.at()`/`replaceAll`/`trimEnd`/`flat`/`Object.fromEntries` 等新方法**——语法超了不是某个功能不好用，而是整个文件解析失败、老手机白屏。`js/boot-check.js` 只能写 ES5 且最后加载（主程序起不来时显示人话并保留拨 120）。CSS 定位不用 `inset` 简写。静态护栏在 `node test/contracts.test.js`，行为回归跑 `node test/compat.test.js`；真解析器核对见 DEVELOPMENT §6「兼容性」。
 
 ## 验证命令
 
@@ -42,6 +43,7 @@ node test/encryption.test.js   # 加密备份往返
 node test/backup-stress.test.js # 大备份压力
 node test/lifecycle.test.js    # 跨天/锁屏计时/多页面同步/屏幕常亮（时钟与可见性打桩）
 node test/sw.test.js           # 离线缓存：断网、网络卡住、重新部署、安装失败即退化（按真实 _headers 加头）
+node test/compat.test.js       # 老手机与微信：主程序起不来时的兜底页、微信复制备份/粘贴恢复、无 Pointer Events
 bash test/smoke.sh             # 五页渲染 + file:// 直开 + 资源可达，约 2~3 分钟
 
 # 目视与语法
@@ -55,7 +57,7 @@ python3 -m http.server 8080    # 本地预览（也可直接双击 index.html）
 ## 改完之后
 
 1. 跑上面对应的测试；
-2. 更新 `docs/DEVELOPMENT.md` §10 变更记录（**边做边写**，别攒到最后）；
+2. 更新 `docs/CHANGELOG.md`（新条目加在表格最上面；**边做边写**，别攒到最后）；
 3. 若改了脚本文件组成或全局名，同步更新 DEVELOPMENT.md §4；
 4. 与用户用中文交流。
 
@@ -63,10 +65,10 @@ python3 -m http.server 8080    # 本地预览（也可直接双击 index.html）
 
 **病一：同一件事写在两处，然后分叉出真错误。** 已经犯过两次——`CLAUDE.md` 与 `AGENTS.md` 曾各自演进（一边漏隐私红线、一边写着不存在的 `overlayPop()`）；`DEVELOPMENT.md` §7 与 `docs/MANUAL-TEST.md` 是同一份手工清单的两个副本，已分叉成 41 条 vs 45 条。规矩：
 
-- **每类信息只有一个真源**，别处只放一行指针。现有分工：硬约定→本文；接手状态与未验证项→`HANDOVER.md`；架构与扩展方法→`DEVELOPMENT.md`；UI/UX 组件与行为→`docs/DESIGN-SYSTEM.md`；域名迁移方法→`docs/DOMAIN-MIGRATION.md`；真机执行清单→`MANUAL-TEST.md`（§7 只留指针，不再维护第二份勾选表）；医学出处→`RESEARCH.md`。
+- **每类信息只有一个真源**，别处只放一行指针。现有分工：硬约定→本文；接手状态与未验证项→`HANDOVER.md`；架构与扩展方法→`DEVELOPMENT.md`；UI/UX 组件与行为→`docs/DESIGN-SYSTEM.md`；域名迁移方法→`docs/DOMAIN-MIGRATION.md`；真机执行清单→`MANUAL-TEST.md`（§7 只留指针，不再维护第二份勾选表）；医学出处→`RESEARCH.md`；变更历史→`CHANGELOG.md`；"改什么去哪里"→`DEVELOPMENT.md` §0（只放索引，不复述规则）。
 - 想在第二处复述时，改成写指针。**复述一次就是下一个分叉点。**
 
-**病二：变更记录写成长篇叙事，淹掉真正的约定。** §10 曾占全文 60%（5.8 万字节），单条最长 5154 字节，而"下次该怎么做"反而找不到。规矩：
+**病二：变更记录写成长篇叙事，淹掉真正的约定。** 变更记录曾占 `DEVELOPMENT.md` 60%（5.8 万字节，2026-10 已拆到 `docs/CHANGELOG.md`），单条最长 5154 字节，而"下次该怎么做"反而找不到。规矩：
 
 - **一条变更记录以 800 字节为上限**，只写四件事：改了什么、为什么（用户原话或触发场景）、跑了哪些验证、**未验证的是什么**。
 - 过程叙事（试了几次、踩了什么坑、如何定位）**不进变更记录**。若那个坑会再咬人，把它写成 §6 对应模块的一条约定或一条测试断言——**测试能拦住的，就不要靠文档记性**。

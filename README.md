@@ -64,9 +64,10 @@ python3 -m http.server 8080
 **开发者请看：**
 
 - [docs/HANDOVER.md](docs/HANDOVER.md) —— **接手先读这份**：交接时状态、已验证/未验证清单、环境备忘、红线、下一步建议
-- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) —— 架构、数据模型、技术决策记录、扩展指南、测试方法、医学内容维护守则、路线图
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) —— **§0「改什么去哪里」速查**、架构、数据模型、技术决策、扩展指南、测试方法、医学内容维护守则、路线图
 - [docs/RESEARCH.md](docs/RESEARCH.md) —— 产品调研结论（需求痛点、循证依据、竞品分析、适老化规范）
-- [CLAUDE.md](CLAUDE.md) / [AGENTS.md](AGENTS.md) —— 项目硬约定速查（分别供 Claude Code 与其他 AI 工具自动读取，内容一致）
+- [AGENTS.md](AGENTS.md) —— 项目硬约定的唯一真源（[CLAUDE.md](CLAUDE.md) 只是指向它的一页指针）
+- [docs/CHANGELOG.md](docs/CHANGELOG.md) —— 每一版改了什么、为什么（要查历史时再读）
 
 测试：
 
@@ -77,6 +78,7 @@ node test/settings.test.js   # 设置项持久化（真实 Chromium，需 Playwr
 node test/overlay.test.js    # 备份浮层与返回键历史栈（真实 Chromium）
 node test/lifecycle.test.js  # 跨天/锁屏计时/多页面同步（真实 Chromium）
 node test/sw.test.js         # 离线缓存（真实 Chromium）
+node test/compat.test.js     # 老手机兜底页与微信备份（真实 Chromium）
 bash test/smoke.sh           # 无头浏览器冒烟测试
 ```
 

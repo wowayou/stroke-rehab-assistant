@@ -61,7 +61,7 @@ input, select, textarea { font-family: inherit; }
 
 /* ---------- 顶栏 ---------- */
 .app-header {
-  position: sticky; top: 0; z-index: 50;
+  position: -webkit-sticky; position: sticky; top: 0; z-index: 50;
   background: var(--card);
   border-bottom: 1px solid var(--border);
 }
@@ -164,7 +164,7 @@ h1[tabindex="-1"]:focus { outline: none; }
   padding: var(--space-1) 0 var(--space-2); margin-bottom: var(--space-4);
 }
 .today-hero .date-line { font-size: 0.95rem; color: var(--text-2); }
-.today-hero .greet { font-size: 1.5rem; font-weight: 700; margin: 0.25rem 0; line-height: 1.4; overflow-wrap: anywhere; }
+.today-hero .greet { font-size: 1.5rem; font-weight: 700; margin: 0.25rem 0; line-height: 1.4; word-wrap: break-word; overflow-wrap: anywhere; }
 .today-hero .rehab-day { font-size: 1rem; color: var(--text-2); }
 .today-hero .rehab-day b { color: var(--text); }
 .streak-chip {
@@ -262,14 +262,14 @@ h1[tabindex="-1"]:focus { outline: none; }
 
 /* ---------- 训练引导页(全屏) ---------- */
 .trainer {
-  position: fixed; inset: 0; z-index: 200;
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 200;   /* 不用 inset 简写：iOS 14.1 以前不认，浮层会盖不住屏幕 */
   background: var(--bg); overflow-y: auto;
   display: flex; flex-direction: column;
 }
 .trainer-head {
   display: flex; align-items: center; gap: 0.6rem;
   padding: 0.8rem 0.9rem; background: var(--card); border-bottom: 1px solid var(--border);
-  position: sticky; top: 0;
+  position: -webkit-sticky; position: sticky; top: 0;
 }
 .trainer-head .t-name { font-size: 1.15rem; font-weight: 700; flex: 1; }
 .trainer-body { flex: 1; max-width: 600px; width: 100%; margin: 0 auto; padding: 1rem 0.9rem 2rem; }
@@ -546,7 +546,7 @@ input[aria-invalid="true"], select[aria-invalid="true"] { border: 2px solid var(
 
 .med-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.65rem 0.1rem; border-bottom: 1px solid var(--border); }
 .med-item:last-child { border-bottom: none; }
-.med-item .mi-body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.med-item .mi-body { flex: 1; min-width: 0; word-wrap: break-word; overflow-wrap: anywhere; }
 .med-item > .btn { flex-shrink: 0; }
 .med-item .mi-name { font-weight: 700; }
 .med-item .mi-sub { font-size: 0.88rem; color: var(--text-2); }
@@ -628,19 +628,19 @@ input[aria-invalid="true"], select[aria-invalid="true"] { border: 2px solid var(
 
 /* ---------- 弹窗 ---------- */
 .modal-mask {
-  position: fixed; inset: 0; z-index: 150;
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 150;
   background: rgba(20, 22, 30, 0.55);
   display: flex; align-items: flex-end; justify-content: center;
 }
 .modal-mask.center { align-items: center; padding: 1rem; }
 .modal-panel {
   background: var(--bg); width: 100%; max-width: var(--content-width);
-  border-radius: var(--radius-sheet) var(--radius-sheet) 0 0; max-height: 92vh; overflow-y: auto;
+  border-radius: var(--radius-sheet) var(--radius-sheet) 0 0; max-height: 92vh; max-height: 92dvh; overflow-y: auto;
   box-shadow: var(--shadow-overlay);
   overscroll-behavior: contain;
   padding: 1rem 0.9rem calc(1.4rem + env(safe-area-inset-bottom, 0px));
 }
-.modal-mask.center .modal-panel { border-radius: 20px; max-height: 88vh; }
+.modal-mask.center .modal-panel { border-radius: 20px; max-height: 88vh; max-height: 88dvh; }
 .modal-head { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-4); position: sticky; top: -1rem; z-index: 2; background: var(--bg); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
 .modal-head .m-title { font-size: 1.2rem; font-weight: 700; flex: 1; }
 .modal-close { min-width: 48px; min-height: 48px; border: none; background: var(--card); border-radius: 12px; font-size: 1.2rem; color: var(--text-2); }
@@ -650,7 +650,7 @@ body.overlay-open { overflow: hidden; }
 [inert] { pointer-events: none; }
 .backup-age { margin-top: var(--space-2); }
 .backup-age.due { color: var(--orange); font-weight: 600; }
-.notice { background: var(--primary-soft); color: var(--primary-dark); border-radius: var(--radius-control); padding: var(--space-3); margin-bottom: var(--space-3); overflow-wrap: anywhere; }
+.notice { background: var(--primary-soft); color: var(--primary-dark); border-radius: var(--radius-control); padding: var(--space-3); margin-bottom: var(--space-3); word-wrap: break-word; overflow-wrap: anywhere; }
 .notice.danger { color: var(--red); background: var(--red-soft); border-left: 4px solid var(--red); }
 .storage-notice { max-width: var(--content-width); margin: var(--space-3) auto; }
 .action-list > .btn { justify-content: flex-start; text-align: left; border-radius: 0; background: transparent; border-bottom: 1px solid var(--border); margin-top: 0 !important; padding: var(--space-3) var(--space-2); }
@@ -658,16 +658,16 @@ body.overlay-open { overflow: hidden; }
 .emergency-action { background: var(--bg); padding-bottom: var(--space-3); }
 .emergency-action .call-120 { margin-top: 0; }
 .emergency-action .muted { margin-top: var(--space-2); }
-.m-title, .t-name { overflow-wrap: anywhere; min-width: 0; }
+.m-title, .t-name { word-wrap: break-word; overflow-wrap: anywhere; min-width: 0; }
 .trainer-head .btn-emergency { flex-shrink: 0; }
-.btn, .call-120 { overflow-wrap: anywhere; }
+.btn, .call-120 { word-wrap: break-word; overflow-wrap: anywhere; }
 
 /* ---------- 游戏 ---------- */
 .game-grid { display: grid; gap: 0.6rem; margin-top: 0.8rem; }
 .game-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
 .game-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
 .game-cell {
-  aspect-ratio: 1; border-radius: 14px; border: none;
+  aspect-ratio: 1; min-height: 64px; border-radius: 14px; border: none;
   background: var(--primary); color: #fff;
   font-size: 1.9rem; font-weight: 800;
   display: flex; align-items: center; justify-content: center;
@@ -786,7 +786,7 @@ body.overlay-open { overflow: hidden; }
 @media (min-width: 600px) {
   .bottom-nav { max-width: var(--content-width); left: 50%; transform: translateX(-50%); border-radius: 16px 16px 0 0; border: 1px solid var(--border); border-bottom: none; }
   .modal-mask { align-items: center; padding: var(--space-6); }
-  .modal-panel { border-radius: var(--radius-sheet); max-height: 88vh; }
+  .modal-panel { border-radius: var(--radius-sheet); max-height: 88vh; max-height: 88dvh; }
 }
 
 /* 宽屏保留同一份导航和事件，只改变布局，缩放回手机宽度不会重建表单。 */
@@ -858,3 +858,6 @@ body.overlay-open { overflow: hidden; }
     scroll-behavior: auto !important;
   }
 }
+
+/* 浏览器太旧、主程序没起来时（js/boot-check.js）：导航和设置点了也没反应，藏起来免得老人反复点 */
+.app-failed .bottom-nav, .app-failed .header-actions { display: none; }

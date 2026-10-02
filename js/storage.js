@@ -203,7 +203,7 @@ const Store = (() => {
       if (!Array.isArray(raw.gameLog[d])) return;
       out.gameLog[d] = raw.gameLog[d].slice(-BACKUP_LIMITS.gamesPerDay).filter(isObj).map(g => ({
         game: text(g.game, 100),
-        score: finite(g.score) ?? 0,
+        score: finite(g.score) === null ? 0 : finite(g.score),
         detail: text(g.detail, 500),
         time: cleanTime(g.time),
       })).filter(g => g.game);
@@ -642,7 +642,7 @@ const Store = (() => {
     lines.push('■ 目前用药');
     const act = activeMeds(), stp = stoppedMeds();
     if (act.length) {
-      act.forEach(m => lines.push(`  ${m.name} ${m.dose || ''} 每日${(m.times || []).length}次(${(m.times || []).join('、')})${m.from ? ' 自' + m.from : ''} ${m.note || ''}`.trimEnd()));
+      act.forEach(m => lines.push(`  ${m.name} ${m.dose || ''} 每日${(m.times || []).length}次(${(m.times || []).join('、')})${m.from ? ' 自' + m.from : ''} ${m.note || ''}`.replace(/\s+$/, '')));
       const ad = adherence7d();
       if (ad !== null) lines.push(`  近7天服药完成率：${ad}%`);
     } else lines.push('  （未登记）');
@@ -651,7 +651,7 @@ const Store = (() => {
     /* 停用的药单独列：复诊时医生常问"这个药吃到什么时候" */
     if (stp.length) {
       lines.push('■ 已停用的药');
-      stp.forEach(m => lines.push(`  ${m.name} ${m.dose || ''} ${m.from || '?'} 至 ${m.to} 停用 ${m.note || ''}`.trimEnd()));
+      stp.forEach(m => lines.push(`  ${m.name} ${m.dose || ''} ${m.from || '?'} 至 ${m.to} 停用 ${m.note || ''}`.replace(/\s+$/, '')));
       lines.push('');
     }
 

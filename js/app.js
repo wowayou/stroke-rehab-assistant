@@ -42,6 +42,10 @@ const App = (() => {
      家人帮忙装好桌面图标后，老人会发现"记录全没了"。只在苹果手机上提示这一句。 */
   const IS_IOS = 'standalone' in navigator && navigator.maxTouchPoints > 0;
   const IS_IOS_HOME_ICON = navigator.standalone === true;
+  /* 微信（含企业微信）内置浏览器：不能下载文件（blob 下载被屏蔽），记录存在微信自己的
+     存储里、清理微信缓存时可能一起被清掉。这里只用来换掉"下载备份"并给出搬家办法。 */
+  const IN_WECHAT = /MicroMessenger/i.test(navigator.userAgent);
+  const WECHAT_ADVICE = '建议点右上角「···」选「在浏览器打开」，再添加到桌面，以后从桌面图标进来。';
 
   /* ============================================================
      【区】一、公共基础层：以下六个小节被各视图共用，改动波及全站
@@ -49,7 +53,7 @@ const App = (() => {
 
   /* ---------- 工具 ---------- */
   function esc(s) {
-    return String(s ?? '').replace(/[&<>"']/g, c => ({
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     }[c]));
   }
@@ -109,8 +113,9 @@ const App = (() => {
   function stored(ok) {
     renderStorageNotice();
     if (ok) return true;
-    showError(topOverlay()?.querySelector('.modal-panel, .trainer-body') || $view(),
-      Store.storageStatus()?.message || Store.actionError() || Store.backupError() || '没有保存成功，请重试');
+    const top = topOverlay();
+    showError((top && top.querySelector('.modal-panel, .trainer-body')) || $view(),
+      (Store.storageStatus() || {}).message || Store.actionError() || Store.backupError() || '没有保存成功，请重试');
     return false;
   }
   /* 提示音：训练页打开期间共用一个 AudioContext，并在用户点按时解锁。
@@ -388,7 +393,7 @@ const App = (() => {
   }
   function mountOverlay(node, focusTarget) {
     // Safari 触摸按钮未必获得焦点，返回位置要认触发控件本身。
-    const trigger = openingTrigger?.isConnected && (!topOverlay() || topOverlay().contains(openingTrigger))
+    const trigger = openingTrigger && openingTrigger.isConnected && (!topOverlay() || topOverlay().contains(openingTrigger))
       ? openingTrigger : document.activeElement;
     node._returnFocus = replacementFocus || trigger;
     overlayStack.push(node);
@@ -419,9 +424,9 @@ const App = (() => {
     else { overlayStack.pop(); Speech.stop(); top.remove(); syncOverlays(); }
     /* 浮层开着时攒下的"跨天/别处改过数据"，最后一层关掉后再重画 */
     if (!topOverlay() && refreshPending) refreshIfStale();
-    if (topOverlay()?._onResume) topOverlay()._onResume();
+    if (topOverlay() && topOverlay()._onResume) topOverlay()._onResume();
     const target = returnFocusTarget(top._returnFocus);
-    if (target?.isConnected && !target.closest('[inert]')) target.focus({ preventScroll: true });
+    if (target && target.isConnected && !target.closest('[inert]')) target.focus({ preventScroll: true });
     else if (topOverlay()) topOverlay().querySelector('.m-title, .t-name').focus({ preventScroll: true });
     else $view().focus({ preventScroll: true });
     return true;
@@ -795,7 +800,8 @@ const App = (() => {
     /* 换一个动作（游戏里"换个不用算的"）时复用同一个历史条目：
        "训练引导页开着"始终只对应一个条目，返回键一次就退出。 */
     const hadTrainer = !!document.getElementById('trainer');
-    const trainerOrigin = document.getElementById('trainer')?._returnFocus;
+    const oldTrainer = document.getElementById('trainer');
+    const trainerOrigin = oldTrainer && oldTrainer._returnFocus;
     closeTrainer();
     const wrap = document.createElement('div');
     wrap.className = 'trainer';
@@ -1309,12 +1315,12 @@ const App = (() => {
       form.dataset.dirty = 'true';
       status.className = 'form-status';
       status.textContent = '尚未保存，填写后请点保存。';
-      if (recordSaved?.kind === recTab) recordSaved = null;
+      if (recordSaved && recordSaved.kind === recTab) recordSaved = null;
     };
     form.addEventListener('input', markDraft);
     form.addEventListener('change', markDraft);
     if (recordDrafts[recTab]) markDraft();
-    else if (recordSaved?.kind === recTab) {
+    else if (recordSaved && recordSaved.kind === recTab) {
       status.classList.add('saved');
       status.textContent = recordSaved.message;
     } else status.textContent = '填好后请点保存，记录仅保存在本机。';
@@ -1380,7 +1386,8 @@ const App = (() => {
      用户改过日期或时间（表单上 data-when="set"）才按他填的记。 */
   const WHEN_PREFIX = { bp: 'bp', glucose: 'glu', weight: 'wt' };
   function whenFollowsNow(prefix) {
-    return document.getElementById(prefix + '-dt-chip')?.closest('.vital-form').dataset.when !== 'set';
+    const chip = document.getElementById(prefix + '-dt-chip');
+    return !chip || chip.closest('.vital-form').dataset.when !== 'set';
   }
   function whenValue(prefix) {
     const timeEl = document.getElementById(prefix + '-time');
@@ -2010,7 +2017,8 @@ const App = (() => {
      ============================================================ */
   function openEmergency() {
     if (document.querySelector('.emergency-view')) return;
-    document.getElementById('trainer')?._pause?.();
+    const trainer = document.getElementById('trainer');
+    if (trainer && trainer._pause) trainer._pause();
     const node = nodeFromHTML(`
       <div class="emergency-view">
         <div class="emergency-action">
@@ -2200,12 +2208,13 @@ const App = (() => {
       </div>
       <div class="section-label">数据与备份</div>
       <div class="card action-list">
-        <div class="notice">记录只在当前浏览器里。换手机、换浏览器或换网址前，请先下载备份。${IS_IOS ? '苹果手机上，桌面图标和 Safari 里的记录也是分开存的，不会自动同步。' : ''}</div>
+        <div class="notice">记录只在当前浏览器里。换手机、换浏览器或换网址前，请先下载备份。${IS_IOS ? '苹果手机上，桌面图标和 Safari 里的记录也是分开存的，不会自动同步。' : ''}${IN_WECHAT ? `<br><b>现在是在微信里打开的</b>：记录存在微信里，清理微信缓存时可能被一起清掉，也不能下载备份文件。${WECHAT_ADVICE}` : ''}</div>
         ${Store.originalData() !== null ? '<button class="btn outline block" id="set-original">下载原始数据副本（供排查）</button>' : ''}
         <button class="btn ghost block" id="set-backup" style="margin-top:0.6rem">📦 备份全部数据（下载文件）</button>
         <div id="backup-age">${backupAgeHTML()}</div>
         <button class="btn ghost block" id="set-restore" style="margin-top:0.6rem">♻️ 从备份恢复</button>
         <input type="file" id="set-restore-input" accept=".json,application/json" style="display:none">
+        <button class="link-btn" id="set-restore-paste">备份是复制下来的一段文字？点这里粘贴恢复</button>
         ${Store.hasRecoveryBackup() ? `
           <button class="btn outline block" id="set-undo-restore" style="margin-top:0.6rem">↩️ 撤销上次恢复</button>
           <div class="muted" style="margin-top:0.35rem">可恢复到上次导入备份前的数据，只能撤销一次。</div>` : ''}
@@ -2273,6 +2282,7 @@ const App = (() => {
     node.querySelector('#set-export').onclick = openExport;
     node.querySelector('#set-backup').onclick = openBackupWarning;
     node.querySelector('#set-restore').onclick = () => { node.querySelector('#set-restore-input').click(); };
+    node.querySelector('#set-restore-paste').onclick = openPasteRestore;
     const undoRestore = node.querySelector('#set-undo-restore');
     if (undoRestore) undoRestore.onclick = () => {
       if (!confirm('撤销后，当前恢复进来的全部数据会被替换。确定回到恢复前的数据吗？')) return;
@@ -2435,6 +2445,12 @@ const App = (() => {
           <div class="guide-line">中间<b>歇几天很正常</b>，回来做一个动作就又接上了。</div>
           <div class="guide-line">算数、说话、走路变难，都是<b>脑子在恢复中的常见情况</b>，不是您不行。认知练习里算不出来可以看提示、可以跳过、也可以换成不用算的。</div>
         </div>
+        ${!review && IN_WECHAT ? `
+        <div class="card">
+          <div class="card-title">💬 在微信里打开的？</div>
+          <div class="guide-line">在微信里用，记录会存在微信里：<b>清理微信缓存时可能被一起清掉</b>，也没法下载备份。</div>
+          <div class="guide-line">${WECHAT_ADVICE}</div>
+        </div>` : ''}
         ${!review && IS_IOS_HOME_ICON ? `
         <div class="card">
           <div class="card-title">📲 以前在浏览器里用过？</div>
@@ -2462,20 +2478,103 @@ const App = (() => {
         <div class="guide-line">备份文件包含称呼、用药、血压、血糖、体重和训练记录，内容是可以直接阅读的。</div>
         <div class="guide-line">请保存在自己的设备或可信位置，不要发到群聊，也不要交给无关人员。</div>
       </div>
-      <div class="notice">
+      ${IN_WECHAT ? '' : `<div class="notice">
         <b>换手机或换网址时</b><br>先在这里下载备份并确认文件已保存，再到新网址的「设置 → 从备份恢复」选择这份文件。核对记录齐全后再使用新网址；旧网址的数据不会自动搬过去。
-      </div>
-      <button class="btn block" id="backup-plain">下载普通备份</button>
-      ${Store.encryptionSupported() ? `
+      </div>`}
+      ${IN_WECHAT ? `
+      <div class="notice danger"><b>微信里不能下载文件</b><br>可以把备份内容复制下来，粘贴到手机自带的「备忘录」（内容多时比发微信更稳妥）或微信「文件传输助手」保存。以后在任何浏览器里点「设置 → 粘贴备份内容恢复」就能恢复。</div>
+      <button class="btn block" id="backup-copy">📋 复制备份内容</button>
+      <div class="muted" style="margin-top:0.4rem">${WECHAT_ADVICE}搬过去之前，先用这份备份把记录恢复到浏览器里。</div>` : `
+      <button class="btn block" id="backup-plain">下载普通备份</button>`}
+      ${!IN_WECHAT && Store.encryptionSupported() ? `
         <button class="btn outline block" id="backup-encrypted" style="margin-top:0.6rem">🔐 设置密码并加密</button>
         <div class="muted" style="margin-top:0.4rem">备份要放网盘或共享电脑时可选。应用不会保存密码，忘记后无法替您找回。</div>` : ''}`);
-    const close = openModal('下载备份', node, { center: true });
-    node.querySelector('#backup-plain').onclick = () => {
+    const close = openModal(IN_WECHAT ? '备份数据' : '下载备份', node, { center: true });
+    const plain = node.querySelector('#backup-plain');
+    if (plain) plain.onclick = () => {
       try { downloadBackup(); close(); }
       catch (e) { showError(node, e.message || '没有生成备份，请重试'); }
     };
+    const copy = node.querySelector('#backup-copy');
+    if (copy) copy.onclick = () => {
+      let text;
+      try { text = Store.exportBackup(); }
+      catch (e) { showError(node, e.message || '没有生成备份，请重试'); return; }
+      copyBackupText(node, text);
+    };
     const encrypted = node.querySelector('#backup-encrypted');
     if (encrypted) encrypted.onclick = () => close.replace(openEncryptedBackup);
+  }
+
+  /* 复制备份内容（下载不了文件的环境用）。临时 textarea 必须放在弹窗里面：
+     放到 body 上会被焦点陷阱拉回弹窗标题，选区丢了，execCommand 什么也复制不到。
+     两种复制都失败时把内容摆出来让人长按复制，不能让人以为已经复制好了。 */
+  function copyBackupText(node, text) {
+    const done = () => toast('已复制备份内容，请粘贴到「备忘录」或「文件传输助手」保存');
+    const manual = () => {
+      let box = node.querySelector('#backup-text');
+      if (!box) {
+        box = document.createElement('textarea');
+        box.id = 'backup-text';
+        box.readOnly = true;
+        box.setAttribute('aria-label', '备份内容');
+        box.style.cssText = 'width:100%;height:30vh;margin-top:0.7rem;border:1.5px solid var(--border);border-radius:12px;padding:0.6rem;font-size:0.9rem';
+        node.appendChild(box);
+      }
+      box.value = text;
+      box.focus();
+      box.select();
+      showError(node, '没能自动复制。请长按下面的内容，选「全选」再「复制」。');
+    };
+    /* 先同步 execCommand（Safari 只认点按同一调用栈里的复制，老浏览器也只有它），
+       不成再试异步的 Clipboard API，都不成就摆出来让人手动复制 */
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.readOnly = true;
+    ta.style.cssText = 'position:absolute;left:-9999px;top:0;opacity:0';
+    node.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+    ta.remove();
+    if (ok) { done(); return; }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, manual);
+    else manual();
+  }
+
+  /* 粘贴备份内容恢复：和选文件恢复走同一条校验与预览（同一任务，用 close.replace 换成预览） */
+  function openPasteRestore() {
+    const node = nodeFromHTML(`
+      <div class="vital-form">
+        <div class="muted" style="margin-bottom:0.6rem">把之前复制下来的备份内容<b>整段</b>粘贴到下面。</div>
+        <div class="field">
+          <label for="paste-backup">备份内容</label>
+          <textarea id="paste-backup" spellcheck="false" autocomplete="off" style="width:100%;min-height:9rem;border:1.5px solid var(--control-border);border-radius:12px;padding:0.6rem;font-size:1rem"></textarea>
+        </div>
+        <div id="paste-error" role="alert" style="min-height:1.6em;color:var(--red);font-weight:600"></div>
+        <button class="btn block" id="paste-check">查看备份内容</button>
+      </div>`);
+    const close = openModal('粘贴备份内容恢复', node, { center: true });
+    const input = node.querySelector('#paste-backup');
+    const error = node.querySelector('#paste-error');
+    node.querySelector('#paste-check').onclick = () => {
+      const text = input.value.trim();
+      if (!text) { error.textContent = '请先粘贴备份内容'; input.focus(); return; }
+      try {
+        if (Store.isEncryptedBackup(text)) {
+          if (!Store.encryptionSupported()) { error.textContent = '这个浏览器不能打开加密备份，请换用最新版手机浏览器'; return; }
+          close.replace(() => openEncryptedRestore(text, '粘贴的内容'));
+        } else {
+          const parsed = Store.parseBackup(text);
+          close.replace(() => openRestorePreview(parsed, '粘贴的内容'));
+        }
+      } catch (e) {
+        error.textContent = /不是有效的 JSON/.test(e.message || '')
+          ? '粘贴的内容不完整，或不是本应用的备份。复制时要整段复制，一个字都不能少。'
+          : '没能识别：' + (e.message || '请检查粘贴的内容');
+      }
+    };
+    setTimeout(() => { if (close.active()) input.focus(); }, 80);
   }
 
   function saveBackupFile(text, encrypted = false, label = '') {
@@ -2597,8 +2696,9 @@ const App = (() => {
     if (preserveInputs) captureRecordDraft();
     const details = keepScroll ? [...$view().querySelectorAll('details[id]')].map(el => [el.id, el.open]) : [];
     const focused = keepScroll ? document.activeElement : null;
-    const focusSelector = focused?.id ? '#' + focused.id
-      : focused?.dataset.stage ? `[data-stage="${focused.dataset.stage}"]` : null;
+    const focusedData = (focused && focused.dataset) || {};
+    const focusSelector = focused && focused.id ? '#' + focused.id
+      : focusedData.stage ? `[data-stage="${focusedData.stage}"]` : null;
     const inputs = preserveInputs ? [...$view().querySelectorAll('input[id], select[id], textarea[id]')]
       .map(el => ({ id: el.id, value: el.value, checked: el.checked })) : [];
     const y = window.scrollY;
@@ -2608,10 +2708,11 @@ const App = (() => {
       if (el) { el.value = saved.value; el.checked = saved.checked; }
     });
     details.forEach(([id, open]) => { const el = document.getElementById(id); if (el) el.open = open; });
-    if (focused && !focused.isConnected && focusSelector) document.querySelector(focusSelector)?.focus({ preventScroll: true });
-    if (focused?.dataset.med && !focused.isConnected) {
-      [...$view().querySelectorAll('[data-med][data-time]')]
-        .find(el => el.dataset.med === focused.dataset.med && el.dataset.time === focused.dataset.time)?.focus({ preventScroll: true });
+    const refocus = el => { if (el) el.focus({ preventScroll: true }); };
+    if (focused && !focused.isConnected && focusSelector) refocus(document.querySelector(focusSelector));
+    if (focusedData.med && !focused.isConnected) {
+      refocus([...$view().querySelectorAll('[data-med][data-time]')]
+        .find(el => el.dataset.med === focusedData.med && el.dataset.time === focusedData.time));
     }
     renderStorageNotice();
     /* 切页要回到顶部；但"数据变了重渲染"（打卡等）应该留在原处——
@@ -2635,7 +2736,8 @@ const App = (() => {
     history.replaceState(history.state, '', url.href);
     render(view);
     document.title = { today: '今日', train: '康复训练', records: '健康记录', meds: '用药核对', learn: '康复知识' }[view] + ' · 脑梗康复助手';
-    $view().querySelector('h1')?.focus({ preventScroll: true });
+    const heading = $view().querySelector('h1');
+    if (heading) heading.focus({ preventScroll: true });
   }
 
   /* ---------- 离线缓存与持久化存储（锦上添花：任何一步失败都静默，应用照常可用） ----------
@@ -2651,7 +2753,7 @@ const App = (() => {
     /* 请浏览器把本站存储标成"持久"：Safari 会清掉长期没打开的网站的 localStorage，
        安卓存储紧张时也可能清；持久化的不清。Safari/Chrome 按使用情况自行决定、不弹窗；
        Firefox 会弹一个老人看不懂的权限框，跳过。 */
-    if (/^https?:$/.test(location.protocol) && navigator.storage?.persist && !/Firefox\//.test(navigator.userAgent)) {
+    if (/^https?:$/.test(location.protocol) && navigator.storage && navigator.storage.persist && !/Firefox\//.test(navigator.userAgent)) {
       navigator.storage.persisted().then(p => p || navigator.storage.persist()).catch(() => {});
     }
   }
@@ -2671,7 +2773,8 @@ const App = (() => {
       if (document.visibilityState !== 'visible') return;
       refreshIfStale();
       Awake.poke();                                  // 浏览器在页面切走时释放了常亮，切回来再要
-      document.getElementById('trainer')?._tick?.(); // 锁屏期间到点的计时，回来立刻报"时间到"
+      const trainer = document.getElementById('trainer');
+      if (trainer && trainer._tick) trainer._tick();  // 锁屏期间到点的计时，回来立刻报"时间到"
     });
     window.addEventListener('pageshow', e => { if (e.persisted) refreshIfStale(); });
     window.addEventListener('focus', () => refreshIfStale());
@@ -2704,9 +2807,9 @@ const App = (() => {
           .filter(el => el.tabIndex >= 0 && el.getClientRects().length);
         const first = items[0], last = items[items.length - 1];
         if (e.shiftKey && (!items.includes(document.activeElement) || document.activeElement === first)) {
-          e.preventDefault(); last?.focus();
+          e.preventDefault(); if (last) last.focus();
         } else if (!e.shiftKey && (!items.includes(document.activeElement) || document.activeElement === last)) {
-          e.preventDefault(); first?.focus();
+          e.preventDefault(); if (first) first.focus();
         }
       }
     });

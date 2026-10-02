@@ -149,8 +149,11 @@ function copyApp(dir, { ver = '1', marker = '' } = {}) {
     await nav(cdp, `${base}/?view=today&sw=1`);
     await waitFor(cdp, 'navigator.serviceWorker.controller', '页面被离线缓存接管', 15000);
     const listed = await cachedURLs(cdp);
-    const expected = ['/', '/css/style.css?ver=1', '/icon.svg', '/manifest.json',
-      ...['data-exercises', 'data-articles', 'storage', 'charts', 'games', 'figures', 'speech', 'app'].map(n => `/js/${n}.js?ver=1`)].sort();
+    /* 期望值按 index.html 实际引用独立算一遍（不复用 sw.js 的解析），加了新脚本不用改这里 */
+    const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
+    const referenced = [...html.matchAll(/<script src="([^"]+)"|<link rel="(?:stylesheet|manifest)" href="([^"]+)"/g)].map(m => '/' + (m[1] || m[2]));
+    assert(referenced.includes('/js/app.js?ver=1') && referenced.length >= 10, '应从 index.html 读出整套运行文件引用');
+    const expected = ['/', '/icon.svg', ...referenced].sort();
     assert.deepStrictEqual(listed, expected, '缓存里应正好是页面与它引用的全部运行文件');
     assert(await cdp.eval("document.querySelector('meta[http-equiv=\"Content-Security-Policy\"]') !== null"), '页面自身 CSP 仍在');
     console.log('PASS  首次访问后离线缓存安装，缓存内容正好是整套运行文件（在生产同款 CSP 下）');

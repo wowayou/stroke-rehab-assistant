@@ -176,7 +176,9 @@ const Charts = (() => {
     if (canvas._chartsCleanup) canvas._chartsCleanup();
     const isHover = window.matchMedia && window.matchMedia('(hover: hover)').matches;
     const down = e => h.pick(e);
-    canvas.addEventListener('pointerdown', down);
+    /* iOS 12 及更早没有 Pointer Events：退回 click（同样带 clientX），点一下照样出 tooltip */
+    const downEvent = window.PointerEvent ? 'pointerdown' : 'click';
+    canvas.addEventListener(downEvent, down);
     let move = null, leave = null;
     if (isHover) {
       move = e => h.pick(e);
@@ -185,7 +187,7 @@ const Charts = (() => {
       canvas.addEventListener('pointerleave', leave);
     }
     canvas._chartsCleanup = () => {
-      canvas.removeEventListener('pointerdown', down);
+      canvas.removeEventListener(downEvent, down);
       if (move) canvas.removeEventListener('pointermove', move);
       if (leave) canvas.removeEventListener('pointerleave', leave);
       delete canvas._chartsCleanup;

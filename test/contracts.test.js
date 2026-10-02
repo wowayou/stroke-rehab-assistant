@@ -28,6 +28,48 @@ assert(/Strict-Transport-Security: max-age=31536000/.test(headers), 'Pages 响�
 assert(/X-Content-Type-Options: nosniff/.test(headers) && /Referrer-Policy: no-referrer/.test(headers), 'Pages 响应头必须限制内容嗅探与来源泄露');
 assert(/Permissions-Policy:.*camera=\(\).*geolocation=\(\).*microphone=\(\)/.test(headers), 'Pages 响应头必须关闭未使用的敏感浏览器能力');
 assert(/cp -r[^\n]*\b_headers\b/.test(deploy), '部署包必须包含 Cloudflare Pages 的 _headers 文件');
+/* 兼容老手机（v0.2.33）：运行时脚本的语法与 API 不超过 ES2018（Chrome 62 / iOS 11.3 能用）。
+   超了不是"某个功能不好用"，而是整个文件解析失败、老手机白屏。真解析器核对方法见 DEVELOPMENT §6「兼容性」。 */
+const stripComments = src => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[ \t])\/\/[^\n]*/gm, '$1');
+const RUNTIME_JS = ['js/data-exercises.js', 'js/data-articles.js', 'js/storage.js', 'js/charts.js', 'js/games.js', 'js/figures.js', 'js/speech.js', 'js/app.js'];
+const TOO_NEW = [
+  [/\?\.(?=[A-Za-z_$(\[])/, '可选链 ?.（Chrome 80 / iOS 13.4 才能解析）'],
+  [/\?\?/, '空值合并 ??（Chrome 80 / iOS 13.4）'],
+  [/(?:\|\||&&)=/, '逻辑赋值 ||= &&=（Chrome 85 / iOS 14）'],
+  [/\bcatch\s*\{/, '省略 catch 参数（Chrome 66）'],
+  [/\.(?:at|findLast|findLastIndex|toSorted|toReversed|replaceAll|matchAll|trimEnd|trimStart|flat|flatMap)\(/, '新的数组/字符串方法（老浏览器上调用即报错）'],
+  [/\b(?:Object\.hasOwn|Object\.fromEntries|structuredClone|globalThis|queueMicrotask|Promise\.allSettled|Promise\.any)\b/, '新的全局 API'],
+];
+RUNTIME_JS.forEach(f => {
+  const code = stripComments(read(f));
+  TOO_NEW.forEach(([re, what]) => assert(!re.test(code), `${f} 用了${what}：老手机会白屏，换成老写法`));
+});
+/* 兜底页必须是 ES5，并且最后加载：它要在主程序解析失败的浏览器里也能跑 */
+const bootCheck = stripComments(read('js/boot-check.js'));
+assert(!/=>|`|\b(?:let|const)\s+[A-Za-z_$[{]|\bclass\s+[A-Za-z_$]|\.\.\./.test(bootCheck), 'js/boot-check.js 只能用 ES5（var/function/字符串拼接）');
+assert(/<script src="js\/app\.js[^"]*"><\/script>\s*<script src="js\/boot-check\.js[^"]*"><\/script>\s*<\/body>/.test(html), 'boot-check.js 必须紧跟 app.js 最后加载');
+assert(/href="tel:120"/.test(read('js/boot-check.js')), '打不开时的兜底页也必须能拨 120');
+assert(!/(^|[;{\s])inset\s*:/m.test(css), 'CSS 不用 inset 简写定位（iOS 14.1 以前不认，浮层会盖不住屏幕）');
+/* 微信里不能下载文件：备份必须换成复制，且有粘贴恢复入口 */
+assert(/IN_WECHAT/.test(app) && /id="backup-copy"/.test(app) && /openPasteRestore/.test(app), '微信内置浏览器必须提供复制备份 + 粘贴恢复');
+
+/* DEVELOPMENT.md §0「改什么去哪里」只是索引，但索引指错比没有更糟：里面点名的文件与函数必须真实存在 */
+{
+  const dev = read('docs/DEVELOPMENT.md');
+  const sec0 = dev.slice(dev.indexOf('## 0.'), dev.indexOf('## 1.'));
+  const allJs = ['js/app.js', 'js/storage.js', 'js/speech.js', 'js/figures.js', 'js/games.js', 'js/charts.js', 'js/boot-check.js', 'sw.js'].map(read).join('\n');
+  const tokens = [...sec0.matchAll(/`([^`]+)`/g)].map(m => m[1]);
+  const isFile = t => /^(?:js\/|css\/|test\/)?[\w.-]+\.(?:js|css|sh|md)$|^_headers$/.test(t);
+  tokens.filter(isFile).forEach(f => {
+    assert(['', 'docs', 'js', 'test'].some(dir => fs.existsSync(path.join(root, dir, f))), `DEVELOPMENT §0 指向的文件不存在：${f}`);
+  });
+  /* 只查像代码名的：带 () 的函数、全大写常量、驼峰名；smoke 之类的普通词不查 */
+  tokens.filter(t => !isFile(t) && /^[A-Za-z_$][\w$]{3,}(?:\(\))?$/.test(t) && /\(\)$|^[A-Z][A-Z0-9_]+$|[a-z][A-Z]/.test(t)).forEach(t => {
+    const name = t.replace('()', '');
+    assert(new RegExp(`\\b${name}\\b`).test(allJs), `DEVELOPMENT §0 提到的 ${t} 在代码里找不到（改名后要同步索引）`);
+  });
+}
+
 /* 离线缓存（v0.2.32）：只缓存本站文件、不碰数据、只在线上注册；sw.js 必须摘掉页面那条禁止联网的 CSP，
    否则它的 fetch 全被拦（安装失败只是退化成没有离线缓存，但功能就白做了） */
 const sw = read('sw.js');
