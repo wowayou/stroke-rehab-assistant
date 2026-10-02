@@ -121,12 +121,14 @@ function brokenCopy(file, append) {
   try {
     /* ① 主程序解析失败 / 初始化崩溃：显示兜底页，急救照样能拨 */
     for (const [label, file, append] of [
-      ['主程序解析失败（老浏览器不认新语法）', 'js/app.js', '\n}}} // 故意的语法错误\n'],
+      ['主程序解析失败（老浏览器不认新语法）', 'js/app/core.js', '\n}}} // 故意的语法错误\n'],
+      ['最后一个文件解析失败（App 没定义）', 'js/app/boot.js', '\n}}} // 故意的语法错误\n'],
       ['初始化半路出错（数据文件没加载起来）', 'js/data-exercises.js', '\n}}} // 故意的语法错误\n'],
     ]) {
       const dir = brokenCopy(file, append);
       temps.push(dir);
       const cdp = await openPage(port, appURL(dir));
+      cdp.broken = true;   // 故意弄坏的页面，有报错是预期的
       pages.push(cdp);
       await waitFor(cdp, "document.querySelector('#view').textContent.includes('这个浏览器打不开本应用')", `${label}：显示兜底页`);
       assert(await cdp.eval("Boolean(document.querySelector('#view a[href=\"tel:120\"]'))"), `${label}：兜底页能拨 120`);
@@ -141,6 +143,17 @@ function brokenCopy(file, append) {
     await delay(300);
     assert(!(await ok.eval("document.body.classList.contains('app-failed') || document.querySelector('#view').textContent.includes('打不开本应用')")), '正常启动时不得出现兜底页');
     console.log('PASS  正常启动时兜底页不出现');
+
+    /* js/app/ 各文件共用全局作用域：顶层名字不能和浏览器自带的全局名同名（会悄悄盖掉 window 上的东西） */
+    const appNames = fs.readdirSync(path.join(root, 'js', 'app')).flatMap(f =>
+      fs.readFileSync(path.join(root, 'js', 'app', f), 'utf8').split('\n')
+        .map(l => l.match(/^(?:async\s+)?function\s+([\w$]+)|^(?:const|let|var)\s+([\w$]+)/)).filter(Boolean).map(m => m[1] || m[2]));
+    assert(appNames.length > 120, '应读出 js/app/ 的顶层名字');
+    const blank = await openPage(port, 'about:blank');
+    pages.push(blank);
+    const clash = await blank.eval(`${JSON.stringify(appNames)}.filter(n => n in window)`);
+    assert.deepStrictEqual(clash, [], '这些应用层名字与浏览器自带全局名同名：' + clash.join(', '));
+    console.log(`PASS  js/app/ 的 ${appNames.length} 个顶层名字都不与浏览器全局名冲突`);
 
     /* ② 微信：首次指引提醒搬到浏览器；备份换成复制；粘贴恢复；复制不全被拦下 */
     const wx = await openPage(port, appURL(root, 'today'), { ua: WECHAT_UA, script: "if (!sessionStorage.getItem('wx')) { localStorage.clear(); sessionStorage.setItem('wx', '1'); }" });
@@ -219,7 +232,7 @@ function brokenCopy(file, append) {
     await waitFor(old, "document.querySelector('.vital-tooltip')?.textContent.includes('138')", '没有 Pointer Events 时点图出数值');
     console.log('PASS  没有 Pointer Events：图表点一下照样出数值');
 
-    for (const p of pages.slice(2)) {
+    for (const p of pages.filter(p => !p.broken)) {
       const ex = p.events.filter(e => e.method === 'Runtime.exceptionThrown');
       assert.strictEqual(ex.length, 0, '正常页面运行期间不应有未捕获异常：' + ex.map(e => e.params.exceptionDetails.exception?.description).join('\n'));
     }

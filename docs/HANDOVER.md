@@ -5,7 +5,9 @@
 
 ## 当前版本（2026-10-02）
 
-v0.2.33 **仅在本地工作区，未提交、未部署**：兼容老手机（语法降到 ES2018，Chrome 62 / iOS 11.3 起可用；打不开时显示兜底页并保留拨 120）与微信内置浏览器（备份改为复制、可粘贴恢复）；文档拆出 `CHANGELOG.md`、`DEVELOPMENT.md` 加 §0「改什么去哪里」。见 [CHANGELOG](CHANGELOG.md)、AGENTS 第 17 条。
+v0.2.34 已提交（与 v0.2.32、v0.2.33 一样**未推送、未部署**）：`js/app.js` 按页面拆成 `js/app/` 下 10 个文件（纯搬移，逻辑未改；文件地图在 `js/app/core.js` 头部，加载约定见 DEVELOPMENT §4）。
+
+v0.2.33 已提交（`0d35949`），**未部署**：兼容老手机（语法降到 ES2018，Chrome 62 / iOS 11.3 起可用；打不开时显示兜底页并保留拨 120）与微信内置浏览器（备份改为复制、可粘贴恢复）；文档拆出 `CHANGELOG.md`、`DEVELOPMENT.md` 加 §0「改什么去哪里」。见 [CHANGELOG](CHANGELOG.md)、AGENTS 第 17 条。
 
 v0.2.32 已提交（`98fd467`），**未部署**：修了 5 个会让患者看错/记错的逻辑问题（页面开过夜显示昨天的服药勾、记录日期取渲染时刻、锁屏计时冻结与 iOS 结束音不响、停用药改日期复活、未到点的药算漏服）并加了多页面同步、训练常亮、离线缓存等；清单与验证见 [CHANGELOG](CHANGELOG.md)，约定见 AGENTS.md 第 15、16 条。**部署后必须核对**：`curl -sI https://stroke-rehab-assistant.pages.dev/sw.js` 不应带 `content-security-policy`、应有 `cache-control: no-cache`（否则离线缓存安装失败，站点照常但没有离线能力）；再用真机走 [MANUAL-TEST.md](MANUAL-TEST.md) 的 v0.2.32 小节。
 

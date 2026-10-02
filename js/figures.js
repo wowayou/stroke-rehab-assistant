@@ -8,7 +8,7 @@
 
    数据结构：POSES[id] = { alt, view, frames:[poseA, poseB], props, labels }
       pose = { head, sh, el, wr, hip, kn, an, toe }（缺省的关节不画）
-   FIGURES[id] = { alt, svg }  由 POSES 在加载时渲染而成，app.js 只用 FIGURES。
+   FIGURES[id] = { alt, svg }  由 POSES 在加载时渲染而成，应用层（js/app/core.js 的 figureHTML）只用 FIGURES。
 
    坐标系：局部帧 0..104 × 0..118，y 向下；地面/床面 y=100。
       左帧画在 translate(4,0)，右帧 translate(128,0)，画布 240×140。

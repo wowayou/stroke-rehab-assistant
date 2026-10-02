@@ -21,7 +21,7 @@
 10. **加浮层必须接返回键**（v0.2.22）：开浮层时 `overlayPush()` 压一个历史条目；**主动关闭（✕ / Esc）只发起 `history.back()`**，DOM 统一由 `popstate` → `closeTopOverlayDOM()` 关闭（没有 `overlayPop()` 这个函数，别照着旧文档写）。父窗口打开帮助或独立任务时叠加子浮层、保留父窗口；同一任务的连续步骤用 `close.replace(openNext)` 原位复用条目。数据变更后的重渲染用 `render(view, { keepScroll: true })`，别把人弹回页首。相关回归跑 `node test/overlay.test.js --stress`。
 11. **同类条目用分组列表，不要一条一张卡**（v0.2.26）：列表项是"一张卡内分行"（发丝线分隔），不是每项一张浮动卡片。按钮分三级：**实心蓝每屏只留一个主操作**（保存/打卡/拨 120），重复出现的行内动作用 `--primary-soft` 底 + `--primary-dark` 字，完成态用浅绿。分组标题用 `.section-label`/`.ex-group-label` 加粗成扫读锚点，不用小灰字。
 12. **朗读稿与显示文案分离**（v0.2.27）：屏幕上的写法是给眼睛的（`10～15次`、`130/80 mmHg`、`10次×2组`），原样送进 TTS 就是"机器味"的主因。要改朗读效果**只动 `js/speech.js` 的 `SPEAK_RULES`，绝不改数据文件里的显示文案**。该表顺序敏感（含 `/` 的单位排在裸 `/` 之前；去 emoji 排在箭头之后）；吃前后空白只能用 `[ \t]`，**用 `\s` 会连换行一起吃掉、把两句粘成一句**；`speech.js` 内**禁用 lookbehind**（老 WebView 不支持，会让整个文件解析失败、朗读全哑）。相关回归跑 `node test/speech.test.js`。
-13. **转义纪律**：用户输入插入 HTML 前必须过 `app.js` 内的 `esc()`（`data-*.js` 里的静态内容例外）。
+13. **转义纪律**：用户输入插入 HTML 前必须过 `js/app/core.js` 的 `esc()`（`data-*.js` 里的静态内容例外）。
 14. 用户未要求时不做 git 提交/推送（注意：上级目录的 `.git` 是空目录，非有效仓库；本项目自己的仓库是有效的，远程见 HANDOVER §1.2）。
 15. **页面会开着跨天、会和别的页面同开**（v0.2.32）：手机切后台不重载页面，屏幕上的"今天"可能是昨天、数据可能已被另一标签改过。① 日期时间在**动作发生时**现取 `Store.today()/timeStr()`，不要用渲染时刻填进 DOM 的值（记录表单的"跟着现在走"见 `whenValue()`）；② 跨天/别处改过数据的重画统一走 `refreshIfStale()`，按日显示的新视图不用自己处理；③ "吃没吃到"类统计只算**已到点**的次数（`dueOnly`），今日核对表才数全天。相关回归跑 `node test/lifecycle.test.js`。
 16. **Store 的写入 API 先校验再改数据**（v0.2.32）：不合法就 `refuse(原因)` 返回 false、原因由 `Store.actionError()` 给界面；**不能依赖 `normalizeState()` 去"修正"**——它会把条目静默丢掉或改掉，而 `save()` 照样报成功（曾让停用的药复活、让记录"保存成功"却消失）。
@@ -32,7 +32,7 @@
 ```bash
 # 必跑（改到对应模块就得跑）
 node test/storage.test.js      # 数据层（改 storage.js 必跑；输出里的 JSON SyntaxError 告警是预期的兜底测试）
-node test/contracts.test.js    # 跨模块静态硬约定（改 app.js/css/_headers 必跑，很快）
+node test/contracts.test.js    # 跨模块静态硬约定（改 js/app/、css、_headers 必跑，很快）
 node test/speech.test.js       # 朗读层（改 speech.js 或朗读稿必跑）
 node test/figures.test.js      # 简笔画几何（改 figures.js 必跑）
 

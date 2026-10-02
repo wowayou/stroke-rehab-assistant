@@ -419,7 +419,7 @@ const Games = (() => {
 
   const registry = { memory, sequence, stroop, math };
   /* opts: { onSwitch(gameKey), onQuit() } —— 供"换个不用算的""先打卡收工"使用，
-     由 app.js 负责真正打开另一个动作/打卡，游戏层不碰 Store。 */
+     由 js/app/train.js 负责真正打开另一个动作/打卡，游戏层不碰 Store。 */
   function start(key, container, onDone, opts) {
     const fn = registry[key];
     if (fn) fn(container, onDone, opts || {});

@@ -4,7 +4,9 @@ const path = require('path');
 
 const root = path.join(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
-const app = read('js/app.js');
+/* 应用层是 js/app/ 下按固定顺序加载的一组文件（2026-10 由 app.js 拆出），按加载顺序拼起来当一份检查 */
+const APP_FILES = ['core', 'overlay', 'today', 'train', 'records', 'meds', 'learn', 'settings', 'backup', 'boot'].map(n => `js/app/${n}.js`);
+const app = APP_FILES.map(read).join('\n');
 const games = read('js/games.js');
 const exercises = read('js/data-exercises.js');
 const css = read('css/style.css');
@@ -20,7 +22,7 @@ function assert(cond, msg) {
 assert(!games.includes('/${TOTAL}'), '患者界面/历史不应重新出现 N/总数 的比分');
 assert(!exercises.includes('答对越多越好'), '认知训练文案不应按答对数量施压');
 assert(/\.btn\.small\s*\{[^}]*min-height:\s*48px/s.test(css), '小按钮触控高度必须至少 48px');
-assert(!/min-height:\s*(?:4[0-7]|[0-3]?\d)px/.test(app), 'app.js 内联交互控件不得低于 48px');
+assert(!/min-height:\s*(?:4[0-7]|[0-3]?\d)px/.test(app), 'js/app/ 内联交互控件不得低于 48px');
 assert(/Content-Security-Policy/.test(html) && /connect-src 'none'/.test(html), '页面必须保留禁止联网的 CSP');
 assert(/Content-Security-Policy:/.test(headers) && /connect-src 'none'/.test(headers), 'Pages 响应头必须保留禁止联网的 CSP');
 assert(/frame-ancestors 'none'/.test(headers) && /X-Frame-Options: DENY/.test(headers), 'Pages 响应头必须禁止第三方页面嵌入');
@@ -31,7 +33,7 @@ assert(/cp -r[^\n]*\b_headers\b/.test(deploy), '部署包必须包含 Cloudflare
 /* 兼容老手机（v0.2.33）：运行时脚本的语法与 API 不超过 ES2018（Chrome 62 / iOS 11.3 能用）。
    超了不是"某个功能不好用"，而是整个文件解析失败、老手机白屏。真解析器核对方法见 DEVELOPMENT §6「兼容性」。 */
 const stripComments = src => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[ \t])\/\/[^\n]*/gm, '$1');
-const RUNTIME_JS = ['js/data-exercises.js', 'js/data-articles.js', 'js/storage.js', 'js/charts.js', 'js/games.js', 'js/figures.js', 'js/speech.js', 'js/app.js'];
+const RUNTIME_JS = ['js/data-exercises.js', 'js/data-articles.js', 'js/storage.js', 'js/charts.js', 'js/games.js', 'js/figures.js', 'js/speech.js', ...APP_FILES];
 const TOO_NEW = [
   [/\?\.(?=[A-Za-z_$(\[])/, '可选链 ?.（Chrome 80 / iOS 13.4 才能解析）'],
   [/\?\?/, '空值合并 ??（Chrome 80 / iOS 13.4）'],
@@ -47,7 +49,21 @@ RUNTIME_JS.forEach(f => {
 /* 兜底页必须是 ES5，并且最后加载：它要在主程序解析失败的浏览器里也能跑 */
 const bootCheck = stripComments(read('js/boot-check.js'));
 assert(!/=>|`|\b(?:let|const)\s+[A-Za-z_$[{]|\bclass\s+[A-Za-z_$]|\.\.\./.test(bootCheck), 'js/boot-check.js 只能用 ES5（var/function/字符串拼接）');
-assert(/<script src="js\/app\.js[^"]*"><\/script>\s*<script src="js\/boot-check\.js[^"]*"><\/script>\s*<\/body>/.test(html), 'boot-check.js 必须紧跟 app.js 最后加载');
+assert(/<script src="js\/app\/boot\.js[^"]*"><\/script>\s*<script src="js\/boot-check\.js[^"]*"><\/script>\s*<\/body>/.test(html), 'boot-check.js 必须紧跟 js/app/boot.js 最后加载');
+/* 拆分后的应用层：index.html 必须按约定顺序引用全部文件，否则加载时就会引用到还没定义的名字 */
+assert([...html.matchAll(/<script src="js\/app\/([\w-]+)\.js/g)].map(m => `js/app/${m[1]}.js`).join() === APP_FILES.join(), 'index.html 必须按 core→…→boot 的顺序加载 js/app/ 全部文件');
+/* 各文件共用一个全局作用域：顶层名字重复时，let/const 会让整页加载失败，function 则会悄悄覆盖前一个 */
+{
+  const seen = new Map();
+  APP_FILES.forEach(f => read(f).split('\n').forEach(line => {
+    const m = line.match(/^(?:async\s+)?function\s+([\w$]+)|^(?:const|let|var)\s+([\w$]+)/);
+    if (!m) return;
+    const name = m[1] || m[2];
+    assert(!seen.has(name), `顶层名字 ${name} 在 ${seen.get(name)} 和 ${f} 里重复声明`);
+    seen.set(name, f);
+  }));
+  assert(seen.size > 120, '应能从 js/app/ 读出全部顶层名字（读不到说明解析规则失效）');
+}
 assert(/href="tel:120"/.test(read('js/boot-check.js')), '打不开时的兜底页也必须能拨 120');
 assert(!/(^|[;{\s])inset\s*:/m.test(css), 'CSS 不用 inset 简写定位（iOS 14.1 以前不认，浮层会盖不住屏幕）');
 /* 微信里不能下载文件：备份必须换成复制，且有粘贴恢复入口 */
@@ -57,11 +73,11 @@ assert(/IN_WECHAT/.test(app) && /id="backup-copy"/.test(app) && /openPasteRestor
 {
   const dev = read('docs/DEVELOPMENT.md');
   const sec0 = dev.slice(dev.indexOf('## 0.'), dev.indexOf('## 1.'));
-  const allJs = ['js/app.js', 'js/storage.js', 'js/speech.js', 'js/figures.js', 'js/games.js', 'js/charts.js', 'js/boot-check.js', 'sw.js'].map(read).join('\n');
+  const allJs = [...APP_FILES, 'js/storage.js', 'js/speech.js', 'js/figures.js', 'js/games.js', 'js/charts.js', 'js/boot-check.js', 'sw.js'].map(read).join('\n');
   const tokens = [...sec0.matchAll(/`([^`]+)`/g)].map(m => m[1]);
-  const isFile = t => /^(?:js\/|css\/|test\/)?[\w.-]+\.(?:js|css|sh|md)$|^_headers$/.test(t);
+  const isFile = t => /^(?:js\/(?:app\/)?|css\/|test\/)?[\w.-]+\.(?:js|css|sh|md)$|^_headers$/.test(t);
   tokens.filter(isFile).forEach(f => {
-    assert(['', 'docs', 'js', 'test'].some(dir => fs.existsSync(path.join(root, dir, f))), `DEVELOPMENT §0 指向的文件不存在：${f}`);
+    assert(['', 'docs', 'js', 'js/app', 'test'].some(dir => fs.existsSync(path.join(root, dir, f))), `DEVELOPMENT §0 指向的文件不存在：${f}`);
   });
   /* 只查像代码名的：带 () 的函数、全大写常量、驼峰名；smoke 之类的普通词不查 */
   tokens.filter(t => !isFile(t) && /^[A-Za-z_$][\w$]{3,}(?:\(\))?$/.test(t) && /\(\)$|^[A-Z][A-Z0-9_]+$|[a-z][A-Z]/.test(t)).forEach(t => {

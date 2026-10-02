@@ -150,7 +150,7 @@ assert(N('（多见于轻型/小卒中）').includes('小卒中'), '含中文的
 eval(read('js/data-exercises.js') + '; globalThis.EXERCISES = EXERCISES;');
 eval(read('js/data-articles.js') + '; globalThis.ARTICLES = ARTICLES; globalThis.BEFAST = BEFAST;');
 
-/* 与 app.js 的 exerciseSpeechText 同构（那边依赖 DOM，这里只取同一批字段） */
+/* 与 js/app/core.js 的 exerciseSpeechText 同构（那边依赖 DOM，这里只取同一批字段） */
 function exScript(ex) {
   const lines = [ex.name + '。', ex.goal + '。', '动作要领。'];
   ex.steps.forEach((s, i) => lines.push(`第${i + 1}步，${s}。`));

@@ -4,7 +4,7 @@
 
 ## 0. 改什么，去哪里（速查）
 
-> 只是索引，规则以 [`AGENTS.md`](../AGENTS.md) 为准、细节在下面各节。**先在这张表里找到要做的事，再只读对应的文件段与测试**，不必通读全部文档和 `app.js`。测试名对应 `test/<名>.test.js`（`smoke` 是 `test/smoke.sh`），命令见 AGENTS「验证命令」。
+> 只是索引，规则以 [`AGENTS.md`](../AGENTS.md) 为准、细节在下面各节。**先在这张表里找到要做的事，再只读对应的文件段与测试**，不必通读全部文档和代码。测试名对应 `test/<名>.test.js`（`smoke` 是 `test/smoke.sh`），命令见 AGENTS「验证命令」。
 
 | 要做的事 | 改哪里 | 先读 | 改完必跑 |
 |---|---|---|---|
@@ -14,13 +14,13 @@
 | 画/改动作示意图 | `js/figures.js` 的 `POSES` | §6 figures | figures + `preview-figures.js` 看图 |
 | 认知游戏 | `js/games.js` | §6 games · 硬约定 5 | smoke · overlay |
 | 数据结构、校验、统计口径 | `js/storage.js`：`normalizeState` / `medProblem` / `medCountOn` | §5 · §6 storage · 硬约定 7、8、16 | storage |
-| 某个页面的显示与交互 | `js/app.js` 搜 `【区】`（今日/训练/记录/用药/知识/设置） | app.js 顶部模块地图 · DESIGN-SYSTEM | overlay · settings · smoke |
-| 加弹窗/浮层 | `openModal()`、`overlayPush()` | §6 app.js 浮层 · 硬约定 10 | overlay --stress |
-| 点一下就生效的设置 | `segGroupHTML` / `bindSegGroup` / `commitProfile` | 硬约定 9 | settings |
-| 跨天、锁屏计时、多页面同步 | `refreshIfStale()`、`whenValue()`、`openTrainer()` 的计时段 | §6 app.js · 硬约定 15 | lifecycle |
-| 备份、恢复、加密、粘贴恢复 | `storage.js` 备份段 + `app.js` 设置区 | §5 隐私边界 · DESIGN-SYSTEM §5 | storage · encryption · overlay · backup-stress · compat |
+| 某个页面的显示与交互 | `js/app/` 下对应的一个文件：`today.js` `train.js` `records.js` `meds.js` `learn.js` `settings.js` `backup.js`，文件内搜 `【区】` | `js/app/core.js` 头部的文件地图 · DESIGN-SYSTEM | overlay · settings · smoke |
+| 加弹窗/浮层 | `js/app/overlay.js`：`openModal()`、`overlayPush()` | §6 应用层 浮层 · 硬约定 10 | overlay --stress |
+| 点一下就生效的设置 | `js/app/core.js`：`segGroupHTML` / `bindSegGroup` / `commitProfile` | 硬约定 9 | settings |
+| 跨天、锁屏计时、多页面同步 | `js/app/boot.js` 的 `refreshIfStale()`、`js/app/records.js` 的 `whenValue()`、`js/app/train.js` 的 `openTrainer()` 计时段 | §6 应用层 · 硬约定 15 | lifecycle |
+| 备份、恢复、加密、粘贴恢复 | `storage.js` 备份段 + `js/app/backup.js` | §5 隐私边界 · DESIGN-SYSTEM §5 | storage · encryption · overlay · backup-stress · compat |
 | 离线缓存 | `sw.js`、`_headers` 的 `/sw.js` 规则 | §6 sw.js | sw |
-| 老手机、微信内置浏览器 | 语法上限、`js/boot-check.js`、`IN_WECHAT` | §6 兼容性 · 硬约定 17 | contracts · compat |
+| 老手机、微信内置浏览器 | 语法上限、`js/boot-check.js`、`js/app/core.js` 的 `IN_WECHAT` | §6 兼容性 · 硬约定 17 | contracts · compat |
 | 样式、适老化 | `css/style.css`（颜色尺寸只改 `:root` 变量） | DESIGN-SYSTEM · 硬约定 4、11 | contracts · overlay（90 组布局） |
 | 部署上线 | `deploy.sh` | HANDOVER §1.2、§3 | 部署后按 HANDOVER「当前版本」核对 |
 | 查某一版为什么这样改 | — | [CHANGELOG.md](CHANGELOG.md) | — |
@@ -52,7 +52,7 @@ stroke-rehab-assistant/
 ├── index.html            # 应用外壳：顶栏、视图容器、底部导航、modal/toast 挂载点
 ├── _headers              # Cloudflare Pages 生产响应头（CSP/HSTS/防嵌入等）
 ├── manifest.json         # PWA manifest（支持"添加到主屏幕"）
-├── sw.js                 # 离线缓存（Service Worker），只在线上 HTTPS 由 app.js 注册；不在脚本加载顺序里
+├── sw.js                 # 离线缓存（Service Worker），只在线上 HTTPS 由 js/app/boot.js 注册；不在脚本加载顺序里
 ├── icon.svg              # 应用图标
 ├── css/style.css         # 全部样式。顶部 :root 定义设计变量（颜色/圆角/导航高度）
 ├── js/
@@ -63,7 +63,13 @@ stroke-rehab-assistant/
 │   ├── games.js          # 【逻辑】Games：4 个认知训练小游戏
 │   ├── figures.js        # 【逻辑】FIGURES：训练动作双帧简笔示意图
 │   ├── speech.js         # 【逻辑】Speech：Web Speech API 朗读封装
-│   ├── app.js            # 【逻辑】App：视图渲染、训练引导器、弹窗、导航、初始化
+│   ├── app/              # 【逻辑】应用层（2026-10 由 app.js 按页面拆出，共用一个全局作用域，按下列顺序加载）
+│   │   ├── core.js       #   共享状态、工具、少算数、分段控件、朗读稿；头部有全部文件的地图
+│   │   ├── overlay.js    #   浮层与返回键、openModal
+│   │   ├── today.js  train.js  records.js  meds.js  learn.js   # 五个页面（训练含训练引导器，知识含急救弹窗）
+│   │   ├── settings.js   #   设置弹窗、字号/音色套用、换声音引导、首次指引
+│   │   ├── backup.js     #   从备份恢复（选文件/粘贴/解密/预览）与下载/复制/加密备份
+│   │   └── boot.js       #   render/go、跨天与跨页面重画、离线缓存注册、init（最后加载）
 │   └── boot-check.js     # 【兜底】ES5：主程序没起来（老浏览器/初始化出错）时显示人话 + 拨 120，最后加载
 ├── test/
 │   ├── storage.test.js   # 数据层单元测试（node 直接跑）
@@ -100,12 +106,18 @@ stroke-rehab-assistant/
 `index.html` 底部按此顺序加载，后者依赖前者定义的全局名：
 
 ```
-data-exercises.js → data-articles.js → storage.js → charts.js → games.js → figures.js → speech.js → app.js → boot-check.js
+data-exercises.js → data-articles.js → storage.js → charts.js → games.js → figures.js → speech.js
+→ app/core.js → app/overlay.js → app/today.js → app/train.js → app/records.js → app/meds.js → app/learn.js → app/settings.js → app/backup.js → app/boot.js
+→ boot-check.js
 ```
 
 `boot-check.js` 必须最后：它靠 `typeof App` 和 `#view` 是否有内容判断主程序有没有起来。
 
-全局名清单：`EXERCISES` `EX_CATS` `STAGES` `DAILY_PLAN` `ARTICLES` `BEFAST` `Store` `Charts` `Games` `FIG` `POSES` `FIGURES` `Speech` `App`。`sw.js` 不在这个顺序里（它跑在 Service Worker 线程，由 `app.js` 的 `registerOffline()` 注册），也不读任何全局名。新增文件时在 app.js 之前插入，并在此处记录（同时记得加进 `test/smoke.sh` 的静态资源清单；`deploy.sh` 整目录拷贝 `js/`，无需改）。
+全局名清单：`EXERCISES` `EX_CATS` `STAGES` `DAILY_PLAN` `ARTICLES` `BEFAST` `Store` `Charts` `Games` `FIG` `POSES` `FIGURES` `Speech` `App`，外加 `js/app/` 各文件的顶层函数与变量。
+
+**`js/app/` 是同一个程序切成的几段**（2026-10 由 2800 行的 app.js 拆出，纯搬移、逻辑未改）：普通 `<script>` 共用一个全局作用域，所以一个文件里的函数可以直接调用另一个文件里的函数（运行时都已加载）；但**文件顶层立即执行的代码只能用排在它前面的文件里的东西**——`boot.js` 的 `RENDERERS` 在加载时就引用各页的 `renderXxx`，所以它必须最后。代价是这些名字都成了全局名，两条护栏防止出事：`contracts.test.js` 查各文件顶层名字不重复（`let/const` 重复整页加载失败，`function` 重复会悄悄覆盖）；`compat.test.js` 在真实浏览器里查它们不与浏览器自带的全局名同名（同名会盖掉 `window` 上的东西）。为什么不用 ES Modules：会让 `file://` 白屏、老设备兼容更差（硬约定 2、17），而切文件已经拿到"一次只读一块"的主要好处。
+
+`sw.js` 不在这个顺序里（它跑在 Service Worker 线程，由 `js/app/boot.js` 的 `registerOffline()` 注册），也不读任何全局名。新增脚本时放在 `js/app/boot.js` 之前的合适位置，同步改 `index.html`、本节、`contracts.test.js` 的 `APP_FILES`（应用层文件）与 `test/smoke.sh` 的静态资源清单；`deploy.sh` 整目录拷贝 `js/`，无需改。
 
 ## 5. 数据模型（localStorage）
 
@@ -155,7 +167,7 @@ data-exercises.js → data-articles.js → storage.js → charts.js → games.js
 
 ## 6. 各模块要点
 
-### app.js（主逻辑，约 2100 行；顶部有「模块地图」目录，各视图区标题带 `【区】` 前缀可搜索跳转）
+### 应用层 js/app/（原 app.js；`core.js` 头部有文件地图，各文件内分区标题带 `【区】` 前缀可搜索跳转）
 
 - **视图注册表** `RENDERERS = { today, train, records, meds, learn }`，`App.go(view)` 切换。支持 URL 参数 `?view=xxx` 直达（冒烟测试和深度链接依赖此特性）。
 - **渲染模式**：每个 `renderXxx()` 整段重建 `#view` 的 innerHTML，然后绑定事件。数据变更后调 `render(currentView)` 重渲染。没有虚拟 DOM，没有局部更新——数据量小，整页重渲染足够快，别过早优化。
@@ -214,19 +226,19 @@ data-exercises.js → data-articles.js → storage.js → charts.js → games.js
 
 ### games.js
 
-`Games.start(key, container, onDone, opts)`；`onDone(score, detailText)` 由游戏的"完成打卡"按钮触发。`opts = { onSwitch(gameKey), onQuit() }` 供"换个不用算的""先打卡收工"使用——**游戏层不碰 `Store`**，打卡与打开别的动作都由 app.js 执行。**新增游戏**：写 `function mygame(container, onDone, opts)`，结束时调 `showResult()`，注册进 `registry`，再到 data-exercises.js 加一条 `mode: {type:'game', game:'mygame'}` 的动作。游戏内的 `setInterval` 必须存入模块级 `timerId`（`Games.stop()` 靠它清理）。
+`Games.start(key, container, onDone, opts)`；`onDone(score, detailText)` 由游戏的"完成打卡"按钮触发。`opts = { onSwitch(gameKey), onQuit() }` 供"换个不用算的""先打卡收工"使用——**游戏层不碰 `Store`**，打卡与打开别的动作都由 `js/app/train.js` 执行。**新增游戏**：写 `function mygame(container, onDone, opts)`，结束时调 `showResult()`，注册进 `registry`，再到 data-exercises.js 加一条 `mode: {type:'game', game:'mygame'}` 的动作。游戏内的 `setInterval` 必须存入模块级 `timerId`（`Games.stop()` 靠它清理）。
 
 **「算一算」（`math`）的设计约束**——这是最容易让患者产生逆反心理的一处，改动前请读 §6 的"少算数原则"：三档难度自选且随时可换（`MATH_LEVELS`，`mid` 档刻意**不产生进位/退位**）；**答错不判错不记分**（第一次橙色"再看看"允许重选，第二次给答案 + `mathExplain(q)` 的分步拆解）；「看提示」「这道先跳过」都不扣分不变红；连错两道自动降到容易档；结果页只报"做完几道 / 自己算出几道"，**不出现比分**。`mathExplain` 有凑十、退十、整十、借十四种讲法，改它必须穷举校验文案里的每个算式与中间结果（曾出现"先减 0 回到整十"这类错误 670 例）。
 
 ### speech.js
 
-`Speech.speak(text, {rateKey, onEnd, onFail})` / `stop()` / `speaking()` / `supported()` / `rateOf(key)` / `splitSentences(text)` / `normalize(text)` / `voices()` / `setVoice(name)` / `voiceName()`。Web Speech API，零依赖。app.js 侧用 `speakBtnHTML(id, label)` + `bindSpeak(btn, getText)` 接线，朗读稿由 `exerciseSpeechText(ex)` / `articleSpeechText(a)` 生成。
+`Speech.speak(text, {rateKey, onEnd, onFail})` / `stop()` / `speaking()` / `supported()` / `rateOf(key)` / `splitSentences(text)` / `normalize(text)` / `voices()` / `setVoice(name)` / `voiceName()`。Web Speech API，零依赖。应用层（`js/app/core.js`）用 `speakBtnHTML(id, label)` + `bindSpeak(btn, getText)` 接线，朗读稿由 `exerciseSpeechText(ex)` / `articleSpeechText(a)` 生成。
 
 **"听起来生硬"是三层问题，不是音色问题（v0.2.27）**。用户回报"配音太生硬"，本能反应是换音色，但实测三层里音色是影响最小的一层：
 
 1. **喂给引擎的文本（主因）**。屏幕上的写法是给眼睛的，原样丢给 TTS 就是机器味的来源：`10～15次` 念成"10 15次"（范围整个听不出来）、`mmHg` 拼成"m m h g"、`10次×2组` 念成"10次乘2组"、`130/80 mmHg` 念成"130斜杠80"、`——` 引出的补充说明被跳过或念出怪音、`阿司匹林+氯吡格雷` 的加号念不出来。`normalize()` 里的 `SPEAK_RULES` 逐条换成口语说法，**界面显示一个字都不改**（数据文件不动）。规则表**顺序敏感**，改动前读表上的注释：含 `/` 的单位必须排在裸 `/` 规则之前（否则 `mmol/L` 先变成"mmol或L"）；去 emoji 的码位区间覆盖了箭头，必须排在箭头规则之后（否则 `→` 被直接删掉、递进关系丢失）。两条易犯的错：① 吃单位/破折号前后的空白只能用 `[ \t]`，**用 `\s` 会连换行一起吃掉**，把上下两句粘成一句（这条踩过，被测试抓出来）；② 乘号规则只能要求右边是数字——动作库里 7 处乘号左边全是量词（`10次×2组`、`5～10个台阶×2～3回`），要求左边也是数字会一处都匹配不上。
 2. **句间没有换气**。原先是"上一句 `onend` 立刻 `speak` 下一句"，机关枪式。现按标点给不同长度的停顿（`GAP_SENTENCE` 320ms / `GAP_CLAUSE` 130ms，`gapAfter()` 判断）。**停顿定时器也必须认代号**：停顿期间用户点了停止或换了内容，定时器到点不能把旧队列接着念下去。
-3. **文章的块级边界**（在 app.js 侧）。`articleSpeechText` 原先用 `textContent` 直取，`<h3>2. 控制血压</h3><ul><li>高血压是…` 被粘成"控制血压高血压是…"，一句破句念到底。改成 `collectSpeechBlocks()` 按块级标签断行、段末没标点补句号。**只在"叶子块"上取文本**（`node.matches(SPEECH_BLOCK) && !node.querySelector(SPEECH_BLOCK)`），否则 `ul`/`div` 这类外层容器会把内层每一段重复念一遍。实测 9 篇文章切出 10~21 块。
+3. **文章的块级边界**（在 `js/app/core.js` 侧）。`articleSpeechText` 原先用 `textContent` 直取，`<h3>2. 控制血压</h3><ul><li>高血压是…` 被粘成"控制血压高血压是…"，一句破句念到底。改成 `collectSpeechBlocks()` 按块级标签断行、段末没标点补句号。**只在"叶子块"上取文本**（`node.matches(SPEECH_BLOCK) && !node.querySelector(SPEECH_BLOCK)`），否则 `ul`/`div` 这类外层容器会把内层每一段重复念一遍。实测 9 篇文章切出 10~21 块。
 
 **音色可选**：有些系统装了多个中文音色，默认那个不一定最好听。`voices()` 只列中文音色（`/^zh/`）；音色名对老人没有意义，`VOICE_ALIAS` 按 **token 子串**匹配给中文说法（不能用整名相等——iOS 是 `Tingting`、安卓是 `Chinese China`、Windows 是 `Microsoft Xiaoxiao Online (Natural) - Chinese (Mainland)`，整名相等只认得出 iOS 那一种，其余会把一长串英文塞进按钮），认不出的走 `shortLabel()` 去掉厂商前缀与括注、实在没人名就用"中文语音"兜底。设置页只在 `voiceOpts.length > 1` 时才显示这一档（只有一个声音时让人"选"是无意义的噪音）。存 `profile.speechVoice`（自由字符串，**不能白名单**：每台机器装的音色不一样，枚举不出来），机上不存在时 `pickVoice()` 静默回落到 zh-CN → 任意中文，换手机或恢复别人的备份都不会哑掉。凡是整体换掉 `data` 的地方（启动、恢复备份、撤销恢复、清空）都要 `applyVoice()` 重新套一次——和 `applyFont()` 同一个道理。
 
@@ -257,7 +269,7 @@ data-exercises.js → data-articles.js → storage.js → charts.js → games.js
 
 1. `FIG` —— 骨架与画法引擎。`SEG` 按成人 7.5 头身折算各肢段长度（头 12 → 全身 90；来源见 docs/RESEARCH.md §十）；`at(from, deg, len)` 沿角度走一段得到关节；`joint(a, c, l1, l2, dir)` 是两连杆逆解——**已知髋与脚、反求膝**，这是"抬臀时脚必须钉在原地"的关键；`figure(pose)` 把姿势画成 SVG；`foot(an, toe)` 把脚画成楔形。
 2. `POSES[id] = { alt, props, arrow, frames:[poseA, poseB], labels, review, ... }` —— 姿势用 `at`/`joint` **算**出来，因此肢段长度由构造保证一致。局部帧 0..104 × 0..118，y 向下，地面/床面 y=100。`review` 是这张图复核状态的唯一真源（见下）。
-3. `FIGURES[id] = { alt, svg }` —— 加载时渲染（左帧 `translate(4,0)`、右帧 `translate(128,0)`，画布 240×140）。app.js 只用这一层：`figureHTML(ex)` 有图就画、没图退回大 emoji，**不留空位**。
+3. `FIGURES[id] = { alt, svg }` —— 加载时渲染（左帧 `translate(4,0)`、右帧 `translate(128,0)`，画布 240×140）。应用层只用这一层（`js/app/core.js`）：`figureHTML(ex)` 有图就画、没图退回大 emoji，**不留空位**。
 
 `node test/figures.test.js` 是这套东西的护栏，**改 figures.js 必跑**。它把"画得对不对"变成可断言的几何性质：每帧肢段长度等于骨架定义、两帧必须是**同一个人**（同名肢段长度相等）、关节不穿地、两帧差异足够大（否则小尺寸看不出动作）、key 必须对得上真实动作 id，再加每个动作的医学要点（踝泵勾脚绷脚夹角 ≥60° 且不穿床垫、Bobath 双手必须过头顶且与头横向拉开 ≥8、桥式肩脚不动且肩髋膝近似共线、坐到站髋明显升高躯干竖直、踏步抬起侧膝高于支撑侧且脚离地）。**它第一次运行就抓出一个真 bug**（踏步站立帧的远侧腿被画到了髋以上）。
 
@@ -362,7 +374,7 @@ for f in js/*.js; do node --check "$f"; done
 
 1. **来源**：训练动作与文案参考《中国脑卒中康复治疗指南》《中国缺血性卒中和短暂性脑缺血发作二级预防指南》等公开指南的通行建议。修改医学内容需给出指南/权威来源依据，在 PR/提交说明里注明。
 2. **不越界**：本应用是健康教育与自我管理工具。**永远不要**：给出个体化用药建议（只做"遵医嘱记录与核对"）、承诺疗效、弱化就医提示、删除免责声明和安全警示。
-3. **数值有主**：文中出现的目标值（血压耐受时<130/80、LDL-C<1.8mmol/L、限盐5g、双抗21天等）均为指南一般性建议，展示时必须伴随"具体遵医嘱"措辞。指南更新时集中检查：`data-articles.js`（prevention/diet/followup/positioning/rehab-principle 五篇）、`app.js` 的 `bpBadge/gluBadge/bmiBadge` 阈值与提示文案、README。各数值的指南出处见 `docs/RESEARCH.md` §三（含 130/80 的例外分支、HbA1c 不做硬指标等注意事项，改文案前必读其 §八）。
+3. **数值有主**：文中出现的目标值（血压耐受时<130/80、LDL-C<1.8mmol/L、限盐5g、双抗21天等）均为指南一般性建议，展示时必须伴随"具体遵医嘱"措辞。指南更新时集中检查：`data-articles.js`（prevention/diet/followup/positioning/rehab-principle 五篇）、`js/app/records.js` 的 `bpBadge/gluBadge/bmiBadge` 阈值与提示文案、README。各数值的指南出处见 `docs/RESEARCH.md` §三（含 130/80 的例外分支、HbA1c 不做硬指标等注意事项，改文案前必读其 §八）。
 4. **语言**：面向老人的口语化中文，避免术语堆砌；安全警示用"必须/立即/不要"等明确措辞。
 
 ## 9. 已知限制与后续路线
