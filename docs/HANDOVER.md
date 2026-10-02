@@ -5,13 +5,11 @@
 
 ## 当前版本（2026-10-02）
 
-**生产**：笔记本线 v0.2.32，地址 <https://stroke-rehab-assistant.pages.dev/>，Cloudflare 部署 `f39824c7`（2026-09-28，`ver=20260928105230`）。它部署时**没有提交 Git**，2026-10-02 才补存为分支 `wip-laptop-2026-10-02`（`f9587fc`），核对过与线上 `js/app.js`、`js/storage.js` 逐字节一致。教训见 §3「部署只从干净的工作区做」。
-
-**待部署：v0.2.35 = 两条线合并**（分支 `merge-laptop-wip`）。笔记本线 v0.2.32：登记日 `trackFrom`、服药时间按版本 `timesHistory`、补记与 `medLate`、记录可修改、应用内两步确认、回车键盘流、撤销提示条。本机线 v0.2.32～v0.2.34：跨天与多页面同步、写入前校验、离线缓存、训练常亮、老手机与微信兼容、文档分层、`app.js` 拆成 `js/app/`。冲突怎么取舍见 [CHANGELOG](CHANGELOG.md) v0.2.35。
+**生产：v0.2.35**（提交 `dca0e7a`），地址 <https://stroke-rehab-assistant.pages.dev/>，Cloudflare 部署 `4268e015`（2026-10-02，`ver=20261002125604`）。它是两条线的合并：笔记本线 v0.2.32（9 月 28 日部署 `f39824c7` 时**没有提交 Git**，2026-10-02 补存为分支 `wip-laptop-2026-10-02`）与本机线 v0.2.32～v0.2.34；冲突怎么取舍见 [CHANGELOG](CHANGELOG.md) v0.2.35。部署后已核对：22 个运行文件与 `dca0e7a` 逐字节一致（首页仅部署戳不同）；首页 CSP/HSTS/防嵌入等响应头在位；`/sw.js` 不带 CSP、有 `cache-control: no-cache`（`_headers` 的摘除规则在 Cloudflare 上确实生效）；生产上离线缓存装上、断网能打开；对生产地址跑 `settings`、`lifecycle`、`overlay` 三套 Chromium 回归全部通过。**未验：真机**（按 [MANUAL-TEST](MANUAL-TEST.md) v0.2.32/v0.2.33 两节与补记/修改相关项）。
 
 **数据兼容（务必）**：线上用户数据已经带 `trackFrom`/`timesHistory`/`medLate`。合并版全部保留；**不要部署任何不认识这三个字段的版本**——`normalizeState()` 会在下次保存时把它们丢掉（补记标记、改时间前的服药安排、登记日都会丢，登记前的日子还会重新被算成漏服）。
 
-**部署后必须核对**：`curl -sI https://stroke-rehab-assistant.pages.dev/sw.js` 不应带 `content-security-policy`、应有 `cache-control: no-cache`；真机按 [MANUAL-TEST](MANUAL-TEST.md) 走 v0.2.32/v0.2.33 两节与补记/修改相关项。**5 张示意图仍全部是 `pending`**（未经医生复核），用 `node test/preview-figures.js --review` 出复核单找医生。
+**5 张示意图仍全部是 `pending`**（未经医生复核），用 `node test/preview-figures.js --review` 出复核单找医生。
 
 更早：v0.2.31 已提交（`f6a1907`），曾部署 `03608e86`（动作示意图临床角度护栏等）。
 
