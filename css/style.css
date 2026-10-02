@@ -517,9 +517,12 @@ input[aria-invalid="true"], select[aria-invalid="true"] { border: 2px solid var(
   border: 2px solid var(--border); background: #fff; display: inline-block; flex-shrink: 0;
 }
 .dose-dot.taken { background: var(--green); border-color: var(--green); }
+/* 还没到时间：虚线空心，和"到点没核对"的实线空心区分开（形状区分，不只靠颜色） */
+.dose-dot.pending { border-style: dashed; border-color: var(--text-2); background: transparent; }
 .day-score { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text-2); }
 .day-score.ok { color: var(--green); }
-.day-legend { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85rem; color: var(--text-2); margin-bottom: 0.3rem; }
+.day-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.9rem; font-size: 0.85rem; color: var(--text-2); margin-bottom: 0.3rem; }
+.day-legend > span { display: inline-flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
 
 /* ---------- 用药页 ---------- */
 .med-time-group { margin-bottom: 0.5rem; }
@@ -645,6 +648,8 @@ input[aria-invalid="true"], select[aria-invalid="true"] { border: 2px solid var(
 /* 设计系统的状态与任务容器，规范见 docs/DESIGN-SYSTEM.md。 */
 body.overlay-open { overflow: hidden; }
 [inert] { pointer-events: none; }
+.backup-age { margin-top: var(--space-2); }
+.backup-age.due { color: var(--orange); font-weight: 600; }
 .notice { background: var(--primary-soft); color: var(--primary-dark); border-radius: var(--radius-control); padding: var(--space-3); margin-bottom: var(--space-3); overflow-wrap: anywhere; }
 .notice.danger { color: var(--red); background: var(--red-soft); border-left: 4px solid var(--red); }
 .storage-notice { max-width: var(--content-width); margin: var(--space-3) auto; }

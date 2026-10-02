@@ -20,6 +20,7 @@ const Store = (() => {
     gamesPerDay: 100,
     medChecksPerDay: 1200,
   });
+  const HEIGHT_RANGE = [50, 250];   // cm
 
   const defaults = () => ({
     profile: {
@@ -44,7 +45,7 @@ const Store = (() => {
     },
     exerciseLog: {},     // 'YYYY-MM-DD' -> ['exId', ...]
     gameLog: {},         // 'YYYY-MM-DD' -> [{game, score, detail}]
-    ui: { guideSeen: false },  // 界面状态：是否已看过首次使用指引
+    ui: { guideSeen: false, lastBackupAt: '' },  // 界面状态：是否已看过首次指引 / 这台设备上次下载备份的日期
   });
 
   /* 目标值与设置页使用同一范围；非法组合整体回落默认，避免备份绕过界面校验。 */
@@ -71,6 +72,11 @@ const Store = (() => {
   let storageIssue = null;
   let loadBlocked = false;
   let backupErrorMessage = '';
+  /* 写入前校验没通过的原因（给界面显示）。数据层自己也要拦：界面校验漏一处，
+     normalizeState() 就会把不合法的条目静默丢掉或"修正"掉，而 save() 照样报成功——
+     用户看到"已保存"，记录却没了，或者停用的药又回到了每日核对里。 */
+  let actionErrorMessage = '';
+  function refuse(message) { actionErrorMessage = message; return false; }
 
   const isObj = x => x && typeof x === 'object' && !Array.isArray(x);
   const text = (x, max = 500) => typeof x === 'string' ? x.slice(0, max) : '';
@@ -98,6 +104,28 @@ const Store = (() => {
     return Object.keys(obj).filter(validDate).sort().reverse().slice(0, BACKUP_LIMITS.logDays);
   }
 
+  /* 单条健康记录的规范化：返回干净的条目，或 null（不可保存）。
+     读盘、恢复备份、新增记录都走这一份，规则只有一处。 */
+  const cleanTime = x => validTime(x) ? x : '';
+  const VITAL_CLEAN = {
+    bp(v, idOf) {
+      const sys = finite(v.sys), dia = finite(v.dia), pulse = finite(v.pulse);
+      if (!validDate(v.date) || sys === null || dia === null || sys <= 0 || sys > 500 || dia <= 0 || dia > 500) return null;
+      return { id: idOf(v.id), date: v.date, time: cleanTime(v.time), sys, dia, pulse: pulse !== null && pulse > 0 && pulse <= 400 ? pulse : '' };
+    },
+    glucose(v, idOf) {
+      const value = finite(v.value);
+      if (!validDate(v.date) || value === null || value <= 0 || value > 100) return null;
+      const gtype = ['空腹', '餐后2小时', '随机'].includes(v.gtype) ? v.gtype : '随机';
+      return { id: idOf(v.id), date: v.date, time: cleanTime(v.time), gtype, value };
+    },
+    weight(v, idOf) {
+      const value = finite(v.value);
+      if (!validDate(v.date) || value === null || value <= 0 || value > 1000) return null;
+      return { id: idOf(v.id), date: v.date, value };
+    },
+  };
+
   /* 本地数据和备份恢复共用同一条深度规范化路径。容器类型正确还不够，
      内部 null、非法数字、危险 id 一样会让计算/模板崩溃。 */
   function normalizeState(raw) {
@@ -115,8 +143,9 @@ const Store = (() => {
          这台机器上没有这个音色（换手机、恢复别人的备份）由 Speech.pickVoice()
          静默回落到系统默认，所以存一个陌生名字不会造成任何后果。 */
       out.profile.speechVoice = text(p.speechVoice, 120);
+      /* 身高按厘米记。1.7 这类"按米填"的值会让 BMI 算成几十万，宁可丢掉也不显示错结论。 */
       const h = finite(p.height);
-      out.profile.height = h !== null && h > 0 && h <= 300 ? String(p.height) : '';
+      out.profile.height = h !== null && h >= HEIGHT_RANGE[0] && h <= HEIGHT_RANGE[1] ? String(h) : '';
       out.profile.targets = sanitizeTargets(p.targets);
     }
 
@@ -157,25 +186,10 @@ const Store = (() => {
 
     const vitalIds = new Set();
     const cleanVitalId = x => cleanId(x, vitalIds);
-    const cleanTime = x => validTime(x) ? x : '';
-    if (isObj(raw.vitals)) {
-      if (Array.isArray(raw.vitals.bp)) out.vitals.bp = raw.vitals.bp.slice(0, BACKUP_LIMITS.vitalsPerKind).filter(isObj).map(v => {
-        const sys = finite(v.sys), dia = finite(v.dia), pulse = finite(v.pulse);
-        if (!validDate(v.date) || sys === null || dia === null || sys <= 0 || sys > 500 || dia <= 0 || dia > 500) return null;
-        return { id: cleanVitalId(v.id), date: v.date, time: cleanTime(v.time), sys, dia, pulse: pulse !== null && pulse > 0 && pulse <= 400 ? pulse : '' };
-      }).filter(Boolean);
-      if (Array.isArray(raw.vitals.glucose)) out.vitals.glucose = raw.vitals.glucose.slice(0, BACKUP_LIMITS.vitalsPerKind).filter(isObj).map(v => {
-        const value = finite(v.value);
-        if (!validDate(v.date) || value === null || value <= 0 || value > 100) return null;
-        const gtype = ['空腹', '餐后2小时', '随机'].includes(v.gtype) ? v.gtype : '随机';
-        return { id: cleanVitalId(v.id), date: v.date, time: cleanTime(v.time), gtype, value };
-      }).filter(Boolean);
-      if (Array.isArray(raw.vitals.weight)) out.vitals.weight = raw.vitals.weight.slice(0, BACKUP_LIMITS.vitalsPerKind).filter(isObj).map(v => {
-        const value = finite(v.value);
-        if (!validDate(v.date) || value === null || value <= 0 || value > 1000) return null;
-        return { id: cleanVitalId(v.id), date: v.date, value };
-      }).filter(Boolean);
-    }
+    if (isObj(raw.vitals)) ['bp', 'glucose', 'weight'].forEach(kind => {
+      if (Array.isArray(raw.vitals[kind])) out.vitals[kind] = raw.vitals[kind].slice(0, BACKUP_LIMITS.vitalsPerKind)
+        .filter(isObj).map(v => VITAL_CLEAN[kind](v, cleanVitalId)).filter(Boolean);
+    });
 
     out.exerciseLog = Object.create(null);
     if (isObj(raw.exerciseLog)) recentDateKeys(raw.exerciseLog).forEach(d => {
@@ -194,7 +208,10 @@ const Store = (() => {
         time: cleanTime(g.time),
       })).filter(g => g.game);
     });
-    if (isObj(raw.ui)) out.ui.guideSeen = raw.ui.guideSeen === true;
+    if (isObj(raw.ui)) {
+      out.ui.guideSeen = raw.ui.guideSeen === true;
+      out.ui.lastBackupAt = validDate(raw.ui.lastBackupAt) ? raw.ui.lastBackupAt : '';
+    }
     return out;
   }
 
@@ -282,8 +299,8 @@ const Store = (() => {
   function rehabDay() {
     const sd = data.profile.strokeDate;
     if (!sd) return null;
-    const ms = new Date(today() + 'T00:00:00') - new Date(sd + 'T00:00:00');
-    const n = Math.floor(ms / 86400000) + 1;
+    /* 必须四舍五入（daysBetween）：跨夏令时的两个零点只差 23 小时，向下取整会少算一天。 */
+    const n = daysBetween(sd, today()) + 1;
     return n > 0 ? n : null;
   }
 
@@ -376,16 +393,42 @@ const Store = (() => {
   }
 
   /* ---------- 用药 ---------- */
+  /* 一个疗程能不能这样保存：返回不能保存的原因，'' 表示可以。
+     不在这里拦，normalizeState() 会把 to < from 的停用记录"修正"成还在吃——
+     停用的药悄悄回到每日核对，天天算漏服。 */
+  function medProblem(m, selfId) {
+    if (!text(m.name, 200).trim()) return '请按医生处方填写药物名称';
+    if (!Array.isArray(m.times) || !m.times.length) return '请至少选择一个服药时间';
+    if (!m.times.every(validTime)) return '服药时间格式不对，请重新选择';
+    if (m.times.length > BACKUP_LIMITS.timesPerMed) return `一种药每天最多登记 ${BACKUP_LIMITS.timesPerMed} 个服药时间`;
+    if (m.from && !validDate(m.from)) return '开始服用日期无效，请重新选择';
+    if (m.to && !validDate(m.to)) return '停用日期无效，请重新选择';
+    if (m.from && m.to && m.from > m.to) return `开始服用日期不能晚于停用日期（${m.to}）`;
+    const prev = m.previousCourseId ? data.meds.find(x => x.id === m.previousCourseId) : null;
+    if (prev && prev.to && m.from && m.from <= prev.to) return `新疗程要从上次停药（${prev.to}）之后开始`;
+    const next = selfId ? data.meds.find(x => x.previousCourseId === selfId) : null;
+    if (next && next.from && m.from && m.from >= next.from) return `开始日期要早于后面那段新疗程（${next.from}）`;
+    return '';
+  }
   /* 新登记的药默认「从今天开始吃」：不写 from 的话，这药会被算进它还没
      开始吃的那些历史日期里，把过去的依从率冤枉成漏服。 */
   function addMed(med) {
-    data.meds.push({ id: uid(), ...med, from: validDate(med.from) ? med.from : today(), to: '' });
+    actionErrorMessage = '';
+    const m = { ...med, id: uid(), from: validDate(med.from) ? med.from : today(), to: '' };
+    const problem = medProblem(m, m.id);
+    if (problem) return refuse(problem);
+    data.meds.push(m);
     return save();
   }
   function updateMed(id, patch) {
+    actionErrorMessage = '';
     const m = data.meds.find(x => x.id === id);
-    if (!m) return false;
-    Object.assign(m, patch);
+    if (!m) return refuse('没有找到这个药，可能已在别处删除，请关闭后重新打开');
+    const { id: _ignored, ...rest } = patch || {};
+    const next = { ...m, ...rest };
+    const problem = medProblem(next, id);
+    if (problem) return refuse(problem);
+    Object.assign(m, rest);
     return save();
   }
   function removeMed(id) {
@@ -402,15 +445,23 @@ const Store = (() => {
      而留着不管又会让它天天显示"漏服"——所以停药是第三种操作。
      to = 最后一次服药的日期（含当天）；'' 表示还在吃。 */
   function stopMed(id, lastDate = today()) {
+    actionErrorMessage = '';
     const m = data.meds.find(x => x.id === id);
-    if (!m || !validDate(lastDate) || lastDate > today() || (m.from && lastDate < m.from)) return false;
+    if (!m) return refuse('没有找到这个药，可能已在别处删除，请关闭后重新打开');
+    if (!validDate(lastDate)) return refuse('请选择最后一次服药的日期');
+    if (lastDate > today()) return refuse('停用日期不能晚于今天');
+    if (m.from && lastDate < m.from) return refuse('停用日期不能早于开始服用日期');
+    const next = data.meds.find(x => x.previousCourseId === id);
+    if (next && next.from && lastDate >= next.from) return refuse(`停用日期要早于后面那段新疗程（${next.from}）`);
     m.to = lastDate;
     return save();
   }
   /* 停错了：撤销停用，保持同一个疗程和历史核对键。 */
   function undoStopMed(id) {
+    actionErrorMessage = '';
     const m = data.meds.find(x => x.id === id);
-    if (!m || !m.to || !canUndoStop(id)) return false;
+    if (!m || !m.to) return refuse('这个药没有停用记录，请关闭后重新打开');
+    if (!canUndoStop(id)) return refuse('已经登记了后续新疗程，这段旧停药记录不能再撤销');
     m.to = '';
     return save();
   }
@@ -445,39 +496,61 @@ const Store = (() => {
   function isMedTaken(medId, time, date = today()) {
     return !!(data.medLog[date] && data.medLog[date][medKey(medId, time)]);
   }
+  /* 核对/取消核对某一次服药。只接受"那天确实要吃的那一次"：
+     未来的日子不能先勾；停用期、没开始的日子、不在服药时间表里的钟点都不能勾——
+     否则这些勾会躺在记录里，等改了处方又突然被算进去。 */
   function toggleMed(medId, time, date = today()) {
+    actionErrorMessage = '';
+    if (!validDate(date) || date > today()) return refuse('还没到这一天，不能先核对');
+    const m = medsOn(date).find(x => x.id === medId);
+    if (!m || !(m.times || []).includes(time)) return refuse('这一次不在当天的服药安排里，请关闭后重新打开');
     if (!data.medLog[date]) data.medLog[date] = {};
     const k = medKey(medId, time);
     if (data.medLog[date][k]) delete data.medLog[date][k];
     else data.medLog[date][k] = true;
     return save();
   }
-  /* 某天该吃几次 / 已核对几次。只算当天在吃的药（停用的、还没开始的都不算） */
-  function medCountOn(date) {
+  /* 这一次服药"到点了没有"。过去的日子全算到点；今天按钟点算；
+     已经核对的一律算（提前吃了也算数）。还没到点的那几次，不能算成没吃——
+     早上 9 点看"最近 7 天"，不该因为晚上 8 点那次还没到就少一天"全吃到"。 */
+  function isDoseDue(date, time, taken, now = new Date()) {
+    if (taken) return true;
+    const d = dateStr(now);
+    if (date !== d) return date < d;
+    return time <= timeStr(now);
+  }
+  /* 某天该吃几次 / 已核对几次。只算当天在吃的药（停用的、还没开始的都不算）。
+     dueOnly：只数已经到点的（统计"吃没吃到"时用）；不传则数全天的（今日核对表用）。 */
+  function medCountOn(date, { dueOnly = false, now = new Date() } = {}) {
     let total = 0, done = 0;
     medsOn(date).forEach(m => (m.times || []).forEach(tm => {
+      const taken = isMedTaken(m.id, tm, date);
+      if (dueOnly && !isDoseDue(date, tm, taken, now)) return;
       total++;
-      if (isMedTaken(m.id, tm, date)) done++;
+      if (taken) done++;
     }));
     return { total, done };
   }
-  /* 今日应服总次数 / 已服次数 */
+  /* 今日应服总次数 / 已服次数（全天的，核对表"还差几次"用） */
   function medProgressToday() { return medCountOn(today()); }
-  /* 近7天依从率 */
-  function adherence7d() {
+  /* 近7天依从率（给医生看的百分比）：只算已经到点的次数 */
+  function adherence7d(now = new Date()) {
     let total = 0, done = 0;
+    const d0 = dateStr(now);
     for (let i = 0; i < 7; i++) {
-      const c = medCountOn(addDays(today(), -i));
+      const c = medCountOn(addDays(d0, -i), { dueOnly: true, now });
       total += c.total; done += c.done;
     }
     return total ? Math.round(done / total * 100) : null;
   }
   /* 近 n 天里"当天该吃的都核对了"的天数。
-     给患者看的主指标：整数天数比百分比好懂（避免让患者做心算/理解比率）。 */
-  function medFullDays(n = 7) {
+     给患者看的主指标：整数天数比百分比好懂（避免让患者做心算/理解比率）。
+     今天只看已经到点的那几次；一次都还没到点的今天不计入。 */
+  function medFullDays(n = 7, now = new Date()) {
     let full = 0, counted = 0;
+    const d0 = dateStr(now);
     for (let i = 0; i < n; i++) {
-      const c = medCountOn(addDays(today(), -i));
+      const c = medCountOn(addDays(d0, -i), { dueOnly: true, now });
       if (!c.total) continue;
       counted++;
       if (c.done >= c.total) full++;
@@ -487,27 +560,43 @@ const Store = (() => {
 
   /* 某天的服药情况。应服次数按**那一天在吃的药**计算（medsOn），
      所以停药、换药之后历史天数的分母不会被改动带偏。
+     total/done 是全天的；dueTotal/dueDone 只算已到点的，每项带 due 标记。
      仍存在的取舍：同一种药中途改剂量/改时间点没有版本记录，
      改完之后历史日期会按新的时间点显示。 */
-  function medStatusOn(date) {
+  function medStatusOn(date, now = new Date()) {
     const items = [];
     medsOn(date).forEach(m => (m.times || []).forEach(t => {
-      items.push({ medId: m.id, name: m.name, dose: m.dose || '', time: t, taken: isMedTaken(m.id, t, date) });
+      const taken = isMedTaken(m.id, t, date);
+      items.push({ medId: m.id, name: m.name, dose: m.dose || '', time: t, taken, due: isDoseDue(date, t, taken, now) });
     }));
     items.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
-    return { date, total: items.length, done: items.filter(i => i.taken).length, items };
+    const due = items.filter(i => i.due);
+    return {
+      date, total: items.length, done: items.filter(i => i.taken).length,
+      dueTotal: due.length, dueDone: due.filter(i => i.taken).length, items,
+    };
   }
   /* 最近 n 天服药情况，新→旧 */
-  function medHistory(n = 14) {
-    return recentDates(n).reverse().map(medStatusOn);
+  function medHistory(n = 14, now = new Date()) {
+    return recentDates(n, dateStr(now)).reverse().map(d => medStatusOn(d, now));
   }
 
   /* ---------- 健康记录 ---------- */
+  /* 只认自己的三种记录：用 VITAL_CLEAN[kind] 直接判断会把 'constructor' 这类继承来的名字当成合法类型 */
+  const isVitalKind = kind => Object.prototype.hasOwnProperty.call(VITAL_CLEAN, kind);
+  /* 新记录先过同一套规范化：过不了就明确拒绝，不能 save() 报成功、条目却被静默丢掉。 */
   function addVital(kind, entry) {
-    data.vitals[kind].unshift({ id: uid(), ...entry });
+    actionErrorMessage = '';
+    if (!isVitalKind(kind) || !isObj(entry)) return refuse('记录类型不对，没有保存');
+    if (validDate(entry.date) && entry.date > today()) return refuse('测量日期不能晚于今天');
+    const clean = VITAL_CLEAN[kind]({ ...entry, id: '' }, () => uid());
+    if (!clean) return refuse('这条记录的日期或数值无法保存，请核对后再试');
+    data.vitals[kind].unshift(clean);
     return save();
   }
   function removeVital(kind, id) {
+    actionErrorMessage = '';
+    if (!isVitalKind(kind)) return refuse('记录类型不对，没有删除');
     data.vitals[kind] = data.vitals[kind].filter(v => v.id !== id);
     return save();
   }
@@ -861,16 +950,29 @@ const Store = (() => {
     return true;
   }
 
+  /* 另一个页面（另一个标签、主屏图标和浏览器同时开着）写过数据时，重新读盘。
+     本页的每次修改都是同步写完的（成功即落盘、失败即回滚），内存里没有"写了一半"的状态，
+     所以直接重读是安全的；返回 true 表示数据换过了，界面需要重画。 */
+  function reloadIfChanged() {
+    let raw;
+    try { raw = localStorage.getItem(KEY); } catch (_) { return false; }
+    if (raw === persistedRaw) return false;
+    load();
+    return true;
+  }
+
   return {
-    load, save,
+    load, save, reloadIfChanged,
     storageStatus: () => storageIssue && { ...storageIssue },
+    actionError: () => actionErrorMessage,
+    get heightRange() { return HEIGHT_RANGE; },
     originalData: () => loadBlocked && persistedRaw !== null ? persistedRaw : null,
     get data() { return data; },
     today, timeStr, addDays, weekdayCN, rehabDay, recentDates, daysBetween,
     logExercise, exercisesDoneToday, isExDone, streak, bestStreak, lastExerciseDate,
     exercisesOn, exerciseDaysTotal, activeDates, exerciseCalendar,
     logGame, logGameExercise, gamesOn,
-    addMed, updateMed, removeMed, isMedTaken, toggleMed, medProgressToday, adherence7d,
+    addMed, updateMed, removeMed, isMedTaken, toggleMed, isDoseDue, medProgressToday, adherence7d,
     stopMed, undoStopMed, restartMed, canUndoStop, isMedStopped, medsOn, activeMeds, stoppedMeds, medCountOn,
     medFullDays, medStatusOn, medHistory,
     addVital, removeVital, vitalsSorted, bpToday, vitalDelta,
@@ -882,5 +984,9 @@ const Store = (() => {
     get backupLimits() { return BACKUP_LIMITS; },
     guideSeen: () => !!data.ui.guideSeen,
     markGuideSeen: () => { data.ui.guideSeen = true; return save(); },
+    /* 只记"在这台设备上点了下载备份"的日期（浏览器不告诉我们文件是否真的存下了）。
+       记不上也不影响备份本身，所以调用方不必提示失败。 */
+    lastBackupAt: () => data.ui.lastBackupAt || '',
+    markBackupDownloaded: () => { data.ui.lastBackupAt = today(); return save(); },
   };
 })();

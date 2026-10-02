@@ -38,6 +38,10 @@ const App = (() => {
   let recordSaved = null;
 
   const $view = () => document.getElementById('view');
+  /* iOS 上"添加到主屏幕"的图标和 Safari 各用各的本地存储，互不相通：
+     家人帮忙装好桌面图标后，老人会发现"记录全没了"。只在苹果手机上提示这一句。 */
+  const IS_IOS = 'standalone' in navigator && navigator.maxTouchPoints > 0;
+  const IS_IOS_HOME_ICON = navigator.standalone === true;
 
   /* ============================================================
      【区】一、公共基础层：以下六个小节被各视图共用，改动波及全站
@@ -106,20 +110,74 @@ const App = (() => {
     renderStorageNotice();
     if (ok) return true;
     showError(topOverlay()?.querySelector('.modal-panel, .trainer-body') || $view(),
-      Store.storageStatus()?.message || Store.backupError() || '没有保存成功，请重试');
+      Store.storageStatus()?.message || Store.actionError() || Store.backupError() || '没有保存成功，请重试');
     return false;
+  }
+  /* 提示音：训练页打开期间共用一个 AudioContext，并在用户点按时解锁。
+     iOS 上不在点按里创建的 AudioContext 一直是 suspended，计时结束那一声
+     （由定时器触发，不是点按）就会静音——老人放下手机做动作，最需要这一声。 */
+  let audioCtx = null;
+  function unlockAudio() {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      if (!audioCtx || audioCtx.state === 'closed') audioCtx = new AC();
+      if (audioCtx.state !== 'running') audioCtx.resume().catch(() => {});
+    } catch (_) { audioCtx = null; }
+  }
+  function releaseAudio() {
+    const ac = audioCtx;
+    audioCtx = null;
+    if (ac && ac.state !== 'closed') ac.close().catch(() => {});
   }
   function beep() {
     try {
-      const ac = new (window.AudioContext || window.webkitAudioContext)();
-      const o = ac.createOscillator(), g = ac.createGain();
-      o.connect(g); g.connect(ac.destination);
-      o.frequency.value = 880; g.gain.value = 0.12;
-      o.start();
-      setTimeout(() => { o.stop(); ac.close(); }, 350);
-    } catch (e) { /* 忽略 */ }
+      if (!audioCtx) unlockAudio();
+      const ac = audioCtx;
+      if (ac) {
+        if (ac.state !== 'running') ac.resume().catch(() => {});
+        const o = ac.createOscillator(), g = ac.createGain();
+        o.connect(g); g.connect(ac.destination);
+        o.frequency.value = 880; g.gain.value = 0.12;
+        o.start(ac.currentTime);
+        o.stop(ac.currentTime + 0.35);
+      }
+    } catch (e) { /* 没有声音也不影响训练：还有震动、文字和 toast */ }
     if (navigator.vibrate) navigator.vibrate(300);
   }
+
+  /* 训练时屏幕常亮：老人把手机放在一边照着做，屏幕 30 秒就黑了，
+     计时也看不见、要重新解锁。训练页开着时请求常亮（Screen Wake Lock，
+     安卓 Chrome、iOS 16.4+ 支持；不支持就静默放弃）；10 分钟没碰屏幕且
+     没有在计时就放掉，免得忘了关页面一直亮着耗电。页面切走时浏览器会自动
+     释放，切回来再要。 */
+  const Awake = (() => {
+    const IDLE_MS = 10 * 60 * 1000;
+    let lock = null, wanted = false, idleTimer = null, busy = () => false;
+    async function acquire() {
+      if (!wanted || lock || !navigator.wakeLock || document.visibilityState !== 'visible') return;
+      try {
+        const l = await navigator.wakeLock.request('screen');
+        if (!wanted || lock) { l.release().catch(() => {}); return; }
+        lock = l;
+        l.addEventListener('release', () => { if (lock === l) lock = null; });
+      } catch (_) { /* 不支持、省电模式或被拒：不影响训练 */ }
+    }
+    function release() {
+      const l = lock;
+      lock = null;
+      if (l) l.release().catch(() => {});
+    }
+    function armIdle() {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => { if (busy()) armIdle(); else release(); }, IDLE_MS);
+    }
+    return {
+      start(isBusy) { wanted = true; busy = isBusy || (() => false); armIdle(); acquire(); },
+      poke() { if (wanted) { armIdle(); acquire(); } },   // 点按训练页、切回本页时调用
+      stop() { wanted = false; clearTimeout(idleTimer); release(); },
+    };
+  })();
 
   /* ---------- 少算数：把比率/分数换成"还差几个"与圆点 ----------
      设计依据：卒中后计算障碍常见，界面里的分数、百分比、心算都会增加
@@ -359,6 +417,8 @@ const App = (() => {
     if (!top) return false;
     if (top.id === 'trainer') closeTrainer();
     else { overlayStack.pop(); Speech.stop(); top.remove(); syncOverlays(); }
+    /* 浮层开着时攒下的"跨天/别处改过数据"，最后一层关掉后再重画 */
+    if (!topOverlay() && refreshPending) refreshIfStale();
     if (topOverlay()?._onResume) topOverlay()._onResume();
     const target = returnFocusTarget(top._returnFocus);
     if (target?.isConnected && !target.closest('[inert]')) target.focus({ preventScroll: true });
@@ -799,6 +859,10 @@ const App = (() => {
     mountOverlay(wrap, wrap.querySelector('.t-name'));
     if (trainerOrigin) wrap._returnFocus = trainerOrigin;
     wrap.querySelector('#trainer-emergency').onclick = openEmergency;
+    /* openTrainer 总是由点按触发：趁这次手势解锁提示音；之后每次点按都续一下常亮与音频 */
+    unlockAudio();
+    Awake.start(() => !!trainerTimer);
+    wrap.addEventListener('pointerdown', () => { unlockAudio(); Awake.poke(); });
 
     const finish = (gameResult = null) => {
       if (dismissPending) return;
@@ -850,8 +914,11 @@ const App = (() => {
         }
       };
     } else if (ex.mode.type === 'timer') {
+      /* 按"截止时刻"算剩余时间，不按"每秒减一"：手机锁屏或切到后台时定时器会被
+         冻结或降到一分钟一次，每秒减一的计时就停在半路，5 分钟的动作要做十几分钟。
+         现在每次刷新都用截止时刻现算，切回来立刻是对的；锁屏期间到点的，回来就报"时间到"。 */
       const total = ex.mode.seconds;
-      let remain = total, running = false;
+      let remain = total, running = false, deadline = 0;
       const num = wrap.querySelector('#timer-num');
       const plain = wrap.querySelector('#timer-plain');
       const bar = wrap.querySelector('#timer-bar');
@@ -863,23 +930,39 @@ const App = (() => {
         plain.textContent = remain <= 0 ? '时间到了' : `还剩${plainDuration(remain).replace('大约 ', '约 ')}`;
         bar.style.width = `${Math.round((total - remain) / total * 100)}%`;
       };
-      const stopT = () => { if (trainerTimer) { clearInterval(trainerTimer); trainerTimer = null; } running = false; tog.textContent = '▶ 继续'; };
-      wrap._pause = stopT;
+      const clearTick = () => { if (trainerTimer) { clearInterval(trainerTimer); trainerTimer = null; } };
+      const left = () => Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      const tick = () => {
+        if (!running) return;
+        remain = left();
+        show();
+        if (remain > 0) return;
+        clearTick(); running = false;
+        tog.textContent = '▶ 再计一次';
+        beep();
+        toast('时间到！可以点下方按钮打卡');
+      };
+      const pause = () => {
+        if (!running) return;
+        remain = left();
+        clearTick(); running = false;
+        tog.textContent = '▶ 继续';
+        show();
+      };
+      wrap._pause = pause;
+      wrap._tick = tick;
       tog.onclick = () => {
-        if (running) { stopT(); return; }
-        running = true; tog.textContent = '⏸ 暂停';
-        trainerTimer = setInterval(() => {
-          remain--;
-          if (remain <= 0) {
-            remain = 0; show(); stopT(); beep(); toast('时间到！可以点下方按钮打卡');
-            tog.textContent = '▶ 开始计时';
-            return;
-          }
-          show();
-        }, 1000);
+        if (running) { pause(); return; }
+        if (remain <= 0) remain = total;   // 到点后再点：从头计一次，而不是立刻又"时间到"
+        running = true;
+        deadline = Date.now() + remain * 1000;
+        tog.textContent = '⏸ 暂停';
+        show();
+        clearTick();
+        trainerTimer = setInterval(tick, 250);
       };
       rst.onclick = () => {
-        stopT(); remain = total; show();
+        clearTick(); running = false; remain = total; show();
         plain.textContent = plainDuration(total);
         tog.textContent = '▶ 开始计时';
       };
@@ -902,6 +985,8 @@ const App = (() => {
     if (trainerTimer) { clearInterval(trainerTimer); trainerTimer = null; }
     Speech.stop();   // 不停会在 iOS 上继续念
     Games.stop();
+    Awake.stop();    // 不练了就让屏幕照常熄灭
+    releaseAudio();
     const t = document.getElementById('trainer');
     if (t) {
       const index = overlayStack.indexOf(t);
@@ -1241,16 +1326,23 @@ const App = (() => {
     const form = body.querySelector('.vital-form');
     const typed = [...form.querySelectorAll('input[type="number"]')].some(el => el.value !== '');
     if (!typed && !form.dataset.dirty) return;
+    const prefix = WHEN_PREFIX[recTab];
+    const pinned = !whenFollowsNow(prefix);
     recordDrafts[recTab] = {
-      values: [...form.querySelectorAll('input[id], select[id]')].map(el => [el.id, el.value]),
+      /* 日期时间没改过就不存：恢复草稿时让它继续跟着现在走，不把旧时刻带回来 */
+      values: [...form.querySelectorAll('input[id], select[id]')]
+        .filter(el => pinned || !el.closest('.dt-row'))
+        .map(el => [el.id, el.value]),
       expanded: !form.querySelector('.dt-row').hidden,
+      pinned,
     };
   }
   function restoreRecordDraft() {
     const draft = recordDrafts[recTab];
     if (!draft) return;
-    draft.values.forEach(([id, value]) => { document.getElementById(id).value = value; });
-    const prefix = { bp: 'bp', glucose: 'glu', weight: 'wt' }[recTab];
+    draft.values.forEach(([id, value]) => { const el = document.getElementById(id); if (el) el.value = value; });
+    const prefix = WHEN_PREFIX[recTab];
+    if (draft.pinned) document.getElementById(prefix + '-dt-chip').closest('.vital-form').dataset.when = 'set';
     document.getElementById(prefix + '-dt-row').hidden = !draft.expanded;
     bindWhenToggle(prefix);
   }
@@ -1282,23 +1374,54 @@ const App = (() => {
     return time ? `${head} ${time}` : head;
   }
 
-  /* 「记录时间」收敛成一个小条：点开才显示日期/时间原生输入（同前缀约定：*-dt-chip / *-dt-row / *-date / *-time） */
+  /* 「记录时间」收敛成一个小条：点开才显示日期/时间原生输入（同前缀约定：*-dt-chip / *-dt-row / *-date / *-time）。
+     默认"跟着现在走"：没动过日期时间时，保存那一刻才取当前时间。以前是渲染页面那一刻
+     填进输入框的——页面开着过了一夜，第二天早上量的血压会被记成昨天的日期。
+     用户改过日期或时间（表单上 data-when="set"）才按他填的记。 */
+  const WHEN_PREFIX = { bp: 'bp', glucose: 'glu', weight: 'wt' };
+  function whenFollowsNow(prefix) {
+    return document.getElementById(prefix + '-dt-chip')?.closest('.vital-form').dataset.when !== 'set';
+  }
+  function whenValue(prefix) {
+    const timeEl = document.getElementById(prefix + '-time');
+    if (whenFollowsNow(prefix)) return { date: Store.today(), time: timeEl ? Store.timeStr() : '' };
+    return { date: document.getElementById(prefix + '-date').value, time: timeEl ? timeEl.value : '' };
+  }
   function bindWhenToggle(prefix) {
     const row = document.getElementById(prefix + '-dt-row');
     const chip = document.getElementById(prefix + '-dt-chip');
     if (!row || !chip) return;
+    const form = chip.closest('.vital-form');
     const dateEl = document.getElementById(prefix + '-date');
     const timeEl = document.getElementById(prefix + '-time');
-    const fmt = () => { chip.textContent = fmtWhen(dateEl.value, timeEl ? timeEl.value : '') + ' · 修改'; };
+    const syncNow = () => {
+      if (!whenFollowsNow(prefix)) return;
+      dateEl.value = Store.today();
+      dateEl.max = Store.today();
+      if (timeEl) timeEl.value = Store.timeStr();
+    };
+    const fmt = () => {
+      chip.textContent = (whenFollowsNow(prefix) ? (timeEl ? '现在' : '今天')
+        : fmtWhen(dateEl.value, timeEl ? timeEl.value : '')) + ' · 修改';
+    };
+    const pin = () => { form.dataset.when = 'set'; fmt(); };
     chip.setAttribute('aria-controls', row.id);
     chip.setAttribute('aria-expanded', String(!row.hidden));
     chip.onclick = () => {
+      syncNow();   // 展开时给出此刻的日期时间作为修改起点
       row.hidden = !row.hidden;
       chip.setAttribute('aria-expanded', String(!row.hidden));
     };
-    dateEl.onchange = fmt;
-    if (timeEl) timeEl.onchange = fmt;
+    dateEl.onchange = pin;
+    if (timeEl) timeEl.onchange = pin;
+    syncNow();
     fmt();
+  }
+  /* 保存前核对日期：不能是将来（时间跟着现在走时不会出错，只有手改过才需要拦） */
+  function whenProblem(prefix, date) {
+    if (!date) return [prefix + '-date', '请选择这次测量的日期。'];
+    if (date > Store.today()) return [prefix + '-date', '日期不能晚于今天，请核对。'];
+    return null;
   }
 
   function renderBP(body) {
@@ -1334,7 +1457,7 @@ const App = (() => {
           <button type="button" class="dt-chip" id="bp-dt-chip"></button>
         </div>
         <div class="form-row dt-row" id="bp-dt-row" hidden>
-          <div class="field wide"><label for="bp-date">日期</label><input id="bp-date" type="date" value="${d}"></div>
+          <div class="field wide"><label for="bp-date">日期</label><input id="bp-date" type="date" value="${d}" max="${d}"></div>
           <div class="field wide"><label for="bp-time">时间</label><input id="bp-time" type="time" value="${t}"></div>
         </div>
         <button class="btn block" id="bp-save">保存血压记录</button>
@@ -1353,12 +1476,14 @@ const App = (() => {
       const sys = +document.getElementById('bp-sys').value;
       const dia = +document.getElementById('bp-dia').value;
       const pulse = document.getElementById('bp-pulse').value;
-      const date = document.getElementById('bp-date').value;
-      const time = document.getElementById('bp-time').value;
+      const { date, time } = whenValue('bp');
       if (!sys || sys < 50 || sys > 300) { fieldError('bp-sys', '请核对血压计上的高压读数，再填写高压。'); return; }
       if (!dia || dia < 30 || dia > 200) { fieldError('bp-dia', '请核对血压计上的低压读数，再填写低压。'); return; }
+      /* 高压一定比低压高：反过来几乎都是两格填反了，存进去会被判成"偏低" */
+      if (sys <= dia) { fieldError('bp-dia', '低压应该比高压低，请核对是不是两格填反了。'); return; }
       if (pulse && !(+pulse > 0 && +pulse <= 400)) { fieldError('bp-pulse', '请核对脉搏读数，不记录时可以留空。'); return; }
-      if (!date) { fieldError('bp-date', '请选择这次测量的日期。'); return; }
+      const badWhen = whenProblem('bp', date);
+      if (badWhen) { fieldError(...badWhen); return; }
       if (!stored(Store.addVital('bp', { date, time, sys, dia, pulse: pulse ? +pulse : '' }))) return;
       const [cls, txt] = bpBadge(sys, dia);
       recordSaveDone(`✓ 已保存血压 ${sys}/${dia} mmHg · ${fmtWhen(date, time)}${cls === 'bad' ? '。' + txt : ''}`);
@@ -1398,7 +1523,7 @@ const App = (() => {
           <button type="button" class="dt-chip" id="glu-dt-chip"></button>
         </div>
         <div class="form-row dt-row" id="glu-dt-row" hidden>
-          <div class="field wide"><label for="glu-date">日期</label><input id="glu-date" type="date" value="${d}"></div>
+          <div class="field wide"><label for="glu-date">日期</label><input id="glu-date" type="date" value="${d}" max="${d}"></div>
           <div class="field wide"><label for="glu-time">时间</label><input id="glu-time" type="time" value="${t}"></div>
         </div>
         <button class="btn block" id="glu-save">保存血糖记录</button>
@@ -1416,10 +1541,10 @@ const App = (() => {
       clearFieldErrors(body);
       const gtype = document.getElementById('glu-type').value;
       const value = +document.getElementById('glu-val').value;
-      const date = document.getElementById('glu-date').value;
-      const time = document.getElementById('glu-time').value;
+      const { date, time } = whenValue('glu');
       if (!value || value < 1 || value > 40) { fieldError('glu-val', '请核对血糖读数，按 mmol/L 填写。'); return; }
-      if (!date) { fieldError('glu-date', '请选择这次测量的日期。'); return; }
+      const badWhen = whenProblem('glu', date);
+      if (badWhen) { fieldError(...badWhen); return; }
       if (!stored(Store.addVital('glucose', { date, time, gtype, value }))) return;
       recordSaveDone(`✓ 已保存${gtype}血糖 ${value} mmol/L · ${fmtWhen(date, time)}`);
     };
@@ -1464,7 +1589,7 @@ const App = (() => {
           <button type="button" class="dt-chip" id="wt-dt-chip"></button>
         </div>
         <div class="form-row dt-row" id="wt-dt-row" hidden>
-          <div class="field wide"><label for="wt-date">日期</label><input id="wt-date" type="date" value="${d}"></div>
+          <div class="field wide"><label for="wt-date">日期</label><input id="wt-date" type="date" value="${d}" max="${d}"></div>
         </div>
         <button class="btn block" id="wt-save">保存体重记录</button>
       </div>
@@ -1480,9 +1605,10 @@ const App = (() => {
     document.getElementById('wt-save').onclick = () => {
       clearFieldErrors(body);
       const value = +document.getElementById('wt-val').value;
-      const date = document.getElementById('wt-date').value;
+      const { date } = whenValue('wt');
       if (!value || value < 20 || value > 300) { fieldError('wt-val', '请核对体重读数，以公斤填写。'); return; }
-      if (!date) { fieldError('wt-date', '请选择这次测量的日期。'); return; }
+      const badWhen = whenProblem('wt', date);
+      if (badWhen) { fieldError(...badWhen); return; }
       if (!stored(Store.addVital('weight', { date, value }))) return;
       recordSaveDone(`✓ 已保存体重 ${value} 公斤 · ${fmtWhen(date)}`);
     };
@@ -1596,6 +1722,13 @@ const App = (() => {
 
     $view().querySelectorAll('.med-check').forEach(elm => {
       const act = () => {
+        /* 页面是昨天画的（开着过了零点），或别的页面刚改过记录：屏幕上的勾已经不是真相，
+           点下去会记错。先换成最新的核对表让人重新看一眼，不替他做这一下。 */
+        const newDay = Store.today() !== renderedDay;
+        if (refreshIfStale()) {
+          toast(newDay ? '已经是新的一天了，请按今天的核对表再点一次' : '记录刚在别的页面更新过，请看一眼再点');
+          return;
+        }
         if (!stored(Store.toggleMed(elm.dataset.med, elm.dataset.time))) return;
         render('meds', { keepScroll: true });
       };
@@ -1649,20 +1782,29 @@ const App = (() => {
 
   /* 服药历史：每天一行，一个圆点代表一次应服的药 */
   function openMedHistory() {
-    const days = Store.medHistory(14);
-    const sum = days.reduce((a, d) => ({ total: a.total + d.total, done: a.done + d.done }), { total: 0, done: 0 });
+    const now = new Date();
+    const days = Store.medHistory(14, now);
+    /* 只算已经到点的次数：今天晚上那次还没到时间，不能算成"差 1 次" */
+    const sum = days.reduce((a, d) => ({ total: a.total + d.dueTotal, done: a.done + d.dueDone }), { total: 0, done: 0 });
     const pct = sum.total ? Math.round(sum.done / sum.total * 100) : 0;
     const t = Store.today();
+    const hasPending = days.some(d => d.items.some(i => !i.due));
 
+    const dayScore = d => {
+      if (!d.total) return '—';
+      if (d.dueDone < d.dueTotal) return `差 ${d.dueTotal - d.dueDone} 次`;
+      if (d.dueTotal < d.total) return d.dueTotal ? '到点的都吃了' : '还没到时间';
+      return '全吃到';
+    };
     const rows = days.map(d => `
       <div class="day-row">
         <span class="day-date">${esc(d.date.slice(5))}${d.date === t ? '（今天）' : ''}<br>${weekdayOf(d.date)}</span>
         <span class="dot-row">${d.items.map(i =>
-          `<i class="dose-dot ${i.taken ? 'taken' : ''}" aria-label="${esc(i.time)} ${esc(i.name)} ${i.taken ? '已服' : '未记录'}"></i>`).join('')}</span>
-        <span class="day-score ${d.total && d.done >= d.total ? 'ok' : ''}">${!d.total ? '—' : d.done >= d.total ? '全吃到' : `差 ${d.total - d.done} 次`}</span>
+          `<i class="dose-dot ${i.taken ? 'taken' : i.due ? '' : 'pending'}" aria-label="${esc(i.time)} ${esc(i.name)} ${i.taken ? '已服' : i.due ? '未记录' : '还没到时间'}"></i>`).join('')}</span>
+        <span class="day-score ${d.total && d.dueDone >= d.dueTotal && d.dueTotal ? 'ok' : ''}">${dayScore(d)}</span>
       </div>`).join('');
 
-    const fd14 = Store.medFullDays(14);
+    const fd14 = Store.medFullDays(14, now);
     const node = nodeFromHTML(`
       <div class="card">
         <div class="card-title">📊 最近 14 天</div>
@@ -1671,10 +1813,10 @@ const App = (() => {
       </div>
       <div class="card">
         <div class="card-title">📄 每天核对情况</div>
-        <div class="day-legend"><i class="dose-dot taken"></i> 已核对　<i class="dose-dot"></i> 未记录</div>
+        <div class="day-legend"><span><i class="dose-dot taken"></i>已核对</span><span><i class="dose-dot"></i>未记录</span>${hasPending ? '<span><i class="dose-dot pending"></i>还没到时间</span>' : ''}</div>
         ${rows}
       </div>
-      <div class="disclaimer">应服次数按「当前药物清单」计算；如果最近改过处方，更早日期的次数会按新处方显示。漏服记录仅供自我提醒，用药调整请遵医嘱。</div>`);
+      <div class="disclaimer">停药和登记新疗程不会改动更早日期的次数；但如果改过同一种药的服药时间，更早的日期也会按新时间显示。还没到时间的那几次不算没吃。漏服记录仅供自我提醒，用药调整请遵医嘱。</div>`);
     openModal('服药历史', node);
   }
 
@@ -2001,7 +2143,7 @@ const App = (() => {
         </div>
         <div class="setting-row">
           <label class="sr-label" for="set-stroke-date">发病日期</label>
-          <input id="set-stroke-date" class="set-input" type="date" value="${esc(p.strokeDate)}">
+          <input id="set-stroke-date" class="set-input" type="date" value="${esc(p.strokeDate)}" max="${Store.today()}">
         </div>
         <div class="setting-row">
           <label class="sr-label" for="set-height">身高(cm)</label>
@@ -2058,9 +2200,10 @@ const App = (() => {
       </div>
       <div class="section-label">数据与备份</div>
       <div class="card action-list">
-        <div class="notice">记录只在当前浏览器里。换手机、换浏览器或换网址前，请先下载备份。</div>
+        <div class="notice">记录只在当前浏览器里。换手机、换浏览器或换网址前，请先下载备份。${IS_IOS ? '苹果手机上，桌面图标和 Safari 里的记录也是分开存的，不会自动同步。' : ''}</div>
         ${Store.originalData() !== null ? '<button class="btn outline block" id="set-original">下载原始数据副本（供排查）</button>' : ''}
         <button class="btn ghost block" id="set-backup" style="margin-top:0.6rem">📦 备份全部数据（下载文件）</button>
+        <div id="backup-age">${backupAgeHTML()}</div>
         <button class="btn ghost block" id="set-restore" style="margin-top:0.6rem">♻️ 从备份恢复</button>
         <input type="file" id="set-restore-input" accept=".json,application/json" style="display:none">
         ${Store.hasRecoveryBackup() ? `
@@ -2189,16 +2332,36 @@ const App = (() => {
       if (!(bs >= 60 && bs <= 260) || !(bd >= 30 && bd <= 200)) { showError(node, '请输入有效的血压目标值'); return; }
       if (bs <= bd) { showError(node, '高压目标应高于低压目标'); return; }
       if (!(gf >= 3 && gf <= 20) || !(gp >= 3 && gp <= 30)) { showError(node, '请输入有效的血糖目标值'); return; }
+      /* 以前这两项不校验：按米填的身高（1.7）会算出几十万的 BMI；将来的发病日期被静默丢掉 */
+      const heightRaw = node.querySelector('#set-height').value.trim();
+      const [hMin, hMax] = Store.heightRange;
+      if (heightRaw && !(+heightRaw >= hMin && +heightRaw <= hMax)) { showError(node, '身高请按厘米填写，比如 165'); return; }
+      const strokeDate = node.querySelector('#set-stroke-date').value;
+      if (strokeDate && strokeDate > Store.today()) { showError(node, '发病日期不能晚于今天，请核对'); return; }
+      if (strokeDate && strokeDate < '1900-01-01') { showError(node, '发病日期好像填错了年份，请核对'); return; }
       const p2 = Store.data.profile;
       p2.name = node.querySelector('#set-name').value.trim();
-      p2.strokeDate = node.querySelector('#set-stroke-date').value;
-      p2.height = node.querySelector('#set-height').value;
+      p2.strokeDate = strokeDate;
+      p2.height = heightRaw;
       p2.targets = { bpSys: bs, bpDia: bd, gluFast: gf, gluPost: gp };
       if (!stored(Store.save())) return;
       close();
       render(currentView, { keepScroll: true, preserveInputs: true });
       toast('设置已保存');
     };
+  }
+
+  /* 上次在这台设备下载备份是哪天：本地存储的应用，丢数据的头号原因是从没备份过。
+     家属打开设置时一眼能看到；超过 30 天且确有记录时提醒再下一份。不在今日页催患者。 */
+  function backupAgeHTML() {
+    const s = Store.backupSummary(Store.data);
+    const hasData = s.meds + s.bp + s.glucose + s.weight + s.checkinDays > 0;
+    const d = Store.lastBackupAt();
+    if (!d) return hasData ? '<div class="muted backup-age due">这台设备上还没有下载过备份。</div>' : '';
+    const n = Math.max(0, Store.daysBetween(d, Store.today()));
+    const when = n === 0 ? '今天' : n === 1 ? '昨天' : `${n} 天前（${+d.slice(5, 7)}月${+d.slice(8, 10)}日）`;
+    const due = hasData && n >= 30;
+    return `<div class="muted backup-age${due ? ' due' : ''}">上次下载备份：${when}。${due ? '记录又多了不少，建议再下载一份。' : ''}</div>`;
   }
 
   function applyFont(f) {
@@ -2272,6 +2435,12 @@ const App = (() => {
           <div class="guide-line">中间<b>歇几天很正常</b>，回来做一个动作就又接上了。</div>
           <div class="guide-line">算数、说话、走路变难，都是<b>脑子在恢复中的常见情况</b>，不是您不行。认知练习里算不出来可以看提示、可以跳过、也可以换成不用算的。</div>
         </div>
+        ${!review && IS_IOS_HOME_ICON ? `
+        <div class="card">
+          <div class="card-title">📲 以前在浏览器里用过？</div>
+          <div class="guide-line">苹果手机的桌面图标和 Safari 浏览器<b>各存各的记录</b>，以前的记录不会自动过来。</div>
+          <div class="guide-line">请先在 Safari 里打开本应用，点「设置 → 备份全部数据」；再回到这个图标，点「设置 → 从备份恢复」。</div>
+        </div>` : ''}
         <div class="disclaimer">本应用是家庭康复辅助工具，不能替代医生的诊断和治疗。<br>训练前请经康复医生评估，身体不适立即停止并就医。</div>
         <button class="btn green block huge" id="guide-done" style="margin-top:0.7rem">${review ? '我知道了' : '我知道了，开始使用'}</button>
       </div>`);
@@ -2322,7 +2491,14 @@ const App = (() => {
 
   function downloadBackup() {
     saveBackupFile(Store.exportBackup());
+    noteBackupDownloaded();
     toast('已发起备份下载，请到下载列表或「文件」中确认已保存');
+  }
+  /* 记下日期，只换掉设置页里那一行——不重建设置弹窗，免得冲掉还没保存的称呼等输入 */
+  function noteBackupDownloaded() {
+    Store.markBackupDownloaded();
+    const slot = document.getElementById('backup-age');
+    if (slot) slot.innerHTML = backupAgeHTML();
   }
 
   function openEncryptedBackup() {
@@ -2366,6 +2542,7 @@ const App = (() => {
         if (!close.active()) return;
         password.value = again.value = '';
         saveBackupFile(text, true);
+        noteBackupDownloaded();
         close();
         toast('已发起加密备份下载，请确认文件已保存，并保管好密码');
       } catch (e) {
@@ -2392,7 +2569,31 @@ const App = (() => {
     learn: renderLearn,
   };
 
+  /* ---------- 跨天与跨页面：页面不能停在"昨天"或"别处改之前" ----------
+     手机浏览器切到后台并不会重新加载页面：晚上打开的用药页，第二天早上切回来，
+     屏幕上还是昨天全打了勾的核对表——患者会以为今天已经吃过了。数据也一样：
+     开了两个标签、或主屏图标和浏览器同时开着，一边记了，另一边还显示旧的，
+     而且一保存就被冲突保护拦下。所以切回本页、拿到焦点、别的页面写过数据、
+     以及开着时每分钟一次，都检查"日子换没换、数据换没换"，换了就重画。
+     有浮层开着时先不动它（正在填的表单不能被冲掉），等浮层全关了再重画。 */
+  let renderedDay = '';
+  let refreshPending = false;
+  function refreshIfStale() {
+    const synced = Store.reloadIfChanged();
+    if (synced) {
+      applyFont(Store.data.profile.font);
+      applyVoice(Store.data.profile.speechVoice);
+      settingsRevision++;
+    }
+    if (!synced && !refreshPending && Store.today() === renderedDay) return false;
+    if (topOverlay()) { refreshPending = true; renderStorageNotice(); return true; }
+    refreshPending = false;
+    render(currentView, { keepScroll: true, preserveInputs: true });
+    return true;
+  }
+
   function render(view, { keepScroll = false, preserveInputs = false } = {}) {
+    renderedDay = Store.today();
     if (preserveInputs) captureRecordDraft();
     const details = keepScroll ? [...$view().querySelectorAll('details[id]')].map(el => [el.id, el.open]) : [];
     const focused = keepScroll ? document.activeElement : null;
@@ -2437,6 +2638,24 @@ const App = (() => {
     $view().querySelector('h1')?.focus({ preventScroll: true });
   }
 
+  /* ---------- 离线缓存与持久化存储（锦上添花：任何一步失败都静默，应用照常可用） ----------
+     离线缓存只在线上 HTTPS 注册：file:// 双击打开本来就不需要；本地 http 预览若也注册，
+     改了 js 刷新会拿到缓存里的旧文件（测试用 ?sw=1 显式打开）。sw.js 只缓存本站运行文件，
+     不碰健康数据、不向别处发请求。 */
+  function registerOffline() {
+    const want = location.protocol === 'https:' || new URLSearchParams(location.search).get('sw') === '1';
+    if (want && 'serviceWorker' in navigator) {
+      const reg = () => navigator.serviceWorker.register('sw.js').catch(() => {});
+      if (document.readyState === 'complete') reg(); else window.addEventListener('load', reg, { once: true });
+    }
+    /* 请浏览器把本站存储标成"持久"：Safari 会清掉长期没打开的网站的 localStorage，
+       安卓存储紧张时也可能清；持久化的不清。Safari/Chrome 按使用情况自行决定、不弹窗；
+       Firefox 会弹一个老人看不懂的权限框，跳过。 */
+    if (/^https?:$/.test(location.protocol) && navigator.storage?.persist && !/Firefox\//.test(navigator.userAgent)) {
+      navigator.storage.persisted().then(p => p || navigator.storage.persist()).catch(() => {});
+    }
+  }
+
   function init() {
     Store.load();
     applyFont(Store.data.profile.font);
@@ -2446,6 +2665,18 @@ const App = (() => {
     document.getElementById('btn-settings').onclick = openSettings;
     const urlView = new URLSearchParams(location.search).get('view');
     go(RENDERERS[urlView] ? urlView : 'today');
+
+    /* 切回本页/拿到焦点/别的页面写过数据/开着时每分钟：检查跨天与数据同步（见 refreshIfStale） */
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      refreshIfStale();
+      Awake.poke();                                  // 浏览器在页面切走时释放了常亮，切回来再要
+      document.getElementById('trainer')?._tick?.(); // 锁屏期间到点的计时，回来立刻报"时间到"
+    });
+    window.addEventListener('pageshow', e => { if (e.persisted) refreshIfStale(); });
+    window.addEventListener('focus', () => refreshIfStale());
+    window.addEventListener('storage', () => refreshIfStale());
+    setInterval(() => { if (document.visibilityState === 'visible') refreshIfStale(); }, 60000);
 
     /* 返回键与屏幕关闭统一在历史条目退掉后关闭浮层，保证 DOM 和历史状态同步。 */
     window.addEventListener('popstate', () => {
@@ -2485,6 +2716,7 @@ const App = (() => {
       if (top && !top.contains(e.target)) top.querySelector('.m-title, .t-name').focus({ preventScroll: true });
     });
     if (!Store.guideSeen() && !Store.storageStatus()) openGuide();
+    registerOffline();
   }
 
   return { init, go };

@@ -23,6 +23,8 @@
 12. **朗读稿与显示文案分离**（v0.2.27）：屏幕上的写法是给眼睛的（`10～15次`、`130/80 mmHg`、`10次×2组`），原样送进 TTS 就是"机器味"的主因。要改朗读效果**只动 `js/speech.js` 的 `SPEAK_RULES`，绝不改数据文件里的显示文案**。该表顺序敏感（含 `/` 的单位排在裸 `/` 之前；去 emoji 排在箭头之后）；吃前后空白只能用 `[ \t]`，**用 `\s` 会连换行一起吃掉、把两句粘成一句**；`speech.js` 内**禁用 lookbehind**（老 WebView 不支持，会让整个文件解析失败、朗读全哑）。相关回归跑 `node test/speech.test.js`。
 13. **转义纪律**：用户输入插入 HTML 前必须过 `app.js` 内的 `esc()`（`data-*.js` 里的静态内容例外）。
 14. 用户未要求时不做 git 提交/推送（注意：上级目录的 `.git` 是空目录，非有效仓库；本项目自己的仓库是有效的，远程见 HANDOVER §1.2）。
+15. **页面会开着跨天、会和别的页面同开**（v0.2.32）：手机切后台不重载页面，屏幕上的"今天"可能是昨天、数据可能已被另一标签改过。① 日期时间在**动作发生时**现取 `Store.today()/timeStr()`，不要用渲染时刻填进 DOM 的值（记录表单的"跟着现在走"见 `whenValue()`）；② 跨天/别处改过数据的重画统一走 `refreshIfStale()`，按日显示的新视图不用自己处理；③ "吃没吃到"类统计只算**已到点**的次数（`dueOnly`），今日核对表才数全天。相关回归跑 `node test/lifecycle.test.js`。
+16. **Store 的写入 API 先校验再改数据**（v0.2.32）：不合法就 `refuse(原因)` 返回 false、原因由 `Store.actionError()` 给界面；**不能依赖 `normalizeState()` 去"修正"**——它会把条目静默丢掉或改掉，而 `save()` 照样报成功（曾让停用的药复活、让记录"保存成功"却消失）。
 
 ## 验证命令
 
@@ -38,6 +40,8 @@ node test/settings.test.js     # 即时生效偏好的落盘与回显
 node test/overlay.test.js      # 浮层四路径不得离开页面（加 --stress 跑 40 轮）
 node test/encryption.test.js   # 加密备份往返
 node test/backup-stress.test.js # 大备份压力
+node test/lifecycle.test.js    # 跨天/锁屏计时/多页面同步/屏幕常亮（时钟与可见性打桩）
+node test/sw.test.js           # 离线缓存：断网、网络卡住、重新部署、安装失败即退化（按真实 _headers 加头）
 bash test/smoke.sh             # 五页渲染 + file:// 直开 + 资源可达，约 2~3 分钟
 
 # 目视与语法

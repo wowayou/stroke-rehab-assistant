@@ -28,6 +28,7 @@ stroke-rehab-assistant/
 ├── index.html            # 应用外壳：顶栏、视图容器、底部导航、modal/toast 挂载点
 ├── _headers              # Cloudflare Pages 生产响应头（CSP/HSTS/防嵌入等）
 ├── manifest.json         # PWA manifest（支持"添加到主屏幕"）
+├── sw.js                 # 离线缓存（Service Worker），只在线上 HTTPS 由 app.js 注册；不在脚本加载顺序里
 ├── icon.svg              # 应用图标
 ├── css/style.css         # 全部样式。顶部 :root 定义设计变量（颜色/圆角/导航高度）
 ├── js/
@@ -49,6 +50,8 @@ stroke-rehab-assistant/
 │   ├── overlay.test.js    # 真实 Chromium 浮层/返回/急救/布局回归
 │   ├── settings.test.js   # 真实 Chromium 即时生效偏好落盘与回显
 │   ├── backup-stress.test.js # 接近上限的大备份压力回归
+│   ├── lifecycle.test.js  # 真实 Chromium：跨天、锁屏计时、多页面同步、屏幕常亮（时钟/可见性打桩）
+│   ├── sw.test.js         # 真实 Chromium：离线缓存（Node 静态服务器按真实 _headers 加头）
 │   ├── preview-figures.js # 简笔画截图（目视用，非断言）；--review 生成给医生的复核单
 │   └── smoke.sh          # 无头浏览器冒烟测试（5 个页面/file:// + 资源可达）
 ├── docs/
@@ -70,7 +73,7 @@ stroke-rehab-assistant/
 data-exercises.js → data-articles.js → storage.js → charts.js → games.js → figures.js → speech.js → app.js
 ```
 
-全局名清单：`EXERCISES` `EX_CATS` `STAGES` `DAILY_PLAN` `ARTICLES` `BEFAST` `Store` `Charts` `Games` `FIG` `POSES` `FIGURES` `Speech` `App`。新增文件时在 app.js 之前插入，并在此处记录（同时记得加进 `test/smoke.sh` 的静态资源清单；`deploy.sh` 整目录拷贝 `js/`，无需改）。
+全局名清单：`EXERCISES` `EX_CATS` `STAGES` `DAILY_PLAN` `ARTICLES` `BEFAST` `Store` `Charts` `Games` `FIG` `POSES` `FIGURES` `Speech` `App`。`sw.js` 不在这个顺序里（它跑在 Service Worker 线程，由 `app.js` 的 `registerOffline()` 注册），也不读任何全局名。新增文件时在 app.js 之前插入，并在此处记录（同时记得加进 `test/smoke.sh` 的静态资源清单；`deploy.sh` 整目录拷贝 `js/`，无需改）。
 
 ## 5. 数据模型（localStorage）
 
@@ -84,7 +87,7 @@ data-exercises.js → data-articles.js → storage.js → charts.js → games.js
     stage: 'sitting',    // 康复阶段 bed|sitting|standing|walking，决定推荐训练
     font: 'normal',      // 字号 normal|large|xlarge
     speechRate: 'slow',  // 朗读语速 slow|mid|fast（默认慢；枚举值在 load() 里消毒）
-    height: '',          // cm，选填，用于 BMI
+    height: '',          // cm，选填，用于 BMI；只收 50～250（按米填的 1.7 读盘时丢弃）
     targets: {           // 个人目标值（遵医嘱、可调），数字在 load() 里消毒
       bpSys: 140, bpDia: 90, gluFast: 7.0, gluPost: 10.0,
     },
@@ -106,6 +109,7 @@ data-exercises.js → data-articles.js → storage.js → charts.js → games.js
   },
   exerciseLog: { 'YYYY-MM-DD': ['exId', ...] },       // 训练打卡（同日去重）
   gameLog:     { 'YYYY-MM-DD': [{ game, score, detail, time }] },  // 游戏成绩
+  ui: { guideSeen: false, lastBackupAt: '' },  // 是否看过首次指引 / 这台设备上次点"下载备份"的日期
 }
 ```
 
@@ -133,19 +137,21 @@ data-exercises.js → data-articles.js → storage.js → charts.js → games.js
 - **即时生效型设置必须即时落盘（v0.2.25，加这类偏好时必须照做）**：字号、语速这类"点一下就看到/听到效果"的偏好，**不能挂在「保存设置」按钮上**。设置弹窗有 ✕、安卓返回键、Esc、点遮罩四种关法，只有一种会走保存按钮——挂在保存上等于四分之三的关法都会丢设置。两条规则：① 点一下立刻写 `Store`（走 `commitProfile()`，同训练页阶段 chip 的 `Store.save()` 范式）；② 选中态**只从 `Store` 派生**（`segGroupHTML()` 渲染 + `bindSegGroup({ current, commit })` 重刷），绝不用 DOM 上残留的 `.active` 反推真值。用 `.active` 反推是 v0.2.25 修掉的那个 bug 的根源：DOM 与 `Store` 成了两个真相来源，点完特大再用 ✕ 关掉，字号已生效但没落盘，重开回显"标准"、刷新后字号直接掉回标准。相关回归必须跑 `node test/settings.test.js`。
 - **同类条目用分组列表，不要一条一张卡（v0.2.26，加列表/按钮时必须照做）**：同一页出现三个以上同构条目（训练动作、科普文章）时，用「分组标题 + 一张卡内分行」（`.section-label` + `.list-group` / `#ex-list` + `.ex-item`），不要每条一张带阴影的浮动卡片——十几张同款卡叠起来是"卡片墙"，看不出哪项是今天该做的。按钮分三级：**实心蓝（`.btn`）每屏只允许一个主操作**（保存、拨 120），列表行里重复出现的操作用浅蓝（`.ex-start` / `.ci-action`，`--primary-soft` 底 + `--primary-dark` 字，对比度约 6.4:1），完成态用浅绿。一屏六七个实心蓝按钮会让真正的主操作消失在其中。触控目标仍是 48px 起，分级只改颜色不改尺寸。
 - **重渲染不要跳页首**：`render(view, { keepScroll })`。切页用默认（回顶部），"数据变了重渲染"（如训练打卡）传 `keepScroll: true`——否则在训练页往下翻着练，练完一个就被弹回顶部。
+- **跨天与跨页面（v0.2.32，硬约定 15）**：手机切后台不重载页面——晚上打开的用药页第二天切回来，曾显示昨天全打了勾。`refreshIfStale()` 在切回本页（`visibilitychange`/`pageshow`/`focus`）、别的页面写过数据（`storage` 事件）和开着时每分钟检查一次：日子换了或 `Store.reloadIfChanged()` 读到新数据就重画（保留滚动与记录草稿）；有浮层开着时只记 `refreshPending`，最后一层关掉再画。用药核对点击前也先检查一次，旧屏幕上的那一下不记账。记录表单的日期时间默认"跟着现在走"（`whenValue()`，表单上 `data-when="set"` 才按用户所填），草稿也不冻结旧时刻。
 - **训练引导器 `openTrainer(ex)`**：全屏覆盖层，按 `ex.mode.type` 三种形态：
   - `reps`：大圆按钮计次，**大数字是"还差几次"的倒数**（不是已完成数），到量显示 ✓、超量说"比目标还多 N 次"，达标震动+提示音；
-  - `timer`：倒计时（开始/暂停/重置）+ 人话时长与进度条，归零提示；
+  - `timer`：倒计时（开始/暂停/重置）+ 人话时长与进度条，归零提示。**按截止时刻现算剩余**（`deadline - Date.now()`），不按每秒减一：锁屏/后台时定时器会被冻结或降频，减一式计时会停在半路；锁屏期间到点的，切回来由 `_tick()` 立刻报"时间到"。到点后再点从头计；
   - `game`：挂载认知游戏，游戏内"完成打卡"回调 `finish()`；另传 `onSwitch(gameKey)`（换成别的游戏）与 `onQuit()`（中途收工也打卡）。
   - 完成 → `Store.logExercise(id)`（同日去重）→ toast → 关闭 → 重渲染。
-  - **关闭时必须清理**：`closeTrainer()` 负责 `clearInterval` + `Games.stop()`，新增异步资源要在这里一并清理。
+  - **关闭时必须清理**：`closeTrainer()` 负责 `clearInterval` + `Games.stop()` + `Awake.stop()` + `releaseAudio()`，新增异步资源要在这里一并清理。
+  - **屏幕常亮与提示音（v0.2.32）**：训练页开着时 `Awake` 请求 Screen Wake Lock（不支持就静默放弃），10 分钟没碰屏幕且不在计时就放掉；页面切走浏览器会自动释放，切回来 `Awake.poke()` 再要。提示音共用一个在点按里创建/恢复的 `AudioContext`（`unlockAudio()`）——iOS 上不在点按里建的 AudioContext 是静音的，计时结束那一声由定时器触发，以前每次新建所以不响。
 - **历史视图**：三个入口都是 `openModal` 弹窗，不占主页面高度——`openVitalHistory(kind)`（趋势图 + 全部记录 + 状态点 + 删除，删除后 `paint()` 重画弹窗并 `renderRecords()` 刷新背后页面）、`openExerciseHistory()`、`openMedHistory()`。血压/血糖/体重的判定统一走 `vitalStatus(kind, v)`（复用 `bpBadge/gluBadge/bmiBadge`），趋势图统一走 `drawVitalChart(kind, canvas, recent)`——**加新指标时改这两个函数即可**。打卡日历 `calendarHTML(n)` 由 `Store.exerciseCalendar(n)` 驱动，训练页与弹窗共用。
 - **安全/转义纪律**：所有**用户输入**（姓名、药名、剂量、备注等）插入 HTML 前必须过 `esc()`。`data-*.js` 里的静态内容是我们自己写的，直接插入；**如果未来文章/动作内容改为用户可编辑或远程下发，必须改为全量转义或消毒**。
 - 提示反馈：`toast(msg)`（5s 自动消失）；需用户处理的错误用 `showError()` 持续显示，存储问题另由 `renderStorageNotice()` 显示；`beep()`（WebAudio 提示音+震动，失败静默）。
 
 ### storage.js
 
-纯数据层，无 DOM 依赖（因此可以在 Node 里测试）。公开 API 见文件头部注释和 `return` 清单。`save()` 在规范化前检查容量、保存前对照 `persistedRaw` 检测过期快照，失败回滚到 `persistedJSON`；不会自动合并另一标签页的数据。`exportBackup()` 也走解析校验，拒绝不可恢复的文件。改这里必须同步跑 `node test/storage.test.js`。
+纯数据层，无 DOM 依赖（因此可以在 Node 里测试）。公开 API 见文件头部注释和 `return` 清单。**写入 API 先校验再改数据（硬约定 16）**：`addMed/updateMed` 走 `medProblem()`（药名、时间、`from ≤ to`、新旧疗程不重叠），`toggleMed` 只接受当天确实要吃的那一次、不能提前勾，`addVital` 先过与读盘同一套 `VITAL_CLEAN`、拒绝将来日期；不通过就 `refuse(原因)`，界面经 `stored()` 显示 `Store.actionError()`。**服药统计分两种口径**：今日核对表（`medProgressToday`）数全天；"吃没吃到"（`adherence7d`/`medFullDays`/`medStatusOn().dueTotal`）只数已到点的（`isDoseDue`），这些函数都接受 `now` 参数，测试必须传固定时刻。`reloadIfChanged()` 供跨页面同步。`save()` 在规范化前检查容量、保存前对照 `persistedRaw` 检测过期快照，失败回滚到 `persistedJSON`；不会自动合并另一标签页的数据。`exportBackup()` 也走解析校验，拒绝不可恢复的文件。改这里必须同步跑 `node test/storage.test.js`。
 
 ### data-exercises.js
 
@@ -245,6 +251,12 @@ data-exercises.js → data-articles.js → storage.js → charts.js → games.js
 
 **要做摄像头动作识别，必须先松红线（摄像头权限、CSP、零依赖）并重新评估医疗器械边界——这是产品决策，不是技术选型，必须先问用户**（2026-09-26 用户已定：不做）。动画可以零依赖自做（按关节角度插值画 SVG），前提：① 复合动作用关键帧，不能两帧线性插值——坐站转移会变成"边起身边伸直"，恰好教错"先前倾、后起身"的顺序；② 有暂停键（自动播放超过 5 秒必须可停，WCAG 2.2.2）；③ 服从系统"减少动画"；④ 两端姿势先经复核。患侧着色留到画"好腿先上、坏腿先下"这类新图时再定，颜色不能单独承载含义。
 
+### sw.js（离线缓存，v0.2.32）
+
+只缓存本站运行文件，不碰健康数据、不向外发请求；只在 `https:` 注册（本地 http 预览加 `?sw=1` 才注册，否则改了 js 刷新会拿到缓存旧文件）。策略：页面联网优先，`SHELL_TIMEOUT`（4 秒）内没回来或连不上、5xx 就用缓存，网络那边到了再后台更新；带 `?ver=` 的 css/js 缓存优先（`deploy.sh` 每次部署盖新戳，同一 URL 内容不变），每拿到新页面按它实际引用的 URL 清掉旧版本；没带版本号的（`manifest.json`、`icon.svg`）先给缓存、后台取新。**安装时整套预缓存，取不到任何一个就整体失败——失败等于没有 sw.js，不会把站点弄坏**（`sw.test.js` 专门验）。
+
+三条会咬人的约定：① `_headers` 里 `/sw.js` 的 `! Content-Security-Policy` 不能删——页面的 `connect-src 'none'` 套到 SW 上会拦掉它的全部 fetch；同名头多条规则是**逗号合并**（两条策略同时生效），所以只能摘、不能另加放宽的一条。② 新增运行文件若不是 `index.html` 里直接引用的（像 manifest 引用的 `icon.svg`），要加进 `EXTRA`，并且 `asset()` 只拦 `.js/.css/.svg/.json`，别的类型要一并加上。③ 部署后核对 `curl -sI <站点>/sw.js` 没有 `content-security-policy` 头、有 `cache-control: no-cache`。另：`registerOffline()` 顺带请求 `navigator.storage.persist()`（Safari 会清长期没打开的网站的 localStorage，持久化的不清；跳过会弹权限框的 Firefox）。
+
 ## 7. 测试
 
 ```bash
@@ -274,6 +286,12 @@ node test/backup-stress.test.js
 
 # 1g) 设置项持久化（字号/语速：不按保存就关掉也必须留住，且回显与实际一致）
 node test/settings.test.js
+
+# 1h) 跨天/锁屏计时/多页面同步/屏幕常亮（页面内打桩时钟、可见性、Wake Lock、AudioContext）
+node test/lifecycle.test.js
+
+# 1i) 离线缓存（Node 静态服务器按真实 _headers 加头：断网、网络卡住、5xx、重新部署、重定向、安装失败即退化）
+node test/sw.test.js
 
 # 1f) 简笔画目视检查（改 figures.js 后必看一眼图，断言替代不了眼睛）
 node test/preview-figures.js            # 全部动作 → figures-preview.png（含 400/150/96px）
@@ -326,12 +344,12 @@ for f in js/*.js; do node --check "$f"; done
 3. **动作示意图专业复核后扩充**：画法体系已完成（v0.2.14），目前 5 个动作；几何测试只能保证画法自洽，不能替代治疗师确认患侧摆位、关节角度和阶段适用性。v0.2.31 补了临床角度护栏与复核单，下一步是拿复核单找医生，结论回填 `POSES[id].review`
 4. **卒中后情绪筛查与就医指引**：PSD 常被忽视，但量表措辞、危机响应与转介路径必须先由专业人员审核；不能只做一个分数
 5. **患者/家属双视图**：患者视图进一步减少干扰，家属视图保留趋势、原始数字和安全须知；先用真实家庭分工验证是否有价值
-6. **Service Worker 离线缓存**：弱网/无网可用；属于可靠性与便利性提升，需处理缓存版本，避免医学内容更新后仍展示旧版本
+6. ~~**Service Worker 离线缓存**~~ ——已完成（v0.2.32，策略见 §6 sw.js；页面联网优先，医学内容更新后联网即生效）
 7. **久坐提醒**：先按行动能力和跌倒风险设计适用条件，不能对所有卒中患者统一提示起身活动
 8. **家属远程查看**：需要后端并扩大隐私与合规边界，只有真实家庭需求明确后再考虑
 9. **微信小程序壳**：意味着第二套发布与审核链路，不在近期主线
 
-已完成的基础能力：语音朗读（v0.2.13）、数据备份/恢复（v0.2.6）、恢复点与撤销（v0.2.20）、可选密码加密备份（v0.2.21）。
+已完成的基础能力：语音朗读（v0.2.13）、数据备份/恢复（v0.2.6）、恢复点与撤销（v0.2.20）、可选密码加密备份（v0.2.21）、离线缓存与持久化存储申请（v0.2.32）。
 
 ## 10. 变更记录
 
@@ -341,6 +359,7 @@ for f in js/*.js; do node --check "$f"; done
 
 | 日期 | 版本 | 变更 |
 |---|---|---|
+| 2026-10-02 | v0.2.32（本地，未部署） | 用户要求“体验做扎实、后端逻辑不能出问题”。修：①页面开过夜仍显示昨天的服药勾、记录日期取渲染时刻；②锁屏计时冻结、iOS 结束音不响；③改停用药开始日期会复活、新记录可被静默丢弃（硬约定 16）；④未到点的药算漏服；⑤夏令时康复天数少 1。新增：多页面自动同步、训练时屏幕常亮、离线缓存 `sw.js`、持久化存储申请、上次备份日期、iOS 桌面图标存储提示、身高/日期/高低压校验。验证：全部 Node 与 Chromium 回归；新增 lifecycle/sw 测试在旧代码与变异上均报错。未验：真机常亮/提示音/离线、生产 `_headers` 摘 CSP。 |
 | 2026-09-26 | v0.2.31（部署 `03608e86`） | 用户贴火柴人示意图技术栈调研问如何集成：只吸收「临床规则校验+复核后发布」，工具与红线冲突不接（选型结论见 §6 figures.js；摄像头用户定为不做）。① 新增 `test/figure-angles.js`、figures.test.js 第 7/8 节（活动度包络、按要领原文推出的断言、复核状态），在旧图上反向报出 21 项；② 修正 4 张与要领矛盾的图：坐站、踝泵、桥式、踏步（含远侧膝过伸）；③ `POSES[id].review` 为复核状态唯一真源；④ `preview-figures.js --review` 出复核单；⑤ 用户看图反馈"和之前看不出区别"：加动作部位橙色高亮（`focus`）+ 由两帧现算的运动弧线（`motion`），画风其余不变。验证：`node --check` 全部 js、figures/contracts/storage/speech 测试、`smoke.sh` 全过；400/150/96px 预览人眼看过（用户确认）。未验：姿势待医生复核、真机看图。 |
 | 2026-09-25 | v0.2.30.1 | 应用户要求继续打磨精致度与统一性：设置弹窗首个无标题大卡拆成「👤 基本信息」「🔊 显示与朗读」两张带 `.card-title` 的卡，与目标值/帮助/备份的标题层级统一（表单卡用 card-title、动作列表用 section-label）。展开折叠箭头由 `⌄` 字形改为 CSS 边框绘制的 V 形（`.disclosure-arrow`），跨平台一致、随字号缩放、开合平滑旋转。纯表现层，未动 `data-seg`/`bindSegGroup`/`#set-*` 选择器与医学文案。验证：node --check、contracts、settings、overlay（含 90 组布局不溢出）通过 + 训练页开合两态与设置弹窗截图目验。未验：真机读屏/手势观感。 |
 | 2026-09-25 | v0.2.30（本地） | 应用户要求参考 Linear 打磨：统一表面、标题与控件；宽屏侧栏、手机底栏、窄屏按钮分行；修复打卡/修改后返回焦点丢失，补读屏按钮名称与组件样张。验证：contracts/speech/settings/overlay --stress/smoke、语法、90 组页面与触控、18 组设置/急救、缩放保留输入、截图目验通过；窄屏收尾后复跑 overlay。已提交 `17399c3` 并部署上线（线上 `app.js`/`style.css`/`storage.js` 与本地 md5 逐字节一致，index 带 `ver=20260925213859`）。未验：真机读屏、原生键盘/手势；生产端 settings/overlay 回归与安全响应头未复核；部署时上游中断，未捕获 Cloudflare 部署 ID。 |

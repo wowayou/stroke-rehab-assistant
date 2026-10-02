@@ -56,7 +56,7 @@ python3 -m http.server 8080
 
 ## 技术说明
 
-- 纯 HTML/CSS/JS，无框架、无构建、无外部依赖，可离线打开（file:// 协议直接可用）
+- 纯 HTML/CSS/JS，无框架、无构建、无外部依赖，可离线打开（file:// 协议直接可用；线上地址打开过一次后，断网或网络卡住也能从缓存打开）
 - `js/data-exercises.js` 训练动作库、`js/data-articles.js` 科普内容 —— 内容与代码分离，方便增改
 - `js/storage.js` localStorage 数据层；`js/charts.js` 零依赖 canvas 趋势图；`js/games.js` 认知训练小游戏
 - 适老化：基准字号 18px（可调至 22px）、触控目标 ≥48px、高对比度、底部大图标导航
@@ -75,8 +75,12 @@ node test/storage.test.js    # 数据层单元测试
 node test/contracts.test.js  # 跨模块安全/适老化静态硬约定
 node test/settings.test.js   # 设置项持久化（真实 Chromium，需 Playwright 的 Chromium）
 node test/overlay.test.js    # 备份浮层与返回键历史栈（真实 Chromium）
+node test/lifecycle.test.js  # 跨天/锁屏计时/多页面同步（真实 Chromium）
+node test/sw.test.js         # 离线缓存（真实 Chromium）
 bash test/smoke.sh           # 无头浏览器冒烟测试
 ```
+
+完整测试命令以 [AGENTS.md](AGENTS.md)「验证命令」为准。
 
 ## 医学内容与免责声明
 

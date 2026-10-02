@@ -304,13 +304,15 @@ Store.addMed({ name: '阿司匹林肠溶片', dose: '100mg', times: ['08:00', '2
 const mid = Store.data.meds[0].id;
 /* 新登记的药默认 from=今天：登记之前的日子不该算漏服 */
 assert(Store.data.meds[0].from === t, '新增药物应默认 from=今天，实际 ' + Store.data.meds[0].from);
-assert(Store.medFullDays(7).days === 1, '今天才登记的药：只有今天该计入，实际 ' + Store.medFullDays(7).days);
+/* 统计「吃没吃到」只看已到点的次数，跟当前钟点有关：断言一律传固定时刻，免得测试结果随运行时间变 */
+const at = hm => new Date(t + 'T' + hm + ':00');
+assert(Store.medFullDays(7, at('21:00')).days === 1, '今天才登记的药：只有今天该计入，实际 ' + Store.medFullDays(7, at('21:00')).days);
 /* 把开始日期往前挪，才覆盖整个 7 天窗口 */
 Store.updateMed(mid, { from: Store.addDays(t, -10) });
 Store.toggleMed(mid, '08:00');
 Store.toggleMed(mid, '20:00');
 Store.toggleMed(mid, '08:00', Store.addDays(t, -1));   // 昨天只吃了一次
-const fd = Store.medFullDays(7);
+const fd = Store.medFullDays(7, at('21:00'));
 assert(fd.days === 7, '有药物时 7 天都应计入，实际 ' + fd.days);
 assert(fd.full === 1, '只有今天全部核对，full 应为1，实际 ' + fd.full);
 
@@ -356,6 +358,115 @@ assert(Store.undoStopMed(oldCourse.id) === false, '已有后续疗程时 undoSto
 Store.data.meds = [{ id: 'legacy', name: '旧数据药', times: ['08:00'] }];
 assert(Store.medsOn(Store.addDays(t, -100)).length === 1, '旧数据（无 from/to）应视为一直在吃');
 assert(Store.activeMeds().length === 1, '旧数据应算在吃');
+
+/* --- v0.2.32 写入前校验：不能"报成功、实际被静默丢掉/改掉" --- */
+Store.data.meds = []; Store.data.medLog = {};
+Store.save();
+/* 停用的药改开始日期晚于停用日：以前 normalizeState 会把 to 清空，药悄悄复活回每日核对 */
+assert(Store.addMed({ name: '甲药', dose: '', times: ['08:00'], note: '', from: Store.addDays(t, -20) }), '登记甲药');
+const medA = Store.data.meds[0];
+assert(Store.stopMed(medA.id, Store.addDays(t, -10)), '停用甲药');
+assert(Store.updateMed(medA.id, { from: Store.addDays(t, -5) }) === false, '开始日期晚于停用日期必须拒绝');
+assert(/不能晚于停用日期/.test(Store.actionError()), '拒绝要给出原因，实际 ' + Store.actionError());
+assert(Store.data.meds[0].to === Store.addDays(t, -10) && Store.activeMeds().length === 0, '被拒绝后停用状态不得改变');
+assert(Store.updateMed(medA.id, { from: Store.addDays(t, -15), note: '饭后' }) === true, '合法修改应成功');
+assert(Store.updateMed(medA.id, { id: 'hijack' }) === true && Store.data.meds[0].id === medA.id, '补丁不得改写药物 id');
+/* 新疗程不能和旧疗程重叠（重叠的日子会被算两遍） */
+assert(Store.addMed({ name: '甲药', times: ['08:00'], from: Store.addDays(t, -10), previousCourseId: medA.id }) === false, '新疗程与旧疗程重叠必须拒绝');
+assert(Store.addMed({ name: '甲药', times: ['08:00'], from: Store.addDays(t, -9), previousCourseId: medA.id }) === true, '停药次日开始的新疗程应成功');
+const medA2 = Store.data.meds[1];
+assert(Store.updateMed(medA2.id, { from: Store.addDays(t, -12) }) === false, '编辑新疗程也不能挪到旧疗程里面去');
+assert(Store.updateMed(medA.id, { from: Store.addDays(t, -9) }) === false, '旧疗程的开始日期不能挪到新疗程之后');
+assert(Store.stopMed(medA.id, Store.addDays(t, -8)) === false, '旧疗程的停用日期不能改到新疗程开始之后（重叠）');
+assert(Store.addMed({ name: '  ', times: ['08:00'] }) === false && Store.addMed({ name: '乙药', times: [] }) === false, '没有药名/没有服药时间必须拒绝');
+assert(Store.addMed({ name: '乙药', times: ['25:00'] }) === false, '非法服药时间必须拒绝');
+assert(Store.data.meds.length === 2, '被拒绝的登记不得写入');
+/* 核对只接受当天确实要吃的那一次 */
+assert(Store.toggleMed(medA2.id, '08:00', Store.addDays(t, 1)) === false, '不能提前核对明天');
+assert(Store.toggleMed(medA2.id, '09:00') === false, '不在服药时间表里的钟点不能核对');
+assert(Store.toggleMed(medA.id, '08:00') === false, '已停用的疗程今天不能核对');
+assert(Store.toggleMed(medA2.id, '08:00') === true && Store.isMedTaken(medA2.id, '08:00'), '今天在吃的药可以核对');
+
+/* 只算已到点的次数：早上看"最近 7 天"不能因为晚上那次还没到点就少一天 */
+Store.data.meds = []; Store.data.medLog = {};
+Store.save();
+Store.addMed({ name: '丙药', times: ['08:00', '20:00'], from: Store.addDays(t, -10) });
+const medC = Store.data.meds[0];
+for (let i = 1; i <= 6; i++) {
+  Store.toggleMed(medC.id, '08:00', Store.addDays(t, -i));
+  Store.toggleMed(medC.id, '20:00', Store.addDays(t, -i));
+}
+assert(Store.medFullDays(7, at('07:00')).days === 6, '早上 7 点今天一次都没到点，今天不计入');
+Store.toggleMed(medC.id, '08:00');
+assert(Store.adherence7d(at('09:00')) === 100, '早上 9 点：前 6 天全吃+今早已吃，完成率应为 100，实际 ' + Store.adherence7d(at('09:00')));
+assert(JSON.stringify(Store.medFullDays(7, at('09:00'))) === '{"full":7,"days":7}', '早上 9 点 7 天都应算全吃到，实际 ' + JSON.stringify(Store.medFullDays(7, at('09:00'))));
+assert(JSON.stringify(Store.medFullDays(7, at('21:00'))) === '{"full":6,"days":7}', '晚上 9 点 20:00 那次没核对，今天不算全吃到');
+assert(Store.adherence7d(at('21:00')) === 93, '晚上 9 点完成率应为 13/14≈93，实际 ' + Store.adherence7d(at('21:00')));
+const st9 = Store.medStatusOn(t, at('09:00'));
+assert(st9.total === 2 && st9.done === 1 && st9.dueTotal === 1 && st9.dueDone === 1, '今日状态：全天 2 次、到点 1 次且已核对');
+assert(st9.items[1].due === false && st9.items[0].due === true, '每项应标出到没到点');
+assert(Store.isDoseDue(t, '20:00', true, at('09:00')) === true, '提前核对的也算到点（提前吃了也算数）');
+assert(Store.medHistory(14, at('09:00'))[0].dueTotal === 1, 'medHistory 今天一行也按到点计算');
+assert(Store.medProgressToday().total === 2, '今日核对表仍按全天的次数（还差几次没核对）');
+assert(/近7天服药完成率/.test(Store.exportReport()), '导出报告仍带完成率');
+
+/* 新增健康记录：过不了规范化就拒绝，不能显示"已保存"然后记录消失 */
+const bpBefore = Store.data.vitals.bp.length;
+assert(Store.addVital('bp', { date: '20255-01-01', time: '08:00', sys: 130, dia: 80 }) === false, '非法日期（6 位年份）必须拒绝');
+assert(Store.addVital('bp', { date: Store.addDays(t, 1), time: '08:00', sys: 130, dia: 80 }) === false, '未来日期必须拒绝');
+assert(/不能晚于今天/.test(Store.actionError()), '未来日期应说明原因');
+assert(Store.addVital('bp', { date: t, time: '08:00', sys: 'abc', dia: 80 }) === false, '非数字读数必须拒绝');
+assert(Store.addVital('pressure', { date: t, value: 1 }) === false, '未知记录类型必须拒绝');
+assert(Store.addVital('constructor', { date: t, value: 1 }) === false && Store.removeVital('__proto__', 'x') === false, '继承来的属性名不能当记录类型');
+assert(Store.data.vitals.bp.length === bpBefore, '被拒绝的记录不得写入');
+assert(Store.addVital('bp', { date: t, time: '', sys: 128, dia: 82, pulse: '' }) === true, '合法记录应保存');
+assert(Store.data.vitals.bp[0].sys === 128 && /^[A-Za-z0-9_-]+$/.test(Store.data.vitals.bp[0].id), '保存的是规范化后的条目');
+
+/* 身高按厘米：按米填的 1.7 会把 BMI 算成几十万，读盘时丢弃 */
+Store.data.profile.height = '1.7';
+localStorage.setItem('strokeRehab.v1', JSON.stringify(Store.data));
+Store.load();
+assert(Store.data.profile.height === '', '按米填写的身高应被丢弃，实际 ' + Store.data.profile.height);
+Store.data.profile.height = '165';
+Store.save();
+Store.load();
+assert(Store.data.profile.height === '165', '合法身高应保留');
+
+/* 康复第 N 天：跨夏令时也不能少一天（四舍五入，不向下取整） */
+Store.data.profile.strokeDate = Store.addDays(t, -30);
+assert(Store.rehabDay() === 31, 'rehabDay 仍应为 31');
+Store.data.profile.strokeDate = '';
+{
+  /* 在有夏令时的时区里跑同一段日期运算：2026-03-08 美东拨快一小时，两个零点只差 23 小时 */
+  const { spawnSync } = require('child_process');
+  const code = `global.localStorage={getItem:()=>null,setItem(){},removeItem(){}};global.window={};
+    eval(require('fs').readFileSync(${JSON.stringify(path.join(__dirname, '..', 'js', 'storage.js'))},'utf8')+';globalThis.Store=Store;');
+    process.stdout.write(JSON.stringify([Store.daysBetween('2026-03-01','2026-03-10'), Store.addDays('2026-03-07', 2), Store.daysBetween('2026-10-30','2026-11-02')]));`;
+  const out = spawnSync(process.execPath, ['-e', code], { env: { ...process.env, TZ: 'America/New_York' }, encoding: 'utf8' });
+  assert(out.stdout === '[9,"2026-03-09",3]', '夏令时时区的日期差/加天数必须正确，实际 ' + out.stdout + out.stderr);
+}
+
+/* 另一个页面写过数据：reloadIfChanged() 重新读盘，并解除"冲突"状态 */
+Store.save();
+assert(Store.reloadIfChanged() === false, '没人改过时不需要重读');
+const otherTab = JSON.parse(localStorage.getItem('strokeRehab.v1'));
+otherTab.profile.name = '另一页改的称呼';
+localStorage.setItem('strokeRehab.v1', JSON.stringify(otherTab));
+assert(Store.logExercise('conflict-first') === false && Store.storageStatus().kind === 'conflict', '重读之前保存仍应拒绝（保护另一页的数据）');
+assert(Store.reloadIfChanged() === true, '另一页写过后应重读');
+assert(Store.data.profile.name === '另一页改的称呼' && !Store.storageStatus(), '重读后拿到新数据且冲突解除');
+assert(Store.logExercise('after-sync') === true, '重读后可以继续保存');
+
+/* 上次下载备份的日期：只接受合法日期；备份文件是外部输入 */
+assert(Store.lastBackupAt() === '', '没下载过备份时为空');
+assert(Store.markBackupDownloaded() === true && Store.lastBackupAt() === t, '下载备份后记下今天');
+Store.load();
+assert(Store.lastBackupAt() === t, '备份日期应持久化');
+const uiDirty = JSON.parse(localStorage.getItem('strokeRehab.v1'));
+uiDirty.ui.lastBackupAt = '<img src=x>';
+localStorage.setItem('strokeRehab.v1', JSON.stringify(uiDirty));
+Store.load();
+assert(Store.lastBackupAt() === '' && Store.guideSeen() === Boolean(uiDirty.ui.guideSeen), '非法备份日期回落空串，不影响其他界面状态');
 
 /* vitalDelta：应用替患者做减法 */
 Store.data.vitals.bp = [];

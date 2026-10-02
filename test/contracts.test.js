@@ -28,6 +28,17 @@ assert(/Strict-Transport-Security: max-age=31536000/.test(headers), 'Pages 响�
 assert(/X-Content-Type-Options: nosniff/.test(headers) && /Referrer-Policy: no-referrer/.test(headers), 'Pages 响应头必须限制内容嗅探与来源泄露');
 assert(/Permissions-Policy:.*camera=\(\).*geolocation=\(\).*microphone=\(\)/.test(headers), 'Pages 响应头必须关闭未使用的敏感浏览器能力');
 assert(/cp -r[^\n]*\b_headers\b/.test(deploy), '部署包必须包含 Cloudflare Pages 的 _headers 文件');
+/* 离线缓存（v0.2.32）：只缓存本站文件、不碰数据、只在线上注册；sw.js 必须摘掉页面那条禁止联网的 CSP，
+   否则它的 fetch 全被拦（安装失败只是退化成没有离线缓存，但功能就白做了） */
+const sw = read('sw.js');
+/* 去注释再查：行注释只认"行首或空白后的 //"，否则会把 http:// 里的 // 当注释删掉，查外链就瞎了 */
+const swCode = sw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[ \t])\/\/[^\n]*/gm, '$1');
+assert(/cp -r[^\n]*\bsw\.js\b/.test(deploy), '部署包必须包含 sw.js');
+assert(/^\/sw\.js\n\s+! Content-Security-Policy$/m.test(headers), '_headers 必须为 /sw.js 摘除页面 CSP（同名头多规则会合并成两条同时生效）');
+assert(!/https?:\/\//.test(swCode), 'sw.js 不得请求任何外部地址');
+assert(/url\.origin !== SCOPE\.origin/.test(sw) && /request\.method !== 'GET'/.test(sw), 'sw.js 只处理本站 GET 请求');
+assert(!/localStorage|indexedDB/.test(swCode), 'sw.js 不得碰健康数据');
+assert(/location\.protocol === 'https:'/.test(app) && /serviceWorker\.register\('sw\.js'\)/.test(app), '离线缓存只在 HTTPS 线上注册（本地 http 预览不注册，免得改了代码刷新拿旧文件）');
 assert(/data-med="\$\{esc\(m\.id\)\}"/.test(app), '药物动态 id 插入 HTML 前必须转义');
 assert(/data-del="\$\{esc\(v\.id\)\}"/.test(app), '健康记录动态 id 插入 HTML 前必须转义');
 assert(/备份里有健康隐私/.test(app) && /内容是可以直接阅读的/.test(app), '下载明文备份前必须说明敏感健康信息风险');

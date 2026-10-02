@@ -22,7 +22,7 @@ fi
 # 只部署应用运行时需要的文件和 Pages 响应头规则，不带上 .git/、docs/、test/、*.md
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-cp -r index.html manifest.json icon.svg _headers css js "$TMP"/
+cp -r index.html manifest.json icon.svg sw.js _headers css js "$TMP"/
 
 # 缓存穿透：部署时把 index.html 里所有 ?ver=N 替换成时间戳，
 # 手机浏览器（尤其 iOS Safari 缓存激进）每次上线都能立刻拿到新 css/js，不用手动刷新

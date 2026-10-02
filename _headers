@@ -5,3 +5,10 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
   Permissions-Policy: camera=(), geolocation=(), microphone=(), payment=(), usb=()
+
+# 离线缓存脚本要能取本站自己的文件；页面的 connect-src 'none' 若也套在它身上，
+# 它的每次 fetch 都会被拦。同一个头命中多条规则会逗号合并成"两条策略同时生效"，
+# 所以只能把这条摘掉（! 语法），不能另加一条放宽的。sw.js 只请求同源文件（见其注释）。
+/sw.js
+  ! Content-Security-Policy
+  Cache-Control: no-cache
