@@ -7,6 +7,8 @@
      · 工具        esc/toast/stored/beep —— 转义、提示条、存盘失败提示、成功音
      · 少算数      dotsHTML/leftText/repTrackHTML/plainDuration
                    —— 把比率/分数换成"还差几个"与圆点（硬约定 5）
+     · 高频增删改  confirmInPlace/tick/bindEnterFlow
+                   —— 应用内两步确认、轻震反馈、回车跳下一框（硬约定 11/12）
      · 分段控件    segGroupHTML/bindSegGroup/commitProfile + FONT/RATE_OPTIONS
                    —— 字号/语速这类"点一下即生效即落盘"的偏好（硬约定 9）
      · 语音朗读    speakBtnHTML/bindSpeak/figureHTML/exerciseSpeechText/
@@ -19,7 +21,7 @@
      · 训练页      renderTrain/exCardHTML → 打卡历史(日历+明细) → 训练引导器(reps/timer/game)
      · 记录页      判定(bpBadge/gluBadge/bmiBadge) → 格式化 → 比上次 → 图表(VITAL_SERIES/
                    targetConfig/drawVitalChart/tooltip) → renderBP/Glucose/Weight → openExport
-     · 用药页      renderMeds/medListHTML → 服药历史 → openMedForm（登记/停用/新疗程）
+     · 用药页      renderMeds/medCheckListHTML/bindMedChecks → 服药历史·补记(openMedHistory/openMedDay) → openMedForm（登记/停用/新疗程）
      · 知识页      renderLearn + openEmergency
 
    三、设置与备份    openSettings/applyFont/applyVoice → 首次指引 → 备份下载(明文/加密)
@@ -30,6 +32,7 @@
 
 const App = (() => {
   let currentView = 'today';
+  let renderedDay = null;   // 上次渲染时的日期，用于跨天自动重画
   let recTab = 'bp';      // 记录页当前标签
   let catTab = 'limb';    // 训练页当前分类
   let trainerTimer = null;
@@ -49,12 +52,43 @@ const App = (() => {
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     }[c]));
   }
-  function toast(msg) {
+  function hideToast(t) {
+    /* 撤销键消失时若焦点正落在它上（键盘/读屏用户），把焦点接回顶层弹窗，别丢到 body。 */
+    const hadFocus = t.contains(document.activeElement);
+    t.inert = true; // 隐藏后退出键盘导航与无障碍树，防止透明的撤销键误删记录。
+    t.classList.remove('show', 'has-action');
+    if (hadFocus) topOverlay()?.querySelector('.m-title, .t-name')?.focus({ preventScroll: true });
+  }
+  /* 提示条。action = { label, onClick }（可选）：带一个可点的动作按钮（如“撤销”），
+     按一次即失效（used），提示条也随之隐去。无 action 时与旧行为一致（纯文本、5 秒消失）。 */
+  function toast(msg, action) {
     const t = document.getElementById('toast');
-    t.textContent = msg;
-    t.classList.add('show');
     clearTimeout(t._tid);
-    t._tid = setTimeout(() => t.classList.remove('show'), 5000);
+    t.innerHTML = '';
+    const span = document.createElement('span');
+    span.className = 'toast-msg';
+    span.textContent = msg;
+    t.appendChild(span);
+    if (action && action.label && typeof action.onClick === 'function') {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'toast-action';
+      btn.textContent = action.label;
+      let used = false;
+      btn.onclick = () => {
+        if (used) return;            // 一次撤销后按钮失效
+        used = true;
+        action.onClick();
+        hideToast(t);
+      };
+      t.appendChild(btn);
+      t.classList.add('has-action');
+      t._tid = setTimeout(() => hideToast(t), 8000);   // 带动作的留久一点，给患者时间点撤销
+    } else {
+      t._tid = setTimeout(() => hideToast(t), 5000);
+    }
+    t.inert = false;
+    t.classList.add('show');
   }
   function showError(node, message) {
     let feedback = node.querySelector('.save-feedback');
@@ -119,6 +153,66 @@ const App = (() => {
       setTimeout(() => { o.stop(); ac.close(); }, 350);
     } catch (e) { /* 忽略 */ }
     if (navigator.vibrate) navigator.vibrate(300);
+  }
+  /* 轻触反馈：勾选/补记这类高频动作给一下短震动，不支持静默 */
+  function tick() {
+    try { navigator.vibrate?.(15); } catch (_) { /* 静默 */ }
+  }
+  /* 应用内两步确认：高频删除不用原生 confirm()（微信里会弹带网址的系统框）。
+     原位把触发元素换成 .confirm-box（说明 + 红色确认 + outline 取消），焦点落到取消；
+     取消恢复原节点并聚焦它。不压历史条目（不是浮层）。 */
+  function confirmInPlace(el, { message, confirmLabel, cancelLabel = '不删了', onConfirm }) {
+    if (!el || !el.parentNode) return;
+    const box = document.createElement('div');
+    box.className = 'confirm-box';
+    box.innerHTML = `
+      <div class="cb-msg" role="alert">${esc(message)}</div>
+      <div class="cb-actions">
+        <button type="button" class="btn red" data-confirm="yes">${esc(confirmLabel)}</button>
+        <button type="button" class="btn outline" data-confirm="no">${esc(cancelLabel)}</button>
+      </div>`;
+    const next = el.nextSibling;
+    const parent = el.parentNode;
+    parent.removeChild(el);
+    parent.insertBefore(box, next);
+    box.querySelector('[data-confirm="no"]').onclick = () => {
+      parent.insertBefore(el, box.nextSibling);
+      box.remove();
+      el.focus?.({ preventScroll: true });
+    };
+    let confirmed = false;
+    box.querySelector('[data-confirm="yes"]').onclick = e => {
+      if (confirmed) return;           // 连点两下不能执行两次删除
+      confirmed = true;
+      const yes = e.currentTarget, no = box.querySelector('[data-confirm="no"]');
+      yes.disabled = true;
+      no.disabled = true;
+      /* onConfirm() 返回 false = 保存失败（存储满/跨页面冲突）：行里没有 ✕ 可退，
+         必须把两个键重新点亮、焦点回取消键，否则确认框卡死。其他返回值当成功，不恢复（
+         成功时弹窗内 close()→dismissTopOverlay() 会统一禁用控件，无条件恢复反而把它们重新点亮）。 */
+      if (onConfirm() === false) {
+        confirmed = false;
+        yes.disabled = false;
+        no.disabled = false;
+        no.focus?.({ preventScroll: true });
+      }
+    };
+    box.querySelector('[data-confirm="no"]').focus({ preventScroll: true });
+  }
+  /* 手机键盘「下一项/完成」：给输入设 enterkeyhint，回车跳下一框，最后一框保存。
+     中文输入法组字时（isComposing / keyCode 229）不触发，否则会打断拼音。 */
+  function bindEnterFlow(inputs, onDone) {
+    const list = inputs.filter(Boolean);
+    list.forEach((el, i) => {
+      const last = i === list.length - 1;
+      el.setAttribute('enterkeyhint', last ? 'done' : 'next');
+      el.addEventListener('keydown', e => {
+        if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+        e.preventDefault();
+        if (last) onDone();
+        else list[i + 1].focus();
+      });
+    });
   }
 
   /* ---------- 少算数：把比率/分数换成"还差几个"与圆点 ----------
@@ -663,7 +757,6 @@ const App = (() => {
   function trainHistoryCardHTML() {
     const total = Store.exerciseDaysTotal();
     const streak = Store.streak();
-    const hasHistory = Store.activeDates().length > 0;
     /* 累计天数是"越攒越多"的正向数字，放在最前面；连续天数断了也先肯定历史最长 */
     let line;
     if (!total) {
@@ -685,7 +778,7 @@ const App = (() => {
         <span>近 4 周</span>
         <span class="cal-legend-scale">少 <i class="cal-dot"></i><i class="cal-dot lv1"></i><i class="cal-dot lv2"></i> 多</span>
       </div>
-      ${hasHistory ? '<button class="btn ghost block" id="btn-ex-hist" style="margin-top:0.7rem">📄 查看每天练了什么</button>' : ''}
+      ${'<button class="btn ghost block" id="btn-ex-hist" style="margin-top:0.7rem">📄 每天练了什么 · 补记</button>'}
       </div>
     </details>`;
   }
@@ -701,31 +794,116 @@ const App = (() => {
   function weekdayOf(date) {
     return Store.weekdayCN(new Date(date + 'T00:00:00'));
   }
+  /* 补记子弹窗标题用的日期文案：“9月2日（星期一）” */
+  function dayLabel(date) {
+    return `${+date.slice(5, 7)}月${+date.slice(8, 10)}日（${weekdayOf(date)}）`;
+  }
 
   function openExerciseHistory() {
-    const dates = Store.activeDates();
-    const days = dates.map(d => {
-      const ids = Store.exercisesOn(d);
-      const games = Store.gamesOn(d);
-      return `
-      <div class="hist-day">
-        <div class="hd-date">${esc(d)} ${weekdayOf(d)}<span class="hd-count">${ids.length} 项</span></div>
-        ${ids.length ? `<div class="chip-row">${ids.map(i => `<span class="chip">${esc(exName(i))}</span>`).join('')}</div>` : ''}
-        ${games.length ? `<div class="hd-games">🎮 ${games.map(g => `${esc(gameName(g.game))} ${esc(g.detail || g.score)}`).join('　·　')}</div>` : ''}
-      </div>`;
-    }).join('');
+    const node = document.createElement('div');
+    const close = openModal('训练历史 · 补记', node);
+    let olderShown = 30;
+    const paint = () => {
+      const t = Store.today();
+      const recent = Store.recentDates(7).reverse();   // 今天在上
+      const recentRows = recent.map(d => {
+        const ids = Store.exercisesOn(d);
+        const games = Store.gamesOn(d);
+        const label = `${dayLabel(d)}${d === t ? '·今天' : ''}`;
+        const right = ids.length ? `练了 ${ids.length} 项 ›` : '还没有记录 · 补记 ›';
+        return `<button type="button" class="hist-day day-go" id="ex-day-${esc(d)}" data-exday="${esc(d)}" aria-label="${esc(label)} ${ids.length ? '练了 ' + ids.length + ' 项' : '还没有记录'}，点这里补记">
+          <span class="dg-top"><span class="hd-date">${esc(label)}</span><span class="hd-right">${esc(right)}</span></span>
+          ${ids.length ? `<span class="chip-row">${ids.map(i => `<span class="chip">${esc(exName(i))}</span>`).join('')}</span>` : ''}
+          ${games.length ? `<span class="hd-games">🎮 ${games.map(g => `${esc(gameName(g.game))} ${esc(g.detail || g.score)}`).join('　·　')}</span>` : ''}
+        </button>`;
+      }).join('');
 
-    const node = nodeFromHTML(`
-      <div class="card">
-        <div class="card-title">📅 最近 4 周</div>
-        ${calendarHTML(28)}
-        <div class="cal-legend"><span>已经练了 ${Store.exerciseDaysTotal()} 天${Store.streak() > 0 ? ` · 目前连着 ${Store.streak()} 天` : ''}</span></div>
-      </div>
-      <div class="card">
-        <div class="card-title">📄 每天练了什么</div>
-        ${days || '<div class="empty-tip">还没有训练打卡记录，做一个动作就有了</div>'}
-      </div>`);
-    openModal('训练历史', node);
+      const cutoff = Store.addDays(t, -6);
+      const older = Store.activeDates().filter(d => d < cutoff);
+      const olderRows = older.slice(0, olderShown).map(d => {
+        const ids = Store.exercisesOn(d);
+        const games = Store.gamesOn(d);
+        return `<div class="hist-day">
+          <div class="hd-date">${esc(dayLabel(d))}<span class="hd-count">${ids.length} 项</span></div>
+          ${ids.length ? `<div class="chip-row">${ids.map(i => `<span class="chip">${esc(exName(i))}</span>`).join('')}</div>` : ''}
+          ${games.length ? `<div class="hd-games">🎮 ${games.map(g => `${esc(gameName(g.game))} ${esc(g.detail || g.score)}`).join('　·　')}</div>` : ''}
+        </div>`;
+      }).join('');
+      const remain = Math.max(0, older.length - olderShown);
+
+      node.innerHTML = `
+        <div class="card">
+          <div class="card-title">📅 最近 4 周</div>
+          ${calendarHTML(28)}
+          <div class="cal-legend"><span>已经练了 ${Store.exerciseDaysTotal()} 天${Store.streak() > 0 ? ` · 目前连着 ${Store.streak()} 天` : ''}</span></div>
+        </div>
+        <div class="card">
+          <div class="card-title">📄 最近 7 天</div>
+          <div class="muted" style="margin-bottom:0.4rem">最近 7 天练了但忘了打卡的，点那一天补上。</div>
+          ${recentRows}
+        </div>
+        ${older.length ? `<div class="card">
+          <div class="card-title">🗓 更早的记录</div>
+          ${olderRows}
+          ${remain ? `<button class="btn ghost block" id="ex-more" style="margin-top:0.6rem">显示更早的（还有 ${remain} 天）</button>` : ''}
+        </div>` : ''}`;
+
+      node.querySelectorAll('[data-exday]').forEach(b => b.onclick = () => openExerciseDay(b.dataset.exday));
+      const moreBtn = node.querySelector('#ex-more');
+      if (moreBtn) moreBtn.onclick = () => { olderShown += 30; paint(); };
+    };
+    paint();
+    close.onResume(paint);
+  }
+
+  /* 补记某天的训练（子弹窗）：当前阶段推荐 + 其他动作（折叠），原位切换、刷新背后页。 */
+  function openExerciseDay(date) {
+    const isToday = date === Store.today();
+    const title = isToday ? '今天练过的' : `补记 ${dayLabel(date)}`;
+    const hint = '那天练过、只是忘了打卡的，点一下补上；点错了再点一下就取消。';
+    const stage = STAGES.find(s => s.key === Store.data.profile.stage) || STAGES[0];
+    const planIds = DAILY_PLAN[stage.key] || [];
+    const planSet = new Set(planIds);
+    const node = document.createElement('div');
+    const rowHTML = ex => {
+      const done = Store.exercisesOn(date).includes(ex.id);
+      return `<div class="check-row ${done ? 'checked' : ''}" role="checkbox" aria-checked="${done}" tabindex="0" data-exid="${esc(ex.id)}">
+        <div class="mc-box">${done ? '✓' : ''}</div>
+        <div><div class="mc-name">${esc(ex.name)}</div><div class="mc-dose">${esc(ex.dose || '')}</div></div>
+      </div>`;
+    };
+    const planExs = planIds.map(id => EXERCISES.find(e => e.id === id)).filter(Boolean);
+    const otherRecorded = Store.exercisesOn(date).filter(id => !planSet.has(id)).length;
+    const otherGroups = EX_CATS.map(cat => {
+      const exs = EXERCISES.filter(e => e.cat === cat.key && !planSet.has(e.id));
+      if (!exs.length) return '';
+      return `<div class="ex-group-label">${esc(cat.name)}</div>${exs.map(rowHTML).join('')}`;
+    }).join('');
+    node.innerHTML = `
+      <p class="muted" style="margin-bottom:0.5rem">${esc(hint)}</p>
+      <div class="ex-group-label">当前阶段推荐（${esc(stage.name)}）</div>
+      <div class="check-list">${planExs.map(rowHTML).join('')}</div>
+      <details class="disclosure" style="margin-top:0.5rem">
+        <summary><span><strong>其他动作${otherRecorded ? `（已记 ${otherRecorded} 项）` : ''}</strong></span><span class="disclosure-arrow" aria-hidden="true"></span></summary>
+        <div class="disclosure-body check-list">${otherGroups}</div>
+      </details>`;
+    openModal(title, node);
+    node.querySelectorAll('[data-exid]').forEach(row => {
+      const act = () => {
+        const id = row.dataset.exid;
+        const isDone = Store.exercisesOn(date).includes(id);
+        const ok = isDone ? Store.unlogExercise(id, date) : Store.logExercise(id, date);
+        if (!stored(ok)) return;
+        tick();
+        const now = Store.exercisesOn(date).includes(id);
+        row.classList.toggle('checked', now);
+        row.setAttribute('aria-checked', String(now));
+        row.querySelector('.mc-box').textContent = now ? '✓' : '';
+        render(currentView, { keepScroll: true });
+      };
+      row.onclick = act;
+      row.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } };
+    });
   }
 
   /* ============================================================
@@ -1140,11 +1318,12 @@ const App = (() => {
     body.querySelectorAll('[data-hist]').forEach(b => b.onclick = () => openVitalHistory(b.dataset.hist));
   }
 
-  /* 历史弹窗：趋势图 + 全部记录（每条带红黄绿状态点），可删除 */
+  /* 历史弹窗：趋势图 + 全部记录（每条可点开修改、行尾删除），分页 60+60 */
   function openVitalHistory(kind) {
     const meta = REC_KINDS[kind];
     const node = document.createElement('div');
-    openModal(`${meta.icon} ${meta.name}历史`, node);
+    const close = openModal(`${meta.icon} ${meta.name}历史`, node);
+    let shown = 60;
 
     const paint = () => {
       const sorted = Store.vitalsSorted(kind);
@@ -1153,16 +1332,21 @@ const App = (() => {
         return;
       }
       const recent = sorted.slice(-30);
-      const rows = [...sorted].reverse().map(v => {
+      const all = [...sorted].reverse();
+      const rows = all.slice(0, shown).map(v => {
         const [cls, txt] = vitalStatus(kind, v);
         return `
         <div class="rec-row">
-          <span class="rec-dot ${cls}"></span>
-          <span class="rec-date">${esc(v.date)}<br>${esc(v.time || '')}</span>
-          <span class="rec-val">${VITAL_FMT[kind](v)}${txt ? `<br><span class="rec-note ${cls}">${txt}</span>` : ''}</span>
-          <button class="rec-del" data-del="${esc(v.id)}" aria-label="删除">🗑</button>
+          <button class="rec-open" id="vital-row-${esc(v.id)}" data-vital="${esc(v.id)}">
+            <span class="rec-dot ${cls}"></span>
+            <span class="rec-date">${esc(v.date)}<br>${esc(v.time || '')}</span>
+            <span class="rec-val">${VITAL_FMT[kind](v)}${txt ? `<br><span class="rec-note ${cls}">${txt}</span>` : ''}</span>
+            <span class="dg-arrow" aria-hidden="true">›</span>
+          </button>
+          <button class="rec-del" data-del="${esc(v.id)}" aria-label="删除这条记录">🗑</button>
         </div>`;
       }).join('');
+      const remain = Math.max(0, all.length - shown);
 
       node.innerHTML = `
       ${recent.length >= 2 ? `
@@ -1175,18 +1359,96 @@ const App = (() => {
       <div class="card">
         <div class="card-title">📄 全部记录（${sorted.length} 条）</div>
         <div class="rec-list">${rows}</div>
+        ${remain ? `<button class="btn ghost block" id="rec-more" style="margin-top:0.6rem">显示更早的记录（还有 ${remain} 条）</button>` : ''}
       </div>`;
 
+      node.querySelectorAll('[data-vital]').forEach(b => b.onclick = () => openVitalEdit(kind, b.dataset.vital));
       node.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
-        if (confirm('删除这条记录？')) {
-          if (!stored(Store.removeVital(kind, b.dataset.del))) return;
-          paint();
-          render('records', { keepScroll: true, preserveInputs: true });
-        }
+        const v = Store.vitalsSorted(kind).find(x => x.id === b.dataset.del);
+        const plain = !v ? '' : kind === 'bp' ? `${v.sys}/${v.dia} mmHg`
+          : kind === 'glucose' ? `${v.value} mmol/L ${v.gtype}` : `${v.value} 公斤`;
+        confirmInPlace(b.closest('.rec-row'), {
+          message: `删除这条记录（${v ? v.date + (v.time ? ' ' + v.time : '') + ' · ' + plain : ''}）？删除后无法恢复。`,
+          confirmLabel: '删除',
+          cancelLabel: '不删了',
+          onConfirm: () => {
+            if (!stored(Store.removeVital(kind, b.dataset.del))) return false;
+            paint();
+            render('records', { keepScroll: true, preserveInputs: true });
+          },
+        });
       });
+      const moreBtn = node.querySelector('#rec-more');
+      if (moreBtn) moreBtn.onclick = () => { shown += 60; paint(); };
       drawVitalChart(kind, node.querySelector('#vh-chart'), recent);
     };
     paint();
+    close.onResume(paint);
+  }
+
+  /* 修改一条记录（子弹窗）：预填数值与日期时间，max=今天；保存/删除后刷新背后页。 */
+  function openVitalEdit(kind, id) {
+    const v = Store.data.vitals[kind].find(x => x.id === id);
+    if (!v) return;
+    const meta = REC_KINDS[kind];
+    const hasTime = kind !== 'weight';
+    let fields;
+    if (kind === 'bp') {
+      fields = `
+        <div class="form-row">
+          <div class="field"><label for="ev-sys">高压<span class="label-opt">（收缩压）</span></label><input id="ev-sys" type="number" inputmode="numeric" value="${esc(v.sys)}"></div>
+          <div class="field"><label for="ev-dia">低压<span class="label-opt">（舒张压）</span></label><input id="ev-dia" type="number" inputmode="numeric" value="${esc(v.dia)}"></div>
+        </div>
+        <div class="form-inline">
+          <label class="fi-label" for="ev-pulse">脉搏<span class="label-opt">（选填）</span></label>
+          <input id="ev-pulse" type="number" inputmode="numeric" value="${esc(v.pulse || '')}">
+        </div>`;
+    } else if (kind === 'glucose') {
+      fields = `
+        <div class="form-row">
+          <div class="field"><label for="ev-type">测量类型</label>
+            <select id="ev-type">${['空腹', '餐后2小时', '随机'].map(o => `<option ${o === v.gtype ? 'selected' : ''}>${o}</option>`).join('')}</select></div>
+          <div class="field"><label for="ev-val">数值 mmol/L</label><input id="ev-val" type="number" step="0.1" inputmode="decimal" value="${esc(v.value)}"></div>
+        </div>`;
+    } else {
+      fields = `<div class="form-row"><div class="field"><label for="ev-val">体重（公斤）</label><input id="ev-val" type="number" step="0.1" inputmode="decimal" value="${esc(v.value)}"></div></div>`;
+    }
+    const node = nodeFromHTML(`
+      <div class="vital-form">
+        ${fields}
+        <div class="form-row">
+          <div class="field wide"><label for="ev-date">日期</label><input id="ev-date" type="date" value="${esc(v.date)}" max="${Store.today()}"></div>
+          ${hasTime ? `<div class="field wide"><label for="ev-time">时间</label><input id="ev-time" type="time" value="${esc(v.time || '')}"></div>` : ''}
+        </div>
+        <button class="btn block" id="ev-save">保存修改</button>
+        <button class="btn red block" id="ev-del" style="margin-top:0.6rem">删除这条记录</button>
+      </div>`);
+    const close = openModal(`修改${meta.name}记录`, node);
+    const flowIds = kind === 'bp' ? ['ev-sys', 'ev-dia', 'ev-pulse'] : ['ev-val'];
+    bindEnterFlow(flowIds.map(i => node.querySelector('#' + i)), () => node.querySelector('#ev-save').click());
+    node.querySelector('#ev-save').onclick = () => {
+      clearFieldErrors(node);
+      const when = { date: node.querySelector('#ev-date').value, time: hasTime ? node.querySelector('#ev-time').value : '' };
+      const entry = readVital(kind, 'ev', when);
+      if (!entry) return;
+      if (!stored(Store.updateVital(kind, id, entry))) return;
+      close();
+      toast('已保存修改');
+      render('records', { keepScroll: true, preserveInputs: true });
+    };
+    node.querySelector('#ev-del').onclick = () => {
+      confirmInPlace(node.querySelector('#ev-del'), {
+        message: '删除后无法恢复。确定删除这条记录吗？',
+        confirmLabel: '删除',
+        cancelLabel: '不删了',
+        onConfirm: () => {
+          if (!stored(Store.removeVital(kind, id))) return false;
+          close();
+          toast('已删除');
+          render('records', { keepScroll: true, preserveInputs: true });
+        },
+      });
+    };
   }
 
   function renderRecords() {
@@ -1244,6 +1506,7 @@ const App = (() => {
     recordDrafts[recTab] = {
       values: [...form.querySelectorAll('input[id], select[id]')].map(el => [el.id, el.value]),
       expanded: !form.querySelector('.dt-row').hidden,
+      touched: form.querySelector('.dt-row').dataset.touched === 'true',
     };
   }
   function restoreRecordDraft() {
@@ -1251,7 +1514,9 @@ const App = (() => {
     if (!draft) return;
     draft.values.forEach(([id, value]) => { document.getElementById(id).value = value; });
     const prefix = { bp: 'bp', glucose: 'glu', weight: 'wt' }[recTab];
-    document.getElementById(prefix + '-dt-row').hidden = !draft.expanded;
+    const row = document.getElementById(prefix + '-dt-row');
+    row.hidden = !draft.expanded;
+    if (draft.touched) row.dataset.touched = 'true';
     bindWhenToggle(prefix);
   }
   function recordSaveDone(message) {
@@ -1282,23 +1547,69 @@ const App = (() => {
     return time ? `${head} ${time}` : head;
   }
 
-  /* 「记录时间」收敛成一个小条：点开才显示日期/时间原生输入（同前缀约定：*-dt-chip / *-dt-row / *-date / *-time） */
+  /* 「记录时间」收敛成一个小条：未改过时显“现在 · 修改”（体重“今天 · 修改”），
+     改过显 fmtWhen(...)。未改过 → 保存时取此刻（whenOf）；日期/时间 change 置 touched，日期 max=今天。 */
   function bindWhenToggle(prefix) {
     const row = document.getElementById(prefix + '-dt-row');
     const chip = document.getElementById(prefix + '-dt-chip');
     if (!row || !chip) return;
     const dateEl = document.getElementById(prefix + '-date');
     const timeEl = document.getElementById(prefix + '-time');
-    const fmt = () => { chip.textContent = fmtWhen(dateEl.value, timeEl ? timeEl.value : '') + ' · 修改'; };
+    const isWeight = prefix === 'wt';
+    const fmt = () => {
+      chip.textContent = (row.dataset.touched === 'true'
+        ? fmtWhen(dateEl.value, timeEl ? timeEl.value : '')
+        : (isWeight ? '今天' : '现在')) + ' · 修改';
+    };
+    dateEl.max = Store.today();
     chip.setAttribute('aria-controls', row.id);
     chip.setAttribute('aria-expanded', String(!row.hidden));
     chip.onclick = () => {
       row.hidden = !row.hidden;
       chip.setAttribute('aria-expanded', String(!row.hidden));
+      if (!row.hidden && row.dataset.touched !== 'true') {
+        dateEl.value = Store.today();
+        if (timeEl) timeEl.value = Store.timeStr();
+      }
+      dateEl.max = Store.today();
     };
-    dateEl.onchange = fmt;
-    if (timeEl) timeEl.onchange = fmt;
+    const touch = () => { row.dataset.touched = 'true'; fmt(); };
+    dateEl.onchange = touch;
+    if (timeEl) timeEl.onchange = touch;
     fmt();
+  }
+  /* 未改过返回此刻；改过返回输入值。体重无时间输入，time 为 ''。 */
+  function whenOf(prefix) {
+    const row = document.getElementById(prefix + '-dt-row');
+    const dateEl = document.getElementById(prefix + '-date');
+    const timeEl = document.getElementById(prefix + '-time');
+    if (!row || row.dataset.touched !== 'true') {
+      return { date: Store.today(), time: timeEl ? Store.timeStr() : '' };
+    }
+    return { date: dateEl.value, time: timeEl ? timeEl.value : '' };
+  }
+  /* 共享校验：页面三表单与修改弹窗共用。通过返回干净 entry，失败 fieldError 并返回 null。 */
+  function readVital(kind, prefix, when) {
+    const id = suf => prefix + '-' + suf;
+    const val = suf => document.getElementById(id(suf));
+    if (!when.date) { fieldError(id('date'), '请选择这次测量的日期。'); return null; }
+    if (when.date > Store.today()) { fieldError(id('date'), '日期不能晚于今天，请核对这次测量的日期。'); return null; }
+    if (kind === 'bp') {
+      const sys = +val('sys').value, dia = +val('dia').value, pulse = val('pulse').value;
+      if (!sys || sys < 50 || sys > 300) { fieldError(id('sys'), '请核对血压计上的高压读数，再填写高压。'); return null; }
+      if (!dia || dia < 30 || dia > 200) { fieldError(id('dia'), '请核对血压计上的低压读数，再填写低压。'); return null; }
+      if (pulse && !(+pulse > 0 && +pulse <= 400)) { fieldError(id('pulse'), '请核对脉搏读数，不记录时可以留空。'); return null; }
+      return { date: when.date, time: when.time, sys, dia, pulse: pulse ? +pulse : '' };
+    }
+    if (kind === 'glucose') {
+      const gtype = val('type').value;
+      const value = +val('val').value;
+      if (!value || value < 1 || value > 40) { fieldError(id('val'), '请核对血糖读数，按 mmol/L 填写。'); return null; }
+      return { date: when.date, time: when.time, gtype, value };
+    }
+    const value = +val('val').value;
+    if (!value || value < 20 || value > 300) { fieldError(id('val'), '请核对体重读数，以公斤填写。'); return null; }
+    return { date: when.date, value };
   }
 
   function renderBP(body) {
@@ -1348,21 +1659,16 @@ const App = (() => {
     </div>`;
 
     bindWhenToggle('bp');
-    document.getElementById('bp-save').onclick = () => {
+    const bpSave = () => {
       clearFieldErrors(body);
-      const sys = +document.getElementById('bp-sys').value;
-      const dia = +document.getElementById('bp-dia').value;
-      const pulse = document.getElementById('bp-pulse').value;
-      const date = document.getElementById('bp-date').value;
-      const time = document.getElementById('bp-time').value;
-      if (!sys || sys < 50 || sys > 300) { fieldError('bp-sys', '请核对血压计上的高压读数，再填写高压。'); return; }
-      if (!dia || dia < 30 || dia > 200) { fieldError('bp-dia', '请核对血压计上的低压读数，再填写低压。'); return; }
-      if (pulse && !(+pulse > 0 && +pulse <= 400)) { fieldError('bp-pulse', '请核对脉搏读数，不记录时可以留空。'); return; }
-      if (!date) { fieldError('bp-date', '请选择这次测量的日期。'); return; }
-      if (!stored(Store.addVital('bp', { date, time, sys, dia, pulse: pulse ? +pulse : '' }))) return;
-      const [cls, txt] = bpBadge(sys, dia);
-      recordSaveDone(`✓ 已保存血压 ${sys}/${dia} mmHg · ${fmtWhen(date, time)}${cls === 'bad' ? '。' + txt : ''}`);
+      const entry = readVital('bp', 'bp', whenOf('bp'));
+      if (!entry) return;
+      if (!stored(Store.addVital('bp', entry))) return;
+      const [cls, txt] = bpBadge(entry.sys, entry.dia);
+      recordSaveDone(`✓ 已保存血压 ${entry.sys}/${entry.dia} mmHg · ${fmtWhen(entry.date, entry.time)}${cls === 'bad' ? '。' + txt : ''}`);
     };
+    bindEnterFlow(['bp-sys', 'bp-dia', 'bp-pulse'].map(i => document.getElementById(i)), bpSave);
+    document.getElementById('bp-save').onclick = bpSave;
     bindHist(body);
     drawVitalChart('bp', document.getElementById('bp-chart'), sorted.slice(-14));
   }
@@ -1412,17 +1718,15 @@ const App = (() => {
     </div>`;
 
     bindWhenToggle('glu');
-    document.getElementById('glu-save').onclick = () => {
+    const gluSave = () => {
       clearFieldErrors(body);
-      const gtype = document.getElementById('glu-type').value;
-      const value = +document.getElementById('glu-val').value;
-      const date = document.getElementById('glu-date').value;
-      const time = document.getElementById('glu-time').value;
-      if (!value || value < 1 || value > 40) { fieldError('glu-val', '请核对血糖读数，按 mmol/L 填写。'); return; }
-      if (!date) { fieldError('glu-date', '请选择这次测量的日期。'); return; }
-      if (!stored(Store.addVital('glucose', { date, time, gtype, value }))) return;
-      recordSaveDone(`✓ 已保存${gtype}血糖 ${value} mmol/L · ${fmtWhen(date, time)}`);
+      const entry = readVital('glucose', 'glu', whenOf('glu'));
+      if (!entry) return;
+      if (!stored(Store.addVital('glucose', entry))) return;
+      recordSaveDone(`✓ 已保存${entry.gtype}血糖 ${entry.value} mmol/L · ${fmtWhen(entry.date, entry.time)}`);
     };
+    bindEnterFlow([document.getElementById('glu-val')], gluSave);
+    document.getElementById('glu-save').onclick = gluSave;
     bindHist(body);
     drawVitalChart('glucose', document.getElementById('glu-chart'), sorted.slice(-14));
   }
@@ -1477,15 +1781,15 @@ const App = (() => {
     </div>`;
 
     bindWhenToggle('wt');
-    document.getElementById('wt-save').onclick = () => {
+    const wtSave = () => {
       clearFieldErrors(body);
-      const value = +document.getElementById('wt-val').value;
-      const date = document.getElementById('wt-date').value;
-      if (!value || value < 20 || value > 300) { fieldError('wt-val', '请核对体重读数，以公斤填写。'); return; }
-      if (!date) { fieldError('wt-date', '请选择这次测量的日期。'); return; }
-      if (!stored(Store.addVital('weight', { date, value }))) return;
-      recordSaveDone(`✓ 已保存体重 ${value} 公斤 · ${fmtWhen(date)}`);
+      const entry = readVital('weight', 'wt', whenOf('wt'));
+      if (!entry) return;
+      if (!stored(Store.addVital('weight', entry))) return;
+      recordSaveDone(`✓ 已保存体重 ${entry.value} 公斤 · ${fmtWhen(entry.date)}`);
     };
+    bindEnterFlow([document.getElementById('wt-val')], wtSave);
+    document.getElementById('wt-save').onclick = wtSave;
     bindHist(body);
     drawVitalChart('weight', document.getElementById('wt-chart'), sorted.slice(-14));
   }
@@ -1514,41 +1818,54 @@ const App = (() => {
   /* ============================================================
      【区】用药页：核对表 → 药物清单 → 服药历史 → 登记/停用/新疗程表单
      ============================================================ */
+
+  /* 服药核对清单（今日核对与补记子弹窗共用）：按时间分组，行结构沿用 .med-check。
+     items 来自 Store.medStatusOn(date).items（含 medId/name/dose/note/time/taken）。 */
+  function medCheckListHTML(items) {
+    const slots = {};
+    items.forEach(it => { (slots[it.time] = slots[it.time] || []).push(it); });
+    return Object.keys(slots).sort().map(tm => `
+      <div class="med-time-group">
+        <div class="med-time-label">🕐 ${esc(tm)}</div>
+        ${slots[tm].map(it => `
+        <div class="med-check ${it.taken ? 'checked' : ''}" data-med="${esc(it.medId)}" data-time="${esc(it.time)}" role="checkbox" aria-checked="${it.taken}" tabindex="0">
+          <div class="mc-box">${it.taken ? '✓' : ''}</div>
+          <div>
+            <div class="mc-name">${esc(it.name)}</div>
+            <div class="mc-dose">${esc(it.dose || '')}${it.note ? ' · ' + esc(it.note) : ''}</div>
+          </div>
+        </div>`).join('')}
+      </div>`).join('');
+  }
+  /* 绑定核对行：Enter/空格可操作；成功后 tick() 再 after(el)。date 决定操作哪一天。 */
+  function bindMedChecks(root, date, after) {
+    root.querySelectorAll('.med-check').forEach(elm => {
+      const act = () => {
+        if (!stored(Store.toggleMed(elm.dataset.med, elm.dataset.time, date))) return;
+        tick();
+        after(elm);
+      };
+      elm.onclick = act;
+      elm.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } };
+    });
+  }
+
   function renderMeds() {
     const meds = Store.data.meds;
     const ad = Store.adherence7d();
+    const ad7 = Store.medAdherence(7);
 
     /* 按时间分组的今日核对表：只列**今天在吃**的药（已停用的不出现在核对表里，
        否则会天天显示"漏服"，冤枉患者） */
-    const todayMeds = Store.medsOn();
-    const slots = {};
-    todayMeds.forEach(m => (m.times || []).forEach(t => {
-      if (!slots[t]) slots[t] = [];
-      slots[t].push(m);
-    }));
-    const times = Object.keys(slots).sort();
+    const todayItems = Store.medStatusOn(Store.today()).items;
 
     let checkHTML;
     if (!meds.length) {
       checkHTML = '<div class="empty-tip">还没有登记药物。<br>请按医生处方，点下方按钮添加。</div>';
-    } else if (!todayMeds.length) {
+    } else if (!todayItems.length) {
       checkHTML = '<div class="empty-tip">今天没有需要核对的药。<br>（清单里的药都已停用，或还没到开始服用的日期）</div>';
     } else {
-      checkHTML = times.map(t => `
-        <div class="med-time-group">
-          <div class="med-time-label">🕐 ${esc(t)}</div>
-          ${slots[t].map(m => {
-            const taken = Store.isMedTaken(m.id, t);
-            return `
-            <div class="med-check ${taken ? 'checked' : ''}" data-med="${esc(m.id)}" data-time="${esc(t)}" role="checkbox" aria-checked="${taken}" tabindex="0">
-              <div class="mc-box">${taken ? '✓' : ''}</div>
-              <div>
-                <div class="mc-name">${esc(m.name)}</div>
-                <div class="mc-dose">${esc(m.dose || '')}${m.note ? ' · ' + esc(m.note) : ''}</div>
-              </div>
-            </div>`;
-          }).join('')}
-        </div>`).join('');
+      checkHTML = medCheckListHTML(todayItems);
     }
 
     /* 今日核对：把"还差几次"说在最前面，患者不用去数勾了几个 */
@@ -1569,10 +1886,10 @@ const App = (() => {
           <div class="muted">这件事做得很到位，继续保持就好。</div>`;
       } else if (fd.full > 0) {
         adBody = `<div class="ad-main">最近 ${fd.days} 天里，有 <b>${fd.full}</b> 天全都吃到了</div>
-          <div class="muted">已经记住大部分了。剩下容易忘的那几次，可以试试：手机设闹钟、把药盒放在饭桌上、或让家人在服药时间提一句。</div>`;
+          <div class="muted">已经记住大部分了。剩下容易忘的那几次，可以试试：手机设闹钟、把药盒放在饭桌上、或让家人在服药时间提一句。吃了但忘了点的，可以在「服药历史 · 补记」里补上。</div>`;
       } else {
         adBody = `<div class="ad-main">最近这几天还没有哪天全部核对上</div>
-          <div class="muted">忘吃药很常见，不是您的问题，多半是没有提醒。可以试试：手机设闹钟、把药盒放在饭桌上、请家人在服药时间提一句。吃完在这一页点一下就行。</div>`;
+          <div class="muted">忘吃药很常见，不是您的问题，多半是没有提醒。可以试试：手机设闹钟、把药盒放在饭桌上、请家人在服药时间提一句。吃了但忘了点的，可以在「服药历史 · 补记」里补上。</div>`;
       }
     }
 
@@ -1587,21 +1904,18 @@ const App = (() => {
     <div class="card">
       <div class="card-title">📊 最近 7 天吃药情况</div>
       ${adBody}
-      <div class="muted" style="margin-top:0.5rem">按次数算的完成率是 ${ad}%（这个数字是给医生看的）。坚持按医嘱服药，是预防再次中风最有效的一件事。</div>
-      <button class="btn ghost block" id="btn-med-hist" style="margin-top:0.7rem">📄 查看服药历史（近14天）</button>
+      <div class="muted" style="margin-top:0.5rem">坚持按医嘱服药，是预防再次中风最有效的一件事。</div>
+      <details class="disclosure" id="med7-doctor" style="margin-top:0.5rem">
+        <summary><span><strong>给医生看的数字</strong><span class="disclosure-hint">按次数算的完成率</span></span><span class="disclosure-arrow" aria-hidden="true"></span></summary>
+        <div class="muted" style="margin-top:0.4rem">按次数算的完成率是 ${ad}%${ad7 && ad7.late > 0 ? `，其中 ${ad7.late} 次为事后补记` : ''}。</div>
+      </details>
+      <button class="btn ghost block" id="btn-med-hist" style="margin-top:0.7rem">📄 服药历史 · 补记（近14天）</button>
     </div>` : ''}
     ${medListHTML()}`;
 
     $view().innerHTML = html;
 
-    $view().querySelectorAll('.med-check').forEach(elm => {
-      const act = () => {
-        if (!stored(Store.toggleMed(elm.dataset.med, elm.dataset.time))) return;
-        render('meds', { keepScroll: true });
-      };
-      elm.onclick = act;
-      elm.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } };
-    });
+    bindMedChecks($view(), Store.today(), () => render('meds', { keepScroll: true }));
     document.getElementById('btn-add-med').onclick = () => openMedForm();
     $view().querySelectorAll('[data-edit-med]').forEach(b => b.onclick = () => {
       const m = Store.data.meds.find(x => x.id === b.dataset.editMed);
@@ -1647,35 +1961,110 @@ const App = (() => {
     </div>` : ''}`;
   }
 
-  /* 服药历史：每天一行，一个圆点代表一次应服的药 */
+  /* 服药历史 · 补记：每天一行（今天在最上），点某天 → 补记子弹窗 */
   function openMedHistory() {
-    const days = Store.medHistory(14);
-    const sum = days.reduce((a, d) => ({ total: a.total + d.total, done: a.done + d.done }), { total: 0, done: 0 });
-    const pct = sum.total ? Math.round(sum.done / sum.total * 100) : 0;
-    const t = Store.today();
+    const node = document.createElement('div');
+    const close = openModal('服药历史 · 补记', node);
 
-    const rows = days.map(d => `
-      <div class="day-row">
-        <span class="day-date">${esc(d.date.slice(5))}${d.date === t ? '（今天）' : ''}<br>${weekdayOf(d.date)}</span>
-        <span class="dot-row">${d.items.map(i =>
-          `<i class="dose-dot ${i.taken ? 'taken' : ''}" aria-label="${esc(i.time)} ${esc(i.name)} ${i.taken ? '已服' : '未记录'}"></i>`).join('')}</span>
-        <span class="day-score ${d.total && d.done >= d.total ? 'ok' : ''}">${!d.total ? '—' : d.done >= d.total ? '全吃到' : `差 ${d.total - d.done} 次`}</span>
-      </div>`).join('');
+    const paint = () => {
+      const t = Store.today();   // 每次重画重新取：过了零点 onResume 重画时，昨天那行不能仍标“·今天”
+      const days = Store.medHistory(14);   // 新→旧，今天在最上
+      const fd14 = Store.medFullDays(14);
+      const ad14 = Store.medAdherence(14);
+      const rows = days.map(d => {
+        const dots = d.items.map(i =>
+          `<i class="dose-dot ${i.taken ? 'taken' : ''}" aria-hidden="true"></i>`).join('');
+        const label = `${dayLabel(d.date)}${d.date === t ? '·今天' : ''}`;
+        if (d.beforeTracking) {
+          return `<div class="day-row">
+            <span class="dg-top"><span class="day-date">${esc(label)}</span><span class="day-score muted">登记前</span></span>
+          </div>`;
+        }
+        if (!d.total) {
+          return `<div class="day-row">
+            <span class="dg-top"><span class="day-date">${esc(label)}</span><span class="day-score">—</span></span>
+          </div>`;
+        }
+        const done = d.done >= d.total, missing = d.total - d.done;
+        const status = done ? '全吃到 ✓' : (d.date === t ? `还有 ${missing} 次` : `${missing} 次没记上`);
+        return `<button type="button" class="day-row day-go" id="med-day-${esc(d.date)}" data-day="${esc(d.date)}" aria-label="${esc(label)} ${esc(status)}，点这里补记">
+          <span class="dg-top">
+            <span class="day-date">${esc(label)}</span>
+            <span class="day-score ${done ? 'ok' : ''}">${esc(status)}</span>
+            <span class="dg-arrow" aria-hidden="true">›</span>
+          </span>
+          <span class="dot-row">${dots}</span>
+        </button>`;
+      }).join('');
 
-    const fd14 = Store.medFullDays(14);
-    const node = nodeFromHTML(`
-      <div class="card">
-        <div class="card-title">📊 最近 14 天</div>
-        <div class="ad-main">有 <b>${fd14.full}</b> 天该吃的全都核对到了${fd14.days ? `（共 ${fd14.days} 天有记录）` : ''}</div>
-        <div class="muted">按次数算：${sum.total} 次里核对了 ${sum.done} 次，完成率 ${pct}%（给医生看的数字）</div>
-      </div>
-      <div class="card">
-        <div class="card-title">📄 每天核对情况</div>
-        <div class="day-legend"><i class="dose-dot taken"></i> 已核对　<i class="dose-dot"></i> 未记录</div>
-        ${rows}
-      </div>
-      <div class="disclaimer">应服次数按「当前药物清单」计算；如果最近改过处方，更早日期的次数会按新处方显示。漏服记录仅供自我提醒，用药调整请遵医嘱。</div>`);
-    openModal('服药历史', node);
+      node.innerHTML = `
+        <div class="card">
+          <div class="card-title">📊 最近 14 天</div>
+          <div class="ad-main">有 <b>${fd14.full}</b> 天该吃的全都核对到了（共 ${fd14.days} 天）</div>
+          ${ad14 ? `<details class="disclosure" style="margin-top:0.4rem">
+            <summary><span><strong>给医生看的数字</strong><span class="disclosure-hint">按次数算的完成率</span></span><span class="disclosure-arrow" aria-hidden="true"></span></summary>
+            <div class="muted" style="margin-top:0.4rem">按次数算：${ad14.total} 次里核对了 ${ad14.done} 次，完成率 ${ad14.pct}%${ad14.late > 0 ? `，其中 ${ad14.late} 次为事后补记` : ''}。</div>
+          </details>` : ''}
+        </div>
+        <div class="card">
+          <div class="card-title">📄 每天核对情况</div>
+          <div class="day-legend"><i class="dose-dot taken"></i> 已核对　<i class="dose-dot"></i> 未记录</div>
+          <div class="muted" style="margin-bottom:0.4rem">吃了但当时忘了点的，点那一天补上。</div>
+          ${rows}
+        </div>
+        <div class="disclaimer">从在这里登记那天起才计入，登记之前的日子不算漏服；今天的药吃完才算进来；改过服药时间的，之前的日子仍按当时的时间算。这些记录仅供自我提醒，用药调整请遵医嘱。</div>`;
+
+      node.querySelectorAll('[data-day]').forEach(b => b.onclick = () => openMedDay(b.dataset.day));
+    };
+
+    paint();
+    close.onResume(paint);
+  }
+
+  /* 补记某天（叠加子弹窗，父窗口保留）：核对行原位更新（焦点不丢），每次改动刷新背后页面。 */
+  function openMedDay(date) {
+    const isToday = date === Store.today();
+    const title = isToday ? '今天的服药核对' : `补记 ${dayLabel(date)}`;
+    const hint = isToday ? '吃完点一下。' : '当时吃了、只是忘了点的，在这里补上；没吃的不用动。';
+    const node = document.createElement('div');
+    const items = Store.medStatusOn(date).items;
+    const allDone = items.length > 0 && items.every(i => i.taken);
+    node.innerHTML = `
+      <p class="muted" style="margin-bottom:0.5rem">${esc(hint)}</p>
+      <div class="med-day-list">${medCheckListHTML(items)}</div>
+      <button class="btn ghost block" id="med-day-all" style="margin-top:0.6rem"${allDone ? ' hidden' : ''}>这天的都吃了</button>`;
+    const close = openModal(title, node);
+    /* 绑定到今天的核对弹窗：过夜到第二天再点，会记到已经过去的昨天且标题仍写“今天”。
+       记下打开时的日期，跨天时由 refreshIfNewDay 关掉它，逼用户回到今天重开（见 init）。 */
+    if (isToday) topOverlay()._dayBound = date;
+    const allBtn = node.querySelector('#med-day-all');
+    bindMedChecks(node, date, elm => {
+      const taken = Store.isMedTaken(elm.dataset.med, elm.dataset.time, date);
+      elm.classList.toggle('checked', taken);
+      elm.setAttribute('aria-checked', String(taken));
+      elm.querySelector('.mc-box').textContent = taken ? '✓' : '';
+      allBtn.hidden = Store.medStatusOn(date).items.every(i => i.taken);
+      render(currentView, { keepScroll: true });
+    });
+    allBtn.onclick = () => {
+      /* 记下本次将新勾上的键，供“撤销”只回退这几项（原已核对的保留） */
+      const added = Store.medStatusOn(date).items.filter(i => !i.taken).map(i => ({ medId: i.medId, time: i.time }));
+      if (!added.length) return;
+      if (!stored(Store.checkAllMedsOn(date))) return;
+      close();
+      render(currentView, { keepScroll: true });
+      toast(isToday ? '今天的都核对了' : `已补记 ${dayLabel(date).replace(/（.*）/, '')}`, {
+        label: '撤销',
+        onClick: () => {
+          /* 一次性回退并写盘；写盘失败要提示（存储满时别悄悄只撤一半）。
+             撤销时补记子弹窗已关，topOverlay 是「服药历史」弹窗，_onResume 让那一行文案
+             也跟着更新——否则数据退回了、历史行还写着「全吃到 ✓」（AC4.3）。 */
+          if (!stored(Store.uncheckMedsOn(date, added))) return;
+          render(currentView, { keepScroll: true });
+          topOverlay()?._onResume?.();
+        },
+      });
+    };
   }
 
   const COMMON_TIMES = ['06:30', '07:30', '08:00', '11:30', '12:00', '17:30', '18:00', '20:00', '21:00'];
@@ -1686,6 +2075,11 @@ const App = (() => {
     const stopped = isEdit && Store.isMedStopped(med);
     const formData = med || seed || {};
     const sel = new Set(Array.isArray(formData.times) && formData.times.length ? formData.times : ['08:00']);
+    /* 日期输入约束：已停用药 max=停用日；后续疗程 min=上次停药次日。 */
+    const prevId = seed ? (seed.previousCourseId || '') : (formData.previousCourseId || '');
+    const prevMed = prevId ? Store.data.meds.find(x => x.id === prevId) : null;
+    const minFrom = prevMed && prevMed.to ? Store.addDays(prevMed.to, 1) : '';
+    const maxFrom = stopped ? (med.to || '') : '';
 
     const node = nodeFromHTML(`
       <div class="vital-form">
@@ -1702,14 +2096,12 @@ const App = (() => {
         </div>
         <div class="field" style="margin-bottom:0.7rem">
           <label for="custom-time" id="med-time-label">每天服药时间（可多选）</label>
-          <div class="time-chip-row" id="time-chips" role="group" aria-labelledby="med-time-label">
-            ${COMMON_TIMES.map(t => `<button class="time-chip ${sel.has(t) ? 'active' : ''}" data-t="${t}" aria-pressed="${sel.has(t)}">${t}</button>`).join('')}
-          </div>
+          <div class="time-chip-row" id="time-chips" role="group" aria-labelledby="med-time-label"></div>
           <div style="display:flex;gap:0.5rem;margin-top:0.5rem;align-items:center">
             <input id="custom-time" type="time" style="flex:1">
             <button class="btn small outline" id="add-custom-time">添加自定时间</button>
           </div>
-          <div class="muted" style="margin-top:0.3rem">已选：<span id="sel-times">${[...sel].sort().join('、') || '无'}</span></div>
+          <div class="muted" style="margin-top:0.3rem">已选：<span id="sel-times"></span>（点时间块可取消）</div>
         </div>
         <div class="field" style="margin-bottom:0.7rem">
           <label for="med-note">备注（可不填）</label>
@@ -1717,8 +2109,8 @@ const App = (() => {
         </div>
         <div class="field" style="margin-bottom:0.9rem">
           <label for="med-from">从哪天开始吃</label>
-          <input id="med-from" type="date" value="${esc(formData.from || Store.today())}">
-          <div class="muted" style="margin-top:0.3rem">用来算完成率：开始之前的日子不会算你漏服。</div>
+          <input id="med-from" type="date" value="${esc(formData.from || Store.today())}"${minFrom ? ` min="${esc(minFrom)}"` : ''}${maxFrom ? ` max="${esc(maxFrom)}"` : ''}>
+          <div class="muted" style="margin-top:0.3rem">按处方填实际开始的日子，早于今天也可以。在这里登记之前的日子不算漏服，也不用补记。</div>
         </div>
         <button class="btn block" id="med-save">${isEdit ? '保存修改' : seed ? '登记新疗程' : '添加药物'}</button>
         ${isEdit && stopped ? `
@@ -1744,25 +2136,29 @@ const App = (() => {
 
     const close = openModal(isEdit ? '修改药物' : seed ? '登记新疗程' : '添加药物', node);
 
-    const refreshSel = () => {
+    const timeChips = node.querySelector('#time-chips');
+    /* 时间块渲染 COMMON_TIMES ∩ 已选的全集，全部可点切换（非常用时间取消后消失） */
+    const refreshChips = () => {
       node.querySelector('#sel-times').textContent = [...sel].sort().join('、') || '无';
-      node.querySelectorAll('#time-chips .time-chip').forEach(c => {
-        c.classList.toggle('active', sel.has(c.dataset.t));
-        c.setAttribute('aria-pressed', String(sel.has(c.dataset.t)));
+      timeChips.innerHTML = [...new Set([...COMMON_TIMES, ...sel])].sort().map(tm =>
+        `<button type="button" class="time-chip ${sel.has(tm) ? 'active' : ''}" data-t="${esc(tm)}" aria-pressed="${sel.has(tm)}">${esc(tm)}</button>`).join('');
+      timeChips.querySelectorAll('.time-chip').forEach(c => c.onclick = () => {
+        const tm = c.dataset.t;
+        if (sel.has(tm)) sel.delete(tm); else sel.add(tm);
+        refreshChips();
       });
     };
+    refreshChips();
     node.querySelectorAll('[data-preset]').forEach(b => b.onclick = () => {
       node.querySelector('#med-name').value = b.dataset.preset;
     });
-    node.querySelectorAll('#time-chips .time-chip').forEach(c => c.onclick = () => {
-      const t = c.dataset.t;
-      if (sel.has(t)) sel.delete(t); else sel.add(t);
-      refreshSel();
-    });
     node.querySelector('#add-custom-time').onclick = () => {
       const v = node.querySelector('#custom-time').value;
-      if (v) { sel.add(v); refreshSel(); }
+      if (v) { sel.add(v); refreshChips(); }
     };
+    bindEnterFlow(
+      [node.querySelector('#med-name'), node.querySelector('#med-dose'), node.querySelector('#med-note')],
+      () => node.querySelector('#med-note').blur());
     node.querySelector('#med-save').onclick = () => {
       clearFieldErrors(node);
       const name = node.querySelector('#med-name').value.trim();
@@ -1772,8 +2168,9 @@ const App = (() => {
       if (!sel.size) { showError(node, '请至少选择一个服药时间'); return; }
       const from = node.querySelector('#med-from').value;
       if (!from) { showError(node, '请选择开始服用日期'); return; }
-      if (seed && seed.from && from < seed.from) { showError(node, '新疗程不能早于上次停药后的第一天'); return; }
-      const payload = { name, dose, note, times: [...sel].sort(), from, previousCourseId: seed ? seed.previousCourseId || '' : formData.previousCourseId || '' };
+      if (maxFrom && from > maxFrom) { showError(node, `开始日期不能晚于停用日期（${maxFrom}）`); return; }
+      if (minFrom && from < minFrom) { showError(node, `新疗程要从上次停药（${prevMed.to}）之后开始`); return; }
+      const payload = { name, dose, note, times: [...sel].sort(), from, previousCourseId: prevId };
       const ok = isEdit ? Store.updateMed(med.id, payload) : Store.addMed(payload);
       if (!stored(ok)) return;
       close();
@@ -1804,13 +2201,18 @@ const App = (() => {
       close.replace(() => openMedForm(null, seedData));
     };
     if (isEdit) node.querySelector('#med-del').onclick = () => {
-      /* 删除 vs 停用：明确告诉用户区别，避免为了"停药"而删掉历史 */
-      if (confirm(`确定删除「${med.name}」？\n\n删除会连历史记录一起消失。\n如果是遵医嘱停药，请用「吃到这天为止」，不要删除。`)) {
-        if (!stored(Store.removeMed(med.id))) return;
-        close();
-        toast('已删除');
-        render('meds', { keepScroll: true });
-      }
+      /* 删除 vs 停用：应用内两步确认，不用原生 confirm（微信里弹带网址的系统框） */
+      confirmInPlace(node.querySelector('#med-del'), {
+        message: '删除会连历史记录一起消失。如果是遵医嘱停药，请用上面的「吃到这天为止」，不要删除。',
+        confirmLabel: '确定删除',
+        cancelLabel: '不删了',
+        onConfirm: () => {
+          if (!stored(Store.removeMed(med.id))) return false;
+          close();
+          toast('已删除');
+          render('meds', { keepScroll: true });
+        },
+      });
     };
   }
 
@@ -2393,6 +2795,7 @@ const App = (() => {
   };
 
   function render(view, { keepScroll = false, preserveInputs = false } = {}) {
+    renderedDay = Store.today();
     if (preserveInputs) captureRecordDraft();
     const details = keepScroll ? [...$view().querySelectorAll('details[id]')].map(el => [el.id, el.open]) : [];
     const focused = keepScroll ? document.activeElement : null;
@@ -2472,9 +2875,17 @@ const App = (() => {
         const items = [...top.querySelectorAll('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]')]
           .filter(el => el.tabIndex >= 0 && el.getClientRects().length);
         const first = items[0], last = items[items.length - 1];
-        if (e.shiftKey && (!items.includes(document.activeElement) || document.activeElement === first)) {
-          e.preventDefault(); last?.focus();
-        } else if (!e.shiftKey && (!items.includes(document.activeElement) || document.activeElement === last)) {
+        /* 撤销提示条在弹窗外（DOM 里还排在弹窗之前），原生 Tab 到不了；把它接到焦点环末尾，
+           键盘/读屏在历史弹窗开着时也够得到撤销键（DESIGN-SYSTEM 承诺“可键盘聚焦”，AC4.3）。 */
+        const undo = document.querySelector('#toast.show.has-action .toast-action:not(:disabled)');
+        const active = document.activeElement;
+        if (active === undo) {
+          e.preventDefault(); (e.shiftKey ? last : first)?.focus();
+        } else if (e.shiftKey && (!items.includes(active) || active === first)) {
+          e.preventDefault(); (undo || last)?.focus();
+        } else if (!e.shiftKey && active === last) {
+          e.preventDefault(); (undo || first)?.focus();
+        } else if (!e.shiftKey && !items.includes(active)) {
           e.preventDefault(); first?.focus();
         }
       }
@@ -2482,9 +2893,28 @@ const App = (() => {
 
     document.addEventListener('focusin', e => {
       const top = topOverlay();
-      if (top && !top.contains(e.target)) top.querySelector('.m-title, .t-name').focus({ preventScroll: true });
+      /* #toast 例外：撤销提示条不受焦点圈拉回（它是弹窗外唯一允许获得焦点的东西）。 */
+      if (top && !top.contains(e.target) && !e.target.closest('#toast')) top.querySelector('.m-title, .t-name').focus({ preventScroll: true });
     });
     if (!Store.guideSeen() && !Store.storageStatus()) openGuide();
+
+    /* 跨天自动重画（D1）：次日早上仍显示昨天已核对 → 可能误以为今天已吃药。
+       页面可见且 Store.today() !== renderedDay 时重画（保留滚动与输入）。 */
+    const refreshIfNewDay = () => {
+      if (document.visibilityState !== 'visible' || !renderedDay || Store.today() === renderedDay) return;
+      const top = topOverlay();
+      if (top) {
+        /* 绑定到某一天的弹窗（如“今天的服药核对”）跨天后，里面点的会记到已经过去的昨天，
+           且标题仍写“今天”。关掉它，逼用户回到今天重开——比默默改标题更不易误操作。 */
+        if (top._dayBound && top._dayBound !== Store.today()) dismissTopOverlay();
+        return;
+      }
+      render(currentView, { keepScroll: true, preserveInputs: true });
+    };
+    document.addEventListener('visibilitychange', refreshIfNewDay);
+    window.addEventListener('pageshow', refreshIfNewDay);
+    window.addEventListener('focus', refreshIfNewDay);
+    setInterval(refreshIfNewDay, 60000);
   }
 
   return { init, go };

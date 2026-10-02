@@ -105,6 +105,15 @@ async function waitFor(cdp, expression, label, timeout = 5000) {
   throw new Error(`${label}超时${lastError ? `：${lastError.message}` : ''}`);
 }
 
+// 通过 Chromium DevTools Protocol（浏览器调试协议）发送真实按键，包含浏览器默认的 Tab/回车行为。
+async function pressKey(cdp, key, shift = false) {
+  const keyCode = { Tab: 9, Enter: 13, Escape: 27 }[key];
+  assert(keyCode, `未支持的测试按键：${key}`);
+  const params = { key, code: key, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers: shift ? 8 : 0 };
+  await cdp.send('Input.dispatchKeyEvent', { ...params, type: key === 'Enter' ? 'keyDown' : 'rawKeyDown', ...(key === 'Enter' ? { text: '\r' } : {}) });
+  await cdp.send('Input.dispatchKeyEvent', { ...params, type: 'keyUp' });
+}
+
 async function click(cdp, selector) {
   await cdp.eval("Promise.all(document.getAnimations().filter(a => a.effect?.target?.matches('.modal-mask, .modal-panel, .trainer')).map(a => a.finished.catch(() => {}))).then(() => true)");
   if (selector === '.modal-close') selector = '.modal-mask:not([inert]) .modal-close';
@@ -527,6 +536,375 @@ async function runUXRegression(cdp) {
   }
 }
 
+async function runBackfillRegression(cdp) {
+  await closeAll(cdp);
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+
+  // 1. 服药历史补记
+  const seed = await cdp.eval(`(() => {
+    localStorage.removeItem('strokeRehab.recovery.v1');
+    localStorage.removeItem('strokeRehab.v1');
+    Store.load();
+    Store.addMed({ name: '补记回归药', dose: 'x', times: ['08:00', '20:00'] });
+    const m = Store.data.meds[0];
+    m.from = Store.addDays(Store.today(), -60);
+    m.trackFrom = Store.addDays(Store.today(), -10);
+    const qian = Store.addDays(Store.today(), -2);
+    for (let i = 0; i <= 10; i++) {
+      const d = Store.addDays(Store.today(), -i);
+      if (d === qian) continue;
+      Store.data.medLog[d] = { [m.id + '@08:00']: true, [m.id + '@20:00']: true };
+    }
+    Store.save();
+    return { qian, d13: Store.addDays(Store.today(), -13) };
+  })()`);
+  await cdp.eval("App.go('meds')");
+  const medHistURL = await cdp.eval('location.href');
+  await clickAndWait(cdp, '#btn-med-hist', `document.querySelector('#med-day-${seed.qian}')`, '服药历史打开');
+  await clickAndWait(cdp, `#med-day-${seed.qian}`, "document.querySelector('.modal-mask:not([inert]) .med-check')", '打开补记子弹窗');
+  await click(cdp, '.modal-mask:not([inert]) .med-check');
+  await delay(180);
+  assert(await cdp.eval(`Store.medStatusOn('${seed.qian}').done >= 1`), '补记后 Store 已记该次');
+  await cdp.eval('history.back()');
+  await waitFor(cdp, "document.querySelectorAll('.modal-mask').length === 1", '返回只关子弹窗');
+  assert.strictEqual(await cdp.eval('location.href'), medHistURL, '补记返回后 URL 不变');
+  assert(await cdp.eval(`document.querySelector('#med-day-${seed.qian}').textContent.includes('1 次没记上')`), '前天行显示 1 次没记上');
+  assert.strictEqual(await cdp.eval('document.activeElement.id'), `med-day-${seed.qian}`, '焦点回前天那一行');
+  await clickAndWait(cdp, `#med-day-${seed.qian}`, "document.querySelector('#med-day-all')", '再次打开补记');
+  await click(cdp, '#med-day-all');
+  await waitFor(cdp, "document.querySelectorAll('.modal-mask').length === 1", '这天的都吃了后关子弹窗');
+  assert(await cdp.eval(`document.querySelector('#med-day-${seed.qian}').textContent.includes('全吃到')`), '一键补齐后前天行全吃到');
+  assert.strictEqual(await cdp.eval(`document.querySelector('#med-day-${seed.d13}')`), null, '登记前的日子不是可点按钮');
+  assert(await cdp.eval(`[...document.querySelectorAll('.day-row')].some(r => r.textContent.includes('登记前'))`), '登记前的日子显示“登记前”');
+  await closeAll(cdp);
+  console.log('PASS  服药历史补记：即时生效、返回只关子弹窗、焦点回原行、登记前不可点');
+
+  // 1b. F3：服药历史跨天重画，昨天那行不再标 ·今天（AC3.1）
+  await cdp.eval("App.go('meds')");
+  const f3Today = await cdp.eval('Store.today()');
+  await clickAndWait(cdp, '#btn-med-hist', `document.querySelector('#med-day-${f3Today}')`, 'AC3.1 服药历史打开');
+  assert(await cdp.eval(`document.querySelector('#med-day-${f3Today}').textContent.includes('·今天')`), 'AC3.1 打开时今天那行标 ·今天');
+  /* 跨天：整个页面的 today() 都基于 new Date()，内部调用摸不到 Store.today 覆写，故直接 mock Date。 */
+  await cdp.eval(`(() => {
+    window.__RealDate = Date;
+    const tmr = Store.addDays(Store.today(), 1) + 'T12:00:00';
+    window.Date = class extends window.__RealDate {
+      constructor(...a) { super(...(a.length ? a : [tmr])); }
+      static now() { return new window.__RealDate(tmr).getTime(); }
+    };
+  })()`);
+  const f3Tomorrow = await cdp.eval('Store.today()');
+  await cdp.eval("document.querySelector('.modal-mask:not([inert])')._onResume();");
+  await delay(120);
+  assert(await cdp.eval(`!document.querySelector('#med-day-${f3Today}') || !document.querySelector('#med-day-${f3Today}').textContent.includes('·今天')`), 'AC3.1 跨天后原今天行不再标 ·今天');
+  assert(await cdp.eval(`Boolean(document.querySelector('#med-day-${f3Tomorrow}')) && document.querySelector('#med-day-${f3Tomorrow}').textContent.includes('·今天')`), 'AC3.1 跨天后由新的今天那行标 ·今天');
+  await cdp.eval('window.Date = window.__RealDate;');
+  await closeAll(cdp);
+  console.log('PASS  服药历史跨天重画，·今天 跟随新的今天（F3）');
+
+  // 1c. P2#1：真实 Tab 到达撤销、双向循环、回车只回退新勾项（AC4.3）。
+  const undoDay = await cdp.eval(`(() => {
+    localStorage.removeItem('strokeRehab.recovery.v1');
+    localStorage.removeItem('strokeRehab.v1');
+    Store.load();
+    Store.addMed({ name: '撤销回归药', times: ['08:00', '12:00', '20:00'] });
+    const m = Store.data.meds[0];
+    m.from = Store.addDays(Store.today(), -10);
+    m.trackFrom = Store.addDays(Store.today(), -10);
+    const y = Store.addDays(Store.today(), -1);
+    Store.data.medLog[y] = { [m.id + '@08:00']: true };   // 已核对 08:00（非补记）
+    Store.save();
+    return y;
+  })()`);
+  await cdp.eval("App.go('meds')");
+  await clickAndWait(cdp, '#btn-med-hist', `document.querySelector('#med-day-${undoDay}')`, 'AC4.3 服药历史打开');
+  const onUndo = "document.activeElement === document.querySelector('#toast .toast-action')";
+  const onHistoryTitle = "document.activeElement === document.querySelector('.modal-mask:not([inert]) .m-title')";
+  async function checkAllAndTabToUndo(day, label) {
+    await clickAndWait(cdp, `#med-day-${day}`, "document.querySelector('#med-day-all:not([hidden])')", `${label} 打开补记子弹窗`);
+    await click(cdp, '#med-day-all');
+    await waitFor(cdp, "document.querySelector('#toast.show .toast-action') && document.querySelectorAll('.modal-mask').length === 1", `${label} 提示出现且子弹窗关闭`);
+    assert.strictEqual(await cdp.eval('document.activeElement.id'), `med-day-${day}`, `${label} 焦点自动回到日期行`);
+    for (let i = 0; i < 40; i++) {
+      await pressKey(cdp, 'Tab');
+      if (await cdp.eval(onUndo)) return;
+    }
+    assert.fail(`${label} 从日期行按 40 次真实 Tab 仍到不了撤销键`);
+  }
+  await checkAllAndTabToUndo(undoDay, 'AC4.3');
+  assert(await cdp.eval(`Store.medStatusOn('${undoDay}').done === 3`), 'AC4.3 一键补齐后当天全核对');
+  assert(await cdp.eval(`Object.keys(Store.data.medLate['${undoDay}'] || {}).length === 2`), 'AC4.3 只把新勾的 2 项记为补记');
+  const undoBtnRect = await cdp.eval(`(() => { const r = document.querySelector('#toast .toast-action').getBoundingClientRect(); return r.width >= 48 && r.height >= 48; })()`);
+  assert(undoBtnRect, 'AC4.3 撤销按钮 ≥48px');
+  await pressKey(cdp, 'Tab');
+  assert(await cdp.eval("document.activeElement === document.querySelector('.modal-mask:not([inert]) .btn-emergency')"), 'AC4.3 撤销键 Tab 回到历史弹窗急救键');
+  await pressKey(cdp, 'Tab', true);
+  assert(await cdp.eval(onUndo), 'AC4.3 急救键 Shift+Tab 回到撤销键');
+  await pressKey(cdp, 'Tab', true);
+  assert(await cdp.eval("document.activeElement === [...document.querySelectorAll('.modal-mask:not([inert]) [data-day]')].at(-1)"), 'AC4.3 撤销键 Shift+Tab 回到最后一个日期行');
+  await pressKey(cdp, 'Tab');
+  assert(await cdp.eval(onUndo), 'AC4.3 最后一个日期行 Tab 回到撤销键');
+  await pressKey(cdp, 'Enter');
+  assert(await cdp.eval(`Store.medStatusOn('${undoDay}').done === 1`), 'AC4.3 撤销后恢复为之前状态（只剩原 08:00）');
+  assert(await cdp.eval(`Store.isMedTaken(Store.data.meds[0].id, '08:00', '${undoDay}')`), 'AC4.3 撤销保留原已核对项');
+  assert(await cdp.eval(`!Store.data.medLate['${undoDay}']`), 'AC4.3 撤销清掉本次补记标记');
+  assert(!await cdp.eval(`document.querySelector('#med-day-${undoDay}').textContent.includes('全吃到')`), 'AC4.3 撤销后历史行不再显示「全吃到」（画面同步）');
+  assert(await cdp.eval(onHistoryTitle), 'AC4.3 回车撤销后焦点回历史弹窗标题');
+  assert(!await cdp.eval("document.querySelector('#toast').classList.contains('show')"), 'AC4.3 撤销后提示条隐藏');
+  const undoDoneBefore = await cdp.eval(`Store.medStatusOn('${undoDay}').done`);
+  await cdp.eval("document.querySelector('#toast .toast-action')?.click()");
+  await delay(120);
+  assert.strictEqual(await cdp.eval(`Store.medStatusOn('${undoDay}').done`), undoDoneBefore, 'AC4.3 撤销按钮再点无效');
+  console.log('PASS  真实 Tab 到达撤销、双向循环、回车只回退新勾项、历史行与焦点同步、再点无效（AC4.3）');
+
+  // 1d. 真实 8 秒超时后，透明按钮不能再被键盘或无障碍树访问（AC4.4）。
+  await checkAllAndTabToUndo(undoDay, 'AC4.4');
+  const medState = `({ done: Store.medStatusOn('${undoDay}').done, log: Store.data.medLog['${undoDay}'], late: Store.data.medLate['${undoDay}'] })`;
+  const checkedState = await cdp.eval(medState);
+  assert.strictEqual(checkedState.done, 3, 'AC4.4 再次补齐三项核对');
+  assert.strictEqual(Object.keys(checkedState.late).length, 2, 'AC4.4 两项补记标记在位');
+  const visibleAX = await cdp.send('Accessibility.getFullAXTree');
+  assert(visibleAX.nodes.some(n => !n.ignored && n.role?.value === 'button' && n.name?.value === '撤销'), 'AC4.4 Chromium 显示期间无障碍树暴露撤销按钮（不替代真机读屏）');
+  // 不改计时器、不模拟时钟；条件等待上限 10 秒。
+  await waitFor(cdp, "!document.querySelector('#toast').classList.contains('show')", 'AC4.4 等待真实 8 秒超时', 10000);
+  assert(await cdp.eval(onHistoryTitle), 'AC4.4 超时后焦点回历史弹窗标题');
+  assert.deepStrictEqual(await cdp.eval(medState), checkedState, 'AC4.4 超时不改变核对和补记');
+  await pressKey(cdp, 'Escape');
+  await waitFor(cdp, "!document.querySelector('.modal-mask')", 'AC4.4 Esc 关闭历史弹窗');
+  // 重现报告的起点；随后必须走原生 Tab/回车，不能对隐藏按钮调用 click()。
+  await cdp.eval("document.querySelector('.bottom-nav [data-view=\"learn\"]').focus()");
+  await pressKey(cdp, 'Tab');
+  assert(!await cdp.eval(onUndo), 'AC4.4 从底栏知识 Tab 不得落到隐形撤销键');
+  await pressKey(cdp, 'Enter');
+  assert.deepStrictEqual(await cdp.eval(medState), checkedState, 'AC4.4 隐藏后 Tab/回车不能误撤销');
+  const hiddenAX = await cdp.send('Accessibility.getFullAXTree');
+  assert(!hiddenAX.nodes.some(n => !n.ignored && n.role?.value === 'button' && n.name?.value === '撤销'), 'AC4.4 隐藏后无障碍树不再暴露撤销按钮');
+  await cdp.eval('Store.load()');
+  assert.deepStrictEqual(await cdp.eval(medState), checkedState, 'AC4.4 重读 Store 后核对和补记仍完整');
+
+  // 再对另一日补记，验证超时隐藏不会让下一条撤销永久失效。
+  await closeAll(cdp);
+  await cdp.eval("App.go('meds')");
+  await clickAndWait(cdp, '#btn-med-hist', `document.querySelector('#med-day-${undoDay}')`, 'AC4.4 重开服药历史');
+  const nextUndoDay = await cdp.eval(`Store.addDays('${undoDay}', -1)`);
+  await checkAllAndTabToUndo(nextUndoDay, 'AC4.4 新提示');
+  assert.strictEqual(await cdp.eval(`Store.medStatusOn('${nextUndoDay}').done`), 3, 'AC4.4 新提示对应日期已补齐');
+  await pressKey(cdp, 'Enter');
+  assert.strictEqual(await cdp.eval(`Store.medStatusOn('${nextUndoDay}').done`), 0, 'AC4.4 新提示的回车撤销恢复可用');
+  assert(await cdp.eval(`!Store.data.medLate['${nextUndoDay}']`), 'AC4.4 新提示撤销清除对应补记标记');
+  assert.deepStrictEqual(await cdp.eval(medState), checkedState, 'AC4.4 新提示撤销不影响已超时的日期');
+  await closeAll(cdp);
+  console.log('PASS  真实超时回收焦点、隐藏撤销不可键盘/无障碍树访问、数据持久化、新提示恢复可用（AC4.4）');
+
+  // 2. 训练补记
+  const yday = await cdp.eval('Store.addDays(Store.today(), -1)');
+  await cdp.eval("App.go('train'); document.querySelector('#train-history').open = true;");
+  await clickAndWait(cdp, '#btn-ex-hist', `document.querySelector('#ex-day-${yday}')`, '训练历史打开');
+  await clickAndWait(cdp, `#ex-day-${yday}`, "document.querySelector('.modal-mask:not([inert]) .check-row')", '打开训练补记子弹窗');
+  const exid = await cdp.eval("document.querySelector('.modal-mask:not([inert]) .check-row').dataset.exid");
+  await click(cdp, '.modal-mask:not([inert]) .check-row');
+  await delay(180);
+  assert(await cdp.eval(`Store.exercisesOn('${yday}').includes('${exid}')`), '训练补记昨天已记');
+  await cdp.eval('history.back()');
+  await waitFor(cdp, "document.querySelectorAll('.modal-mask').length === 1", '训练补记返回只关子弹窗');
+  assert(await cdp.eval(`document.querySelector('#ex-day-${yday}').textContent.includes('练了 1 项')`), '昨天行显示练了 1 项');
+  await clickAndWait(cdp, `#ex-day-${yday}`, "document.querySelector('.modal-mask:not([inert]) .check-row')", '再次打开训练补记');
+  await click(cdp, `.modal-mask:not([inert]) [data-exid="${exid}"]`);
+  await delay(180);
+  assert(!await cdp.eval(`Store.exercisesOn('${yday}').includes('${exid}')`), '再点取消后训练记录消失');
+  await closeAll(cdp);
+  console.log('PASS  训练补记/撤销昨天，行文案与 streak 随之更新');
+
+  // 3. 记录修改与删除
+  await cdp.eval(`(() => {
+    Store.data.vitals.bp = [];
+    Store.addVital('bp', { date: Store.addDays(Store.today(), -1), time: '08:00', sys: 120, dia: 80 });
+    Store.addVital('bp', { date: Store.addDays(Store.today(), -1), time: '08:00', sys: 130, dia: 85 });
+    App.go('records');
+  })()`);
+  await clickAndWait(cdp, '[data-hist="bp"]', "document.querySelector('.rec-open')", '血压历史打开');
+  const rowInfo = await cdp.eval(`(() => {
+    const b = document.querySelector('.rec-open');
+    return { id: b.dataset.vital, rowId: b.id };
+  })()`);
+  const bpCount = await cdp.eval('Store.data.vitals.bp.length');
+  const bpIdx = await cdp.eval(`Store.data.vitals.bp.findIndex(v => v.id === '${rowInfo.id}')`);
+  await clickAndWait(cdp, `#${rowInfo.rowId}`, "document.querySelector('#ev-sys')", '打开修改弹窗');
+  await cdp.eval("document.querySelector('#ev-sys').value = '145'");
+  await click(cdp, '#ev-save');
+  await waitFor(cdp, "!document.querySelector('#ev-sys')", '保存修改关闭弹窗');
+  assert.strictEqual(await cdp.eval(`Store.data.vitals.bp[${bpIdx}].sys`), 145, '修改后数值更新');
+  assert.strictEqual(await cdp.eval(`Store.data.vitals.bp[${bpIdx}].id`), rowInfo.id, '修改保留 id 与数组位置');
+  assert.strictEqual(await cdp.eval('Store.data.vitals.bp.length'), bpCount, '修改不改变条数');
+  assert.strictEqual(await cdp.eval('document.activeElement.id'), rowInfo.rowId, '修改后焦点回该行');
+  await click(cdp, `.modal-mask:not([inert]) .rec-del`);
+  await delay(150);
+  assert(await cdp.eval("Boolean(document.querySelector('.modal-mask:not([inert]) .confirm-box'))"), '行内删除先出现两步确认');
+  assert.strictEqual(await cdp.eval('Store.data.vitals.bp.length'), bpCount, '两步确认出现时尚未删除');
+  await click(cdp, '.modal-mask:not([inert]) [data-confirm="no"]');
+  await delay(150);
+  assert(await cdp.eval("Boolean(document.querySelector('.modal-mask:not([inert]) .rec-del'))"), '取消后恢复行');
+  await click(cdp, '.modal-mask:not([inert]) .rec-del');
+  await delay(150);
+  await click(cdp, '.modal-mask:not([inert]) [data-confirm="yes"]');
+  await delay(200);
+  assert.strictEqual(await cdp.eval('Store.data.vitals.bp.length'), bpCount - 1, '确认后条数减一');
+  // 修改弹窗内删除
+  await click(cdp, '.modal-mask:not([inert]) .rec-open');
+  await waitFor(cdp, "document.querySelector('#ev-del')", '再次打开修改弹窗');
+  const beforeModalDel = await cdp.eval('Store.data.vitals.bp.length');
+  await click(cdp, '#ev-del');
+  await delay(150);
+  await click(cdp, '.modal-mask:not([inert]) [data-confirm="yes"]');
+  await waitFor(cdp, "!document.querySelector('#ev-del')", '修改弹窗删除后关闭');
+  assert.strictEqual(await cdp.eval('Store.data.vitals.bp.length'), beforeModalDel - 1, '弹窗内删除条数减一');
+  await closeAll(cdp);
+  console.log('PASS  记录可修改（保 id/位置）、行内与弹窗内两步删除');
+
+  // 3b. F2：confirmInPlace 保存失败后按钮恢复可点；成功路径连点两下只删一次（AC2.1）
+  await cdp.eval(`(() => {
+    Store.data.vitals.bp = [];
+    Store.addVital('bp', { date: Store.addDays(Store.today(), -1), time: '08:00', sys: 118, dia: 76 });
+    App.go('meds'); App.go('records');   // 切走再回，强制重新渲染（go 对同页会早退）
+  })()`);
+  await clickAndWait(cdp, '[data-hist="bp"]', "document.querySelector('.rec-open')", 'AC2.1 血压历史打开');
+  await cdp.eval('window.__origRemoveVital = Store.removeVital; Store.removeVital = () => false;');   // 模拟保存失败
+  await click(cdp, '.modal-mask:not([inert]) .rec-del');
+  await delay(150);
+  await click(cdp, '.modal-mask:not([inert]) [data-confirm="yes"]');
+  await delay(150);
+  assert(await cdp.eval(`(() => { const y = document.querySelector('.modal-mask:not([inert]) [data-confirm="yes"]'), n = document.querySelector('.modal-mask:not([inert]) [data-confirm="no"]'); return Boolean(y) && Boolean(n) && y.disabled === false && n.disabled === false; })()`), 'AC2.1 保存失败后确认键与取消键都恢复可点');
+  await click(cdp, '.modal-mask:not([inert]) [data-confirm="no"]');
+  await delay(150);
+  assert(await cdp.eval("Boolean(document.querySelector('.modal-mask:not([inert]) .rec-del'))"), 'AC2.1 取消后还原原节点');
+  assert.strictEqual(await cdp.eval('Store.data.vitals.bp.length'), 1, 'AC2.1 失败与取消期间未删除');
+  // 成功路径：连点两下只调用一次
+  await cdp.eval('Store.removeVital = window.__origRemoveVital; window.__rmCount = 0; window.__wrappedRV = Store.removeVital; Store.removeVital = (...a) => { window.__rmCount++; return window.__wrappedRV(...a); };');
+  await click(cdp, '.modal-mask:not([inert]) .rec-del');
+  await delay(150);
+  await rapidDoubleClick(cdp, '.modal-mask:not([inert]) [data-confirm="yes"]');
+  await delay(200);
+  assert.strictEqual(await cdp.eval('window.__rmCount'), 1, 'AC2.1 连点两下 removeVital 只被调用一次');
+  assert.strictEqual(await cdp.eval('Store.data.vitals.bp.length'), 0, 'AC2.1 成功删除后条数为 0');
+  await cdp.eval('Store.removeVital = window.__wrappedRV;');
+  await closeAll(cdp);
+  console.log('PASS  确认框保存失败后按钮恢复、取消还原、连点只删一次（AC2.1）');
+
+  // 4. 键盘回车流
+  await cdp.eval("App.go('records'); Store.data.vitals.bp = []; Store.save();");
+  await cdp.eval("document.querySelector('#bp-sys').focus(); document.querySelector('#bp-sys').value='128'; document.querySelector('#bp-dia').value='82'; document.querySelector('#bp-pulse').value='70';");
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+  await delay(80);
+  assert.strictEqual(await cdp.eval('document.activeElement.id'), 'bp-dia', '高压回车跳到低压');
+  assert(await cdp.eval(`(() => {
+    const el = document.querySelector('#bp-dia');
+    const ev = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    Object.defineProperty(ev, 'isComposing', { value: true });
+    el.dispatchEvent(ev);
+    return document.activeElement.id === 'bp-dia';
+  })()`), '组字状态的回车不移动焦点');
+  await cdp.eval("document.querySelector('#bp-pulse').focus();");
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+  await delay(150);
+  assert.strictEqual(await cdp.eval('Store.data.vitals.bp[0]?.sys'), 128, '最后一框回车触发保存');
+  console.log('PASS  键盘回车跳下一框/最后一框保存，组字不触发');
+
+  // 5. 记录时间归属
+  await cdp.eval(`App.go('records'); Store.data.vitals.bp = []; Store.save();
+    window.__timeStr = Store.timeStr; Store.timeStr = () => '23:58';
+    document.querySelector('#bp-sys').value='121'; document.querySelector('#bp-dia').value='79';`);
+  await click(cdp, '#bp-save');
+  await delay(200);
+  assert.strictEqual(await cdp.eval('Store.data.vitals.bp[0].time'), '23:58', '未改时间时取保存那刻');
+  await cdp.eval('Store.timeStr = window.__timeStr;');
+  await cdp.eval("document.querySelector('#bp-sys').value='122'; document.querySelector('#bp-dia').value='78';");
+  await click(cdp, '#bp-dt-chip');
+  await delay(120);
+  await cdp.eval(`(() => {
+    const t = document.querySelector('#bp-time'); t.value = '06:30'; t.dispatchEvent(new Event('change'));
+  })()`);
+  await click(cdp, '#bp-save');
+  await delay(200);
+  assert.strictEqual(await cdp.eval('Store.data.vitals.bp[0].time'), '06:30', '改过时间后取输入值');
+  console.log('PASS  记录时间未改取此刻、改过取输入值');
+
+  // 6. 跨天自动重画
+  await cdp.eval("App.go('meds'); window.__firstNode = document.querySelector('#view').firstElementChild; window.__today = Store.today;");
+  await cdp.eval('Store.today = () => Store.addDays(window.__today(), 1);');
+  await cdp.eval("document.dispatchEvent(new Event('visibilitychange'))");
+  await waitFor(cdp, "document.querySelector('#view').firstElementChild !== window.__firstNode", '跨天后首个子节点更换');
+  await cdp.eval('Store.today = window.__today; document.dispatchEvent(new Event("visibilitychange"));');
+  console.log('PASS  过夜/跨天自动按今天重画');
+
+  // 6b. 绑定“今天的服药核对”弹窗过夜跨天后自动关闭（避免把点击记到昨天）
+  await cdp.eval("App.go('meds')");
+  const todayKey = await cdp.eval('Store.today()');
+  await clickAndWait(cdp, '#btn-med-hist', `document.querySelector('#med-day-${todayKey}')`, '服药历史打开（今天行）');
+  await clickAndWait(cdp, `#med-day-${todayKey}`, "document.querySelector('.modal-mask:not([inert]) .m-title')", '打开今天的服药核对');
+  assert(await cdp.eval("document.querySelector('.modal-mask:not([inert]) .m-title').textContent.includes('今天的服药核对')"), '标题为今天的服药核对');
+  const beforeCross = await cdp.eval("document.querySelectorAll('.modal-mask').length");
+  await cdp.eval('window.__today2 = Store.today; Store.today = () => Store.addDays(window.__today2(), 1);');
+  await cdp.eval("document.dispatchEvent(new Event('visibilitychange'))");
+  await waitFor(cdp, `document.querySelectorAll('.modal-mask').length < ${beforeCross}`, '跨天后今天的服药核对弹窗自动关闭');
+  await cdp.eval('Store.today = window.__today2; document.dispatchEvent(new Event("visibilitychange"));');
+  await closeAll(cdp);
+  console.log('PASS  绑定今天的服药核对弹窗过夜跨天后自动关闭');
+
+  // 7. 布局审计：新增弹窗与确认态
+  for (const width of [320, 360, 390]) {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: true });
+    const audits = [
+      ['med-history', async () => { await cdp.eval("App.go('meds')"); await click(cdp, '#btn-med-hist'); await waitFor(cdp, `document.querySelector('#med-day-${seed.qian}')`, '审计:服药历史'); }],
+      ['med-day', async () => { await click(cdp, `#med-day-${seed.qian}`); await waitFor(cdp, "document.querySelector('.modal-mask:not([inert]) .med-check')", '审计:补记子弹窗'); }],
+      ['ex-history', async () => { await closeAll(cdp); await cdp.eval("App.go('train'); document.querySelector('#train-history').open = true;"); await click(cdp, '#btn-ex-hist'); await waitFor(cdp, `document.querySelector('#ex-day-${yday}')`, '审计:训练历史'); }],
+      ['ex-day', async () => { await click(cdp, `#ex-day-${yday}`); await waitFor(cdp, "document.querySelector('.modal-mask:not([inert]) .check-row')", '审计:训练补记'); }],
+      ['vital-edit', async () => { await closeAll(cdp); await cdp.eval("App.go('records')"); await click(cdp, '[data-hist="bp"]'); await waitFor(cdp, "document.querySelector('.rec-open')", '审计:血压历史'); await click(cdp, '.rec-open'); await waitFor(cdp, "document.querySelector('#ev-sys')", '审计:修改弹窗'); }],
+      ['confirm', async () => { await click(cdp, '#ev-del'); await waitFor(cdp, "document.querySelector('.modal-mask:not([inert]) .confirm-box')", '审计:确认态'); }],
+    ];
+    for (const [name, open] of audits) {
+      await open();
+      await delay(120);
+      assert(await cdp.eval('document.documentElement.scrollWidth <= innerWidth'), `${width}/${name} 页面无横向溢出`);
+      assert(await cdp.eval("(() => { const p = document.querySelector('.modal-mask:not([inert]) .modal-panel'); return !p || p.scrollWidth <= p.clientWidth; })()"), `${width}/${name} 弹窗面板无横向溢出`);
+      const small = await cdp.eval(`Array.from(document.querySelectorAll('.modal-mask:not([inert]) button, .modal-mask:not([inert]) [role=button], .modal-mask:not([inert]) [role=checkbox]'))
+        .filter(el => el.getClientRects().length && !el.closest('details:not([open]) .disclosure-body') && !el.closest('.modal-head'))
+        .filter(el => { const r = el.getBoundingClientRect(); return r.width < 48 || r.height < 48; })
+        .map(el => el.textContent.trim().slice(0, 12))`);
+      assert.deepStrictEqual(small, [], `${width}/${name} 顶层弹窗控件触控面积 ≥48px`);
+      const shortRows = await cdp.eval(`Array.from(document.querySelectorAll('.modal-mask:not([inert]) .med-check, .modal-mask:not([inert]) .check-row'))
+        .filter(el => el.getClientRects().length && el.getBoundingClientRect().height < 60).length`);
+      assert.strictEqual(shortRows, 0, `${width}/${name} 勾选行 ≥60px 高`);
+      if (cliArgs.includes('--screenshots')) {
+        const tag = width === 390 ? '390n' : width === 320 ? '320x' : null;
+        if (tag) {
+          const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
+          fs.writeFileSync(`/tmp/rehab-v0232-${name}-${tag}.png`, Buffer.from(shot.data, 'base64'));
+        }
+      }
+    }
+    await closeAll(cdp);
+  }
+  console.log('PASS  320/360/390 下补记/修改/确认弹窗无横向溢出、控件 ≥48px、勾选行 ≥60px');
+
+  // 9. 压力：历史↔补记子弹窗开关 20 轮，history.length 不增长
+  if (stressMode) {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    await cdp.eval("App.go('meds')");
+    await clickAndWait(cdp, '#btn-med-hist', `document.querySelector('#med-day-${seed.qian}')`, '压力:服药历史');
+    const baseLen = await cdp.eval('history.length');
+    for (let i = 0; i < 20; i++) {
+      await clickAndWait(cdp, `#med-day-${seed.qian}`, "document.querySelector('.modal-mask:not([inert]) .med-check')", `压力补记 ${i + 1} 打开`);
+      await cdp.eval('history.back()');
+      await waitFor(cdp, "document.querySelectorAll('.modal-mask').length === 1", `压力补记 ${i + 1} 关闭`);
+    }
+    assert(await cdp.eval('history.length') <= baseLen + 1, '20 轮补记开关历史长度不增长');
+    await closeAll(cdp);
+    console.log('PASS  历史↔补记子弹窗 20 轮开关，历史栈不增长');
+  }
+}
+
 (async () => {
   const { browser, cdp, profile } = await launch();
   try {
@@ -559,6 +937,7 @@ async function runUXRegression(cdp) {
     console.log('PASS  加密并下载后应用仍在当前页面');
 
     await runUXRegression(cdp);
+    await runBackfillRegression(cdp);
     if (stressMode) await runOverlayStress(cdp);
 
     const exceptions = cdp.events.filter(event => event.method === 'Runtime.exceptionThrown');

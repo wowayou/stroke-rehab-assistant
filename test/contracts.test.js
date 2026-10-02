@@ -28,8 +28,29 @@ assert(/Strict-Transport-Security: max-age=31536000/.test(headers), 'Pages 响�
 assert(/X-Content-Type-Options: nosniff/.test(headers) && /Referrer-Policy: no-referrer/.test(headers), 'Pages 响应头必须限制内容嗅探与来源泄露');
 assert(/Permissions-Policy:.*camera=\(\).*geolocation=\(\).*microphone=\(\)/.test(headers), 'Pages 响应头必须关闭未使用的敏感浏览器能力');
 assert(/cp -r[^\n]*\b_headers\b/.test(deploy), '部署包必须包含 Cloudflare Pages 的 _headers 文件');
-assert(/data-med="\$\{esc\(m\.id\)\}"/.test(app), '药物动态 id 插入 HTML 前必须转义');
-assert(/data-del="\$\{esc\(v\.id\)\}"/.test(app), '健康记录动态 id 插入 HTML 前必须转义');
+[
+  [/data-med="\$\{esc\(/, /data-med="\$\{(?!esc\()/, 'med'],
+  [/data-del="\$\{esc\(/, /data-del="\$\{(?!esc\()/, 'del'],
+  [/data-day="\$\{esc\(/, /data-day="\$\{(?!esc\()/, 'day'],
+  [/data-exday="\$\{esc\(/, /data-exday="\$\{(?!esc\()/, 'exday'],
+  [/data-exid="\$\{esc\(/, /data-exid="\$\{(?!esc\()/, 'exid'],
+  [/data-vital="\$\{esc\(/, /data-vital="\$\{(?!esc\()/, 'vital'],
+].forEach(([good, bad, name]) => {
+  assert(good.test(app), `data-${name} 动态值插入 HTML 前必须经 esc()`);
+  assert(!bad.test(app), `data-${name} 不得出现未转义的动态插值`);
+});
+assert(/addEventListener\('visibilitychange'/.test(app) && /renderedDay/.test(app), '跨天重画必须监听 visibilitychange 并记录 renderedDay');
+assert(!/按「当前药物清单」计算/.test(app), '服药历史不得再写“按当前药物清单计算”（已改为 trackFrom 口径）');
+assert(!/confirm\('删除这条记录/.test(app) && !/confirm\(`确定删除「/.test(app), '高频删除不得用原生 confirm()（已改 confirmInPlace）');
+/* P2#1：补记单独记 medLate，medLog 仍只存 true（旧版读新数据只会丢标记，核对本身不受影响）。 */
+const storage = read('js/storage.js');
+assert(!/=\s*'late'/.test(storage), 'medLog 不得存非 true 值（事后补记单独记 medLate）');
+assert(/medLate: \{\}/.test(storage), 'defaults() 必须声明并行的 medLate 字段');
+assert(/\['medLate', BACKUP_LIMITS\.medChecksPerDay/.test(storage), 'medLate 必须纳入 validateBackupLimits 限额');
+assert(/'toast-action'/.test(app) && /has-action/.test(app), 'toast 撤销动作按钮按现有惯例登记（toast-action / has-action）');
+assert((app.match(/whenOf\('/g) || []).length >= 3, '三个保存都要经 whenOf() 取记录时间');
+assert(/e\.isComposing/.test(app), '回车处理必须避开中文输入法组字（isComposing）');
+assert(/enterkeyhint/.test(app), '高频录入输入应带 enterkeyhint（手机键盘下一项/完成）');
 assert(/备份里有健康隐私/.test(app) && /内容是可以直接阅读的/.test(app), '下载明文备份前必须说明敏感健康信息风险');
 assert(/set-backup'\)\.onclick = openBackupWarning/.test(app), '备份按钮必须先显示隐私提醒，并保留父级设置');
 assert(!/unwindDebt/.test(app) && /close\.replace\(openEncryptedBackup\)/.test(app), '连续备份弹窗不得用异步 history.back 后立即 pushState');

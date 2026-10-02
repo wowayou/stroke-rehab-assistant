@@ -3,11 +3,13 @@
 > 写给接手本项目的下一位开发者/AI。目的：让你在**不了解任何历史对话**的情况下安全接手。
 > 交接日期：2026-08-01。交接时项目状态：**v0.2，功能完整，全部测试通过，无任何进行中的半成品工作。**
 
-## 当前版本（2026-09-27）
+## 当前版本（2026-09-28）
 
-v0.2.31 已提交（`f6a1907`）并部署上线：动作示意图调研的集成——临床角度护栏、修正 4 张与自身要领矛盾的简笔画（坐站转移/踝泵/桥式/原地踏步）、给康复医生的复核单、在动部位橙色高亮 + 运动弧线；范围、验证与选型结论见 [DEVELOPMENT §10](DEVELOPMENT.md#10-变更记录) 与 §6 figures.js。**5 张图仍全部是 `pending`（未经医生复核）**，下一步是用 `node test/preview-figures.js --review` 出复核单找医生。
+v0.2.32 **已部署、未提交 Git**（改动留在工作区供验收 `git diff`）：记录的时间归属 + 补记 + 高频增删改查。药新增 `trackFrom`（登记前不算漏服/不补记）与 `timesHistory`（改时间点分版本），今天全核对才计入；服药/训练历史可点某天进子弹窗补记；健康记录可修改（保 id/位置）；高频删除改应用内两步确认、高频录入接回车流；记录时间未改取保存那刻、禁未来日期；跨天自动重画。**本轮验收整改（F1/F2/F3/P2#1）**：旧数据 trackFrom 改为【最早核对日→今天】不回退 from（回填过开始日期的老药升级后不再把装应用前算成漏服）；`confirmInPlace` 保存失败后两键恢复；服药历史跨天·今天跟随重画；补记单独记 `medLate`（medLog 仍只存 true）、报告标“其中 N 次为事后补记”、“这天都吃了”改 toast 带撤销。范围与验证见 [DEVELOPMENT §10](DEVELOPMENT.md#10-变更记录)、硬约定见 [AGENTS.md](../AGENTS.md) #8/#14。前轮全套回归通过，新增断言已在改前实现副本上反向确认失败（AC1.3/AC2.1/AC4.1）。本轮修复撤销提示条隐藏后仍可误删补记：隐藏时设 inert、显示时解除，保留焦点回收；本轮 storage/contracts/settings、overlay（含 --stress）、smoke、语法检查与用户验收脚本通过；分别撤回隐藏处理、Tab 接入、焦点回收的三个临时副本均被对应断言拦住。**真机与 12 张截图人眼复核待验**，执行清单见 [MANUAL-TEST](MANUAL-TEST.md)（读屏撤销新增 20a-2/20a-3）。Chromium 无障碍树检查不能记作真机读屏通过；iOS Safari 的模态读屏范围是否挡住弹窗外的撤销提示仍待验。`summary` 未纳入焦点环的问题在本轮范围外，未修复。
 
-生产为 v0.2.31，地址 <https://stroke-rehab-assistant.pages.dev/>，Cloudflare 部署 `03608e86`，`index.html` 部署戳 `ver=20260927085953`；线上 `js/figures.js`、`css/style.css` 与本地逐字节 md5 一致，CSP/HSTS 响应头已核对；git 已推送 `origin/main`。待复核：生产端 `settings.test.js`/`overlay.test.js --stress` 未重跑；真机上看图未做。
+上一版 v0.2.31 已提交（`f6a1907`）并曾部署上线：动作示意图调研的集成——临床角度护栏、修正 4 张与自身要领矛盾的简笔画（坐站转移/踝泵/桥式/原地踏步）、给康复医生的复核单、在动部位橙色高亮 + 运动弧线；范围、验证与选型结论见 [DEVELOPMENT §10](DEVELOPMENT.md#10-变更记录) 与 §6 figures.js。**5 张图仍全部是 `pending`（未经医生复核）**，下一步是用 `node test/preview-figures.js --review` 出复核单找医生。
+
+生产为 **v0.2.32**，地址 <https://stroke-rehab-assistant.pages.dev/>，Cloudflare 部署 `f39824c7`，`index.html` 部署戳 `ver=20260928105230`。用户授权直接发布；12 个线上文件已逐一核对（首页仅替换部署戳，其余与发布清单逐字节一致），首页/脚本安全响应头已核对。生产端 `settings.test.js`/`overlay.test.js --stress` 验证中。本次未提交或推送 Git，工作区保留 v0.2.32 完整改动；真机未验项仍以 [MANUAL-TEST](MANUAL-TEST.md) 为准。
 
 v0.2.30.1 在 v0.2.30 基础上继续打磨精致度/统一性（设置弹窗卡片标题层级对齐、展开折叠箭头改 CSS V 形），提交 `714c435`、部署 `03a2a862`；范围与验证见 [DEVELOPMENT §10](DEVELOPMENT.md#10-变更记录)，组件及分阶段加固标准见 [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md)。仍需真机核对读屏、原生键盘和返回手势。
 
