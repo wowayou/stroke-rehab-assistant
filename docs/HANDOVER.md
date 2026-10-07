@@ -5,7 +5,19 @@
 
 ## 本地工作（2026-10-06）
 
-**v0.2.36 已实现并完成本地回归，待独立 agent 验收；未提交、未部署**。基于 `1f98884` 接续已有未提交实现；用 `git diff` 查看完整交付。交互标准见 [DESIGN-SYSTEM §5](DESIGN-SYSTEM.md#5-数据任务与反馈)，数据格式/API 见 [DEVELOPMENT §5–§6](DEVELOPMENT.md#5-数据模型localstorage)。仅处理服药时间，不扩展训练、血糖或跨零点归属。
+**v0.2.36 已实现并完成本机回归，待独立 agent 验收；已提交到验收分支 `review/med-time-v0.2.36`（实现提交 `c219a1bf`），未合并 `main`、未部署**。基线 `1f98884`，`git diff 1f98884..review/med-time-v0.2.36` 即完整交付。交互标准见 [DESIGN-SYSTEM §5](DESIGN-SYSTEM.md#5-数据任务与反馈)，数据格式/API 见 [DEVELOPMENT §5–§6](DEVELOPMENT.md#5-数据模型localstorage)。仅处理服药时间，不扩展训练、血糖或跨零点归属。
+
+### 验收方式（另一台机器）
+
+```bash
+git fetch origin
+git worktree add ../sra-review-med-time review/med-time-v0.2.36   # 或另建 clone；不要动本机未提交的改动
+cd ../sra-review-med-time
+node test/storage.test.js && node test/contracts.test.js
+node test/overlay.test.js --stress      # 需无头 Chromium；--screenshots 可再出小屏截图
+```
+
+验收 agent：先读 [`AGENTS.md`](../AGENTS.md) 与本文，再按 [MANUAL-TEST](MANUAL-TEST.md) 的 v0.2.36 一节、`DEVELOPMENT.md` §0/§5/§6 与 `DESIGN-SYSTEM.md` §5 独立复核；**重跑相关回归，不要直接采信上面的交付说明**；只报告问题与复现步骤，不合并、不部署。
 
 - 已跑：`storage`、`contracts`、`speech`、`figures`、`encryption`、`backup-stress`、`overlay --stress --screenshots`、`lifecycle`、`settings`、`compat`、`sw`，以及 `smoke.sh`、运行脚本语法与 `git diff --check`，均通过。
 - 本轮重点回归：补记/一键不自动记时间；取消/删除/备份恢复与失败回滚；含停用药的近7天报告；跨零点同一时刻取日期与时分；旧日多层浮窗退出、跨页过期表单拒绝覆盖；四种关闭/焦点/防连点；动作提示换成普通提示后不挡点击。
