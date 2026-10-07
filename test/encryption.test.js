@@ -32,6 +32,9 @@ async function rejects(task, expected, message) {
   Store.data.profile.name = '加密测试患者';
   Store.data.meds = [{ id: 'med1', name: '测试药', dose: '1片', times: ['08:00'], note: '', from: Store.today(), to: '', previousCourseId: '' }];
   Store.save();
+  const medDay = Store.today();
+  Store.toggleMed('med1', '08:00');
+  Store.setMedTakenAt('med1', '08:00', medDay, '00:00');
 
   assert(Store.encryptionSupported(), '测试环境应支持 Web Crypto');
   const password = '仅用于测试-12345678';
@@ -49,6 +52,7 @@ async function rejects(task, expected, message) {
 
   const parsed = await Store.parseEncryptedBackup(encrypted, password);
   assert(parsed.data.profile.name === '加密测试患者' && parsed.data.meds[0].name === '测试药', '正确密码应完整恢复数据');
+  assert(parsed.data.medLog[medDay]['med1@08:00'] === true && parsed.data.medAt[medDay]['med1@08:00'] === '00:00', '加密备份往返保留核对与实际服药时间');
 
   await rejects(() => Store.parseEncryptedBackup(encrypted, '错误密码-12345678'), '密码不正确', '错误密码必须被拒绝');
   const tampered = JSON.parse(encrypted);

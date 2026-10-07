@@ -879,6 +879,175 @@ assert(!/事后补记/.test(Store.exportReport()), 'P2#1 无补记时报告不�
 assert(Store.medAdherence(7).late === 0, 'P2#1 无补记时 late=0');
 v32Fresh();
 
+/* --- v0.2.36：实际服药时间 medAt（今天核对记下点击时刻，可改；补记/一键核对不记） --- */
+v32Fresh();
+Store.addMed({ name: '时间药', times: ['08:00', '20:00'] });
+const atMed = Store.data.meds[0].id;
+Store.data.meds[0].from = Store.addDays(T, -5);
+Store.data.meds[0].trackFrom = Store.addDays(T, -5);
+Store.save();
+const nowHM = Store.timeStr();
+assert(Store.toggleMed(atMed, '08:00') === true, 'medAt 今天核对成功');
+const atNow = Store.medTakenAt(atMed, '08:00');
+assert(atNow === nowHM || atNow === Store.timeStr(), 'medAt 今天核对记下点击时刻，实际 ' + atNow);
+assert(Store.data.medLog[T][atMed + '@08:00'] === true, 'medAt 不改变 medLog 只存 true');
+assert(Store.medStatusOn(T).items.find(i => i.time === '08:00').at === atNow, 'medStatusOn 带 at');
+assert(Store.medStatusOn(T).items.find(i => i.time === '20:00').at === '', '未核对的 at 为空');
+/* 改时间：校验先于改数据 */
+/* 只用 00:00 这种“不可能晚于此刻”的值，测试在一天任何时刻跑都成立 */
+assert(Store.setMedTakenAt(atMed, '08:00', T, '00:00') === true && Store.medTakenAt(atMed, '08:00') === '00:00', 'setMedTakenAt 可改成实际时间');
+assert(Store.setMedTakenAt(atMed, '08:00', T, '7:5') === false && Store.medTakenAt(atMed, '08:00') === '00:00', '非法时间被拒、原值不变');
+if (Store.timeStr() < '23:59') {
+  assert(Store.setMedTakenAt(atMed, '08:00', T, '23:59') === false && /晚于现在/.test(Store.actionError()), '今天的时间不能晚于此刻');
+}
+assert(Store.setMedTakenAt(atMed, '20:00', T, '06:00') === false && Store.medTakenAt(atMed, '20:00') === '', '未核对的一次不能记时间');
+assert(Store.setMedTakenAt(atMed, '08:00', Store.addDays(T, 1), '07:00') === false, '未来日期不能记时间');
+/* 写盘失败回滚 */
+failWrites = true;
+assert(Store.setMedTakenAt(atMed, '08:00', T, Store.timeStr()) === false, 'setMedTakenAt 写盘失败返回 false');
+failWrites = false;
+assert(Store.medTakenAt(atMed, '08:00') === '00:00', 'setMedTakenAt 写盘失败后内存回滚');
+/* 报告列出实际时间 */
+assert(/近7天实际服药时间/.test(Store.exportReport()) && /时间药 08:00 那次 00:00 吃/.test(Store.exportReport()), '报告列出实际服药时间');
+/* 记不清：清时间，核对保留 */
+assert(Store.setMedTakenAt(atMed, '08:00', T, '') === true, '记不清了：清掉时间');
+assert(Store.medTakenAt(atMed, '08:00') === '' && Store.isMedTaken(atMed, '08:00') && !Store.data.medAt[T], '清时间后核对仍在、空日期键删除');
+assert(!/近7天实际服药时间/.test(Store.exportReport()), '没有实际时间时报告不列该节');
+assert(Store.setMedTakenAt(atMed, '08:00', T, '') === true, '再清一次幂等');
+/* 取消核对同删 medAt */
+Store.setMedTakenAt(atMed, '08:00', T, '00:00');
+Store.toggleMed(atMed, '08:00');
+assert(!Store.isMedTaken(atMed, '08:00') && !Store.data.medAt[T], '取消核对后 medAt 同删');
+/* 补记与一键核对不记时间 */
+const yAt = Store.addDays(T, -1);
+Store.toggleMed(atMed, '08:00', yAt);
+assert(Store.isMedTaken(atMed, '08:00', yAt) && Store.medTakenAt(atMed, '08:00', yAt) === '' && !Store.data.medAt[yAt], '补记不记实际时间');
+Store.checkAllMedsOn(Store.addDays(T, -2));
+assert(!Store.data.medAt[Store.addDays(T, -2)], '一键核对过去日不记时间');
+Store.checkAllMedsOn(T);
+assert(!Store.data.medAt[T], '一键核对今天也不记时间（各次不是同一刻吃的）');
+/* 撤销一键核对时同删 medAt（先给今天 08:00 记一个时间，再撤销） */
+Store.setMedTakenAt(atMed, '08:00', T, '00:00');
+assert(Store.uncheckMedsOn(T, [{ medId: atMed, time: '08:00' }]) === true && !Store.data.medAt[T], 'uncheckMedsOn 同删 medAt');
+/* 过去日已有时间时可改（当天记下、第二天才改） */
+Store.data.medAt[yAt] = { [atMed + '@08:00']: '08:10' };
+Store.save();
+assert(Store.setMedTakenAt(atMed, '08:00', yAt, '23:30') === true && Store.medTakenAt(atMed, '08:00', yAt) === '23:30', '过去日的时间可改成任意钟点');
+/* 备份往返保留 medAt */
+const atRound = Store.parseBackup(Store.exportBackup());
+assert(atRound.data.medAt[yAt][atMed + '@08:00'] === '23:30', '备份往返保留 medAt');
+/* 删药连带删 medAt */
+Store.removeMed(atMed);
+assert(!Store.data.medAt[yAt], 'removeMed 连带删除 medAt');
+/* 规范化：非法值、无对应核对的孤立键丢弃 */
+v32Fresh();
+localStorage.setItem('strokeRehab.v1', JSON.stringify({
+  meds: [{ id: 'a', name: '规范化药', times: ['08:00', '20:00'], trackFrom: Store.addDays(T, -5) }],
+  medLog: { [Store.addDays(T, -1)]: { 'a@08:00': true, 'a@20:00': true } },
+  medAt: {
+    [Store.addDays(T, -1)]: { 'a@08:00': '07:58', 'a@20:00': 'late', 'a@12:00': '12:00', 'zz@08:00': '08:00' },
+    [Store.addDays(T, -2)]: { 'a@08:00': '08:00' },
+  },
+}));
+Store.load();
+const atD1 = Store.data.medAt[Store.addDays(T, -1)];
+assert(atD1 && atD1['a@08:00'] === '07:58', '规范化保留合法 medAt');
+assert(!atD1['a@20:00'] && !atD1['a@12:00'] && !atD1['zz@08:00'], '规范化丢弃非法值/孤立键/不存在的药');
+assert(!Store.data.medAt[Store.addDays(T, -2)], '规范化丢弃整天无核对的 medAt');
+/* 超限 medAt 被拒 */
+let atOver = false;
+try {
+  const day = {};
+  for (let i = 0; i <= Store.backupLimits.medChecksPerDay; i++) day['m' + i + '@08:00'] = '08:00';
+  Store.parseBackup(JSON.stringify({ app: 'stroke-rehab-assistant', schema: 1, data: { meds: [{ id: 'm1', name: '药', times: ['08:00'] }], medAt: { '2026-01-01': day } } }));
+} catch (e) { atOver = /服药时间数量/.test(e.message); }
+assert(atOver, '超限 medAt 被 validateBackupLimits 拒绝');
+assert(limitRejected({ medAt: tooManyDays }, 'medAt 日期数量'), 'medAt 日期数超限也必须拒绝');
+v32Fresh();
+
+/* 固定本地时钟：不按运行测试的钟点跳过未来时间断言，也不污染前面使用真实日期的测试。 */
+{
+  let clock = new Date(2026, 9, 6, 9, 5).getTime(), rejectWrite = false, advanceOnRead = false;
+  const disk = {};
+  class MedDate extends Date {
+    constructor(...args) {
+      super(...(args.length ? args : [clock]));
+      if (!args.length && advanceOnRead) clock += 10;
+    }
+    static now() { return clock; }
+  }
+  const S = require('vm').runInNewContext(src + '; Store;', {
+    Date: MedDate, console: { warn() {} },
+    localStorage: {
+      getItem: key => disk[key] || null,
+      setItem: (key, value) => { if (rejectWrite) throw new Error('QuotaExceededError'); disk[key] = value; },
+      removeItem: key => { delete disk[key]; },
+    },
+  });
+  S.load();
+  const day = S.today(), yesterday = S.addDays(day, -1), edge = S.addDays(day, -6), older = S.addDays(day, -7);
+  S.addMed({ name: '时间边界药', times: ['08:00', '20:00'], from: older });
+  const id = S.data.meds[0].id;
+  S.data.meds[0].trackFrom = older; S.save();
+  S.toggleMed(id, '08:00');
+  assert(S.medTakenAt(id, '08:00') === '09:05', '单次核对用动作时刻，不用排定的 08:00');
+  const intact = () => JSON.stringify(S.data) + disk['strokeRehab.v1'];
+  const beforeInvalid = intact();
+  for (const value of ['09:06', '24:00', '7:5', null, true]) {
+    assert(S.setMedTakenAt(id, '08:00', day, value) === false && !!S.actionError(), '非法或未来时间应给出拒绝原因：' + value);
+    assert(intact() === beforeInvalid, '拒绝时间必须同时保持内存和磁盘不变');
+  }
+  rejectWrite = true;
+  assert(S.toggleMed(id, '08:00') === false && intact() === beforeInvalid, '取消核对写盘失败：medLog 与 medAt 一起回滚');
+  assert(S.uncheckMedsOn(day, [{ medId: id, time: '08:00' }]) === false && intact() === beforeInvalid, '批量撤销写盘失败：实际时间不丢');
+  assert(S.removeMed(id) === false && intact() === beforeInvalid, '删除药物写盘失败：药物及实际时间不丢');
+  rejectWrite = false;
+  S.checkAllMedsOn(day);
+  assert(S.medTakenAt(id, '08:00') === '09:05' && S.medTakenAt(id, '20:00') === '', '一键补齐保留原时间，不把新勾的晚间药记为当前时刻');
+  S.uncheckMedsOn(day, [{ medId: id, time: '20:00' }]);
+  assert(S.medTakenAt(id, '08:00') === '09:05', '撤销一键补齐不清掉原已核对的实际时间');
+  for (const date of [yesterday, edge, older]) {
+    S.toggleMed(id, '08:00', date);
+    assert(S.medTakenAt(id, '08:00', date) === '', '过去补记不自动记时间');
+    S.setMedTakenAt(id, '08:00', date, '07:50');
+  }
+  S.updateMed(id, { times: ['09:00', '20:00'] });
+  const beforeOrphan = intact();
+  assert(S.setMedTakenAt(id, '08:00', day, '07:30') === false && intact() === beforeOrphan, '今天改排期后，旧时间点即使有核对也不能再改实际时间');
+  assert(S.setMedTakenAt(id, '08:00', yesterday, '07:55') === true, '过去仍按 timesHistory 校验，可改旧时间点');
+  S.stopMed(id, yesterday);
+  const report = S.exportReport();
+  assert(S.activeMeds().length === 0 && /近7天实际服药时间/.test(report), '所有药均停用后，近7天已记录的时间仍出报告');
+  assert(report.includes(yesterday + '  ') && report.includes(edge + '  ') && !report.includes(older + '  '), '报告范围是含今天的近7天，含第7天、不含第8天');
+  assert(/默认.*核对/.test(report) && /更正/.test(report), '报告说明时间默认来自核对，可更正，不能冒充独立测得的服药时间');
+  const backupAt = JSON.stringify(S.parseBackup(S.exportBackup()).data.medAt);
+  const backupState = S.parseBackup(S.exportBackup()).data;
+  S.setMedTakenAt(id, '08:00', yesterday, '07:45');
+  const beforeRestoreAt = JSON.stringify(S.data.medAt);
+  assert(S.applyBackup(backupState) && JSON.stringify(S.data.medAt) === backupAt, '恢复备份完整保留 medAt');
+  assert(S.undoLastRestore() && JSON.stringify(S.data.medAt) === beforeRestoreAt, '撤销恢复找回覆盖前的 medAt');
+  S.load();
+  assert(JSON.stringify(S.data.medAt) === beforeRestoreAt, '刷新重读后实际时间不变');
+  const old = JSON.parse(S.exportBackup());
+  delete old.data.medAt;
+  const loadedOld = S.parseBackup(JSON.stringify(old)).data;
+  assert(Object.keys(loadedOld.medAt).length === 0 && loadedOld.medLog[yesterday][id + '@08:00'] === true, '旧备份缺 medAt：保留核对，不推测实际时间');
+  clock += 24 * 60 * 60 * 1000;
+  S.load();
+  assert(JSON.stringify(S.data.medAt) === beforeRestoreAt, '跨天重读不挪动、重算已记下的时间');
+
+  S.resetAll();
+  clock = new Date(2026, 9, 9, 23, 59, 59, 999).getTime();
+  S.addMed({ name: '零点边界药', times: ['08:00'] });
+  const midnightId = S.data.meds[0].id;
+  advanceOnRead = true; // 第一眼是 23:59:59.999，下一次读 Date 已跨天。
+  S.toggleMed(midnightId, '08:00');
+  assert(S.medTakenAt(midnightId, '08:00', '2026-10-09') === '23:59', '日期与时分来自同一瞬间，不能拼成昨天 00:00');
+  assert(!S.data.medLate['2026-10-09'], '同一动作跨过零点也不能把当日核对改成补记');
+  S.toggleMed(midnightId, '08:00');
+  assert(S.medTakenAt(midnightId, '08:00', '2026-10-10') === '00:00', '下一天的新动作记为新日期，不覆盖昨天');
+}
+
 if (failed) {
   console.error(`❌ ${failed} 项断言失败`);
   process.exit(1);

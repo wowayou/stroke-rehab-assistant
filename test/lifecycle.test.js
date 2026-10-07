@@ -220,6 +220,98 @@ async function launch() {
 const exceptionsOf = cdp => cdp.events.filter(e => e.method === 'Runtime.exceptionThrown')
   .map(e => e.params.exceptionDetails.exception?.description || e.params.exceptionDetails.text);
 
+/* 实际服药时间的生命周期：只用隔离浏览器里的测试数据与时钟，不修改系统时间。 */
+async function runMedTimeLifecycle(port, pages) {
+  const page = await openPage(port, caseURL('med-time', 'meds'));
+  pages.push(page);
+  await dismissGuide(page);
+  const id = await page.eval(`(() => {
+    __goto(0, 9, 0);
+    Store.resetAll(); Store.markGuideSeen();
+    Store.addMed({ name: '时间生命周期药', times: ['08:00', '20:00'] });
+    render('meds');
+    return Store.data.meds[0].id;
+  })()`);
+  const originalDay = await page.eval('Store.today()');
+  await page.eval('__goto(0, 9, 42)');
+  await click(page, '.med-check');
+  assert.strictEqual(await page.eval(`Store.medTakenAt('${id}', '08:00')`), '09:42', '时间来自核对动作，不是 09:00 渲染或 08:00 排期');
+  await click(page, '.mc-at');
+  await waitFor(page, "document.querySelector('#mt-time')", '打开改时间');
+  await page.eval("document.querySelector('#mt-time').value = '09:43'");
+  await click(page, '#mt-save');
+  await waitFor(page, "document.querySelector('.save-feedback')?.textContent.includes('不能晚于现在')", '未来时分报错');
+  assert.strictEqual(await page.eval(`Store.medTakenAt('${id}', '08:00')`), '09:42', '被拒后保留原时间');
+  await page.eval("document.querySelector('#mt-time').value = '08:12'");
+  await click(page, '#mt-save');
+  await waitFor(page, "!document.querySelector('#mt-time')", '更正成功关闭');
+  assert.strictEqual(await page.eval(`Store.medTakenAt('${id}', '08:00')`), '08:12', '更正后保存为实际时分');
+
+  await click(page, '.mc-at');
+  await page.eval("document.querySelector('#mt-time').value = '08:20'; __goto(1, 0, 5)");
+  await click(page, '#mt-save');
+  await waitFor(page, "!document.querySelector('#mt-time')", '无恢复事件时，跨零点保存也应关闭旧日编辑');
+  assert.strictEqual(await page.eval(`Store.medTakenAt('${id}', '08:00', '${originalDay}')`), '08:12', '跨日第一下不能改昨天的时间');
+  assert(await page.eval('!Store.data.medAt[Store.today()]'), '跨日第一下不写今天的记录');
+  await click(page, '.med-check');
+  const nestedDay = await page.eval('Store.today()');
+  await click(page, '#btn-med-hist');
+  await click(page, `#med-day-${nestedDay}`);
+  await click(page, '.modal-mask:not([inert]) .mc-at');
+  assert.strictEqual(await page.eval('document.querySelectorAll(".modal-mask").length'), 3, '历史→今天核对→改时间为三层');
+  await page.eval('__goto(1, 10, 0); __setVisible(true)');
+  await waitFor(page, 'document.querySelectorAll(".modal-mask").length === 1', '跨天关闭两层旧日窗口，只留服药历史');
+  assert(await page.eval("document.querySelector('.m-title').textContent.includes('服药历史')"), '跨天不离开父历史窗口');
+  await click(page, '.modal-mask:not([inert]) .modal-close');
+  await waitFor(page, '!document.querySelector(".modal-mask")', '关闭父历史');
+
+  await click(page, '.med-check');
+  await click(page, '.mc-at');
+  const currentDay = await page.eval('Store.today()');
+  const other = await openPage(port, caseURL('med-time-other', 'meds'));
+  pages.push(other);
+  await other.eval(`__shift(new Date('${currentDay}T10:00:00').getTime() - Date.now())`);
+  assert(await other.eval(`Store.setMedTakenAt('${id}', '08:00', '${currentDay}', '08:15')`), '另一页改时间成功');
+  await waitFor(page, `Store.medTakenAt('${id}', '08:00') === '08:15'`, '打开编辑时 Store 也已同步');
+  await page.eval("document.querySelector('#mt-time').value = '08:30'");
+  await click(page, '#mt-save');
+  await waitFor(page, "document.querySelector('.save-feedback')?.textContent.includes('别的页面')", '旧表单拒绝覆盖已同步的新时间');
+  assert.strictEqual(await page.eval("document.querySelector('#mt-time').value"), '08:30', '拒绝覆盖后保留输入');
+  assert.strictEqual(await page.eval(`Store.medTakenAt('${id}', '08:00')`), '08:15', '另一页的时间没有被旧表单改掉');
+  await click(page, '.modal-mask:not([inert]) .modal-close');
+  await waitFor(page, '!document.querySelector(".modal-mask")', '关闭过期编辑');
+  assert(await page.eval("document.querySelector('.mc-taken-at').textContent.includes('08:15')"), '关闭后主列表显示新时间');
+
+  await click(page, '#btn-med-hist');
+  await click(page, `#med-day-${currentDay}`);
+  await other.eval('Store.reloadIfChanged()');
+  assert(await other.eval(`Store.toggleMed('${id}', '20:00')`), '另一页核对晚间药');
+  await waitFor(page, `Store.isMedTaken('${id}', '20:00')`, '日核对弹窗数据已同步');
+  await click(page, '.modal-mask:not([inert]) .med-check[data-time="20:00"]');
+  assert(await page.eval(`Store.isMedTaken('${id}', '20:00')`), '旧弹窗上的未勾行不能反向取消另一页的核对');
+  assert(await page.eval("document.querySelector('.modal-mask:not([inert]) .med-check[data-time=\"20:00\"]').getAttribute('aria-checked') === 'true'"), '过期清单先重画');
+  await click(page, '.modal-mask:not([inert]) .mc-at[data-at-time="20:00"]');
+  assert(await page.eval("!document.querySelector('#mt-ontime')"), '尚未到 20:00，不能把未来排定时间作为实际时间快捷项');
+  await click(page, '.modal-mask:not([inert]) .modal-close');
+  await waitFor(page, 'document.querySelectorAll(".modal-mask").length === 2', '关闭晚间药时间窗口');
+  await click(page, '.modal-mask:not([inert]) .modal-close');
+  await waitFor(page, 'document.querySelectorAll(".modal-mask").length === 1', '关闭日核对');
+  await other.eval(`Store.toggleMed('${id}', '20:00')`);
+  await waitFor(page, `!Store.isMedTaken('${id}', '20:00')`, '重新准备未全核对的一天');
+  await click(page, `#med-day-${currentDay}`);
+  await other.eval(`Store.toggleMed('${id}', '08:00')`);
+  await waitFor(page, `!Store.isMedTaken('${id}', '08:00')`, '另一页取消原有核对');
+  await click(page, '#med-day-all');
+  assert.strictEqual(await page.eval(`Store.medStatusOn('${currentDay}').done`), 0, '一键核对也先拒绝旧屏幕的操作');
+  await click(page, '#med-day-all');
+  await waitFor(page, 'document.querySelectorAll(".modal-mask").length === 1', '重新确认后一次补齐');
+  assert.strictEqual(await page.eval(`Store.medStatusOn('${currentDay}').done`), 2, '重新确认可正常一键核对');
+  assert(await page.eval(`!Store.data.medAt['${currentDay}']`), '一键核对不自动填任何实际时间');
+  await click(page, '.modal-mask:not([inert]) .modal-close');
+  await waitFor(page, '!document.querySelector(".modal-mask")', '结束服药时间生命周期回归');
+  console.log('PASS  服药时间按动作时刻记录、未来时分拒绝、跨天多层退出、跨页编辑/核对/一键操作保护');
+}
+
 (async () => {
   const { browser, profile, port } = await launch();
   const pages = [];
@@ -444,6 +536,7 @@ const exceptionsOf = cdp => cdp.events.filter(e => e.method === 'Runtime.excepti
     assert(await cdp.eval("document.querySelector('.greet').textContent.includes('另一页的称呼')"), '关掉浮层后页面按新数据重画');
     console.log('PASS  两个页面同开：另一页的记录自动同步，本页再保存不冲突；浮层开着时不被冲掉');
 
+    await runMedTimeLifecycle(port, pages);
     for (const page of pages) assert.deepStrictEqual(exceptionsOf(page), [], '运行期间不应有未捕获异常');
 
     /* ⑧ iOS 桌面图标第一次打开：提醒"浏览器里的旧记录不会自动过来" */

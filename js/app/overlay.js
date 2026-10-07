@@ -46,6 +46,16 @@ function overlayPush() {
 function returnFocusTarget(target) {
   if (!target || target.isConnected) return target;
   if (target.id) return document.getElementById(target.id);
+  /* 服药核对行与行尾「几点吃的」按钮：按 药id+时间点 在当前顶层（关掉的是子弹窗时）或主页面找回 */
+  const med = target.dataset.med || target.dataset.atMed;
+  if (med) {
+    const time = target.dataset.time || target.dataset.atTime;
+    const scope = topOverlay() || $view();
+    const sel = target.dataset.atMed ? '.mc-at' : '.med-check';
+    const pick = s => [...scope.querySelectorAll(s)].find(el =>
+      (el.dataset.med || el.dataset.atMed) === med && (el.dataset.time || el.dataset.atTime) === time);
+    return pick(sel) || pick('.med-check');
+  }
   for (const key of ['ex', 'editMed', 'hist', 'art']) {
     if (target.dataset[key]) {
       return [...$view().querySelectorAll('button, [role="button"]')]

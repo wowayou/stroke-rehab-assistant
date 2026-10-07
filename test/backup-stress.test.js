@@ -56,6 +56,7 @@ function buildLargeState(detailSize) {
       game: i % 2 ? 'memory' : 'attention', score: i, detail, time: '09:00',
     }));
     data.medLog[date] = Object.fromEntries(data.meds.flatMap(m => m.times.map(time => [`${m.id}@${time}`, true])));
+    data.medAt[date] = Object.fromEntries(data.meds.flatMap(m => m.times.map(time => [`${m.id}@${time}`, time.slice(0, 3) + '05'])));
   }
   data.ui.guideSeen = true;
   return data;
@@ -86,6 +87,9 @@ function buildLargeState(detailSize) {
   const parseMs = performance.now() - parseStart;
   assert(parsed.data.vitals.bp.length === 5000 && parsed.data.gameLog[Store.today()].length === 100,
     '大备份解析后记录数量应完整');
+  assert(Object.keys(parsed.data.medAt).length === 70 && Object.keys(parsed.data.medAt[Store.today()]).length === 300,
+    '大备份保留70天每天300次的实际服药时间');
+  const medAtJSON = JSON.stringify(parsed.data.medAt);
 
   const originalName = Store.data.profile.name;
   const password = '压力测试可信密码-2026';
@@ -100,6 +104,7 @@ function buildLargeState(detailSize) {
     const decrypted = await Store.parseEncryptedBackup(encrypted, password);
     decryptTimes.push(performance.now() - started);
     assert(decrypted.data.vitals.glucose.length === 5000, '大备份加密往返不得丢失健康记录');
+    assert.strictEqual(JSON.stringify(decrypted.data.medAt), medAtJSON, '大备份加密往返保留全部服药时间');
     assert(Store.data.profile.name === originalName, '仅解密预览不得改变当前数据');
   }
 
@@ -110,6 +115,7 @@ function buildLargeState(detailSize) {
     assert(Store.data.profile.name === `恢复压力${i}`, '恢复后应是导入数据');
     assert(Store.undoLastRestore(), `第 ${i + 1} 次大备份恢复应可撤销`);
     assert(Store.data.profile.name === originalName, '撤销后应回到恢复前数据');
+    assert.strictEqual(JSON.stringify(Store.data.medAt), medAtJSON, '恢复并撤销后服药时间完整');
   }
 
   const maxEncrypt = Math.max(...encryptTimes);

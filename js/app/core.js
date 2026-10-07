@@ -69,6 +69,7 @@ function hideToast(t) {
 function toast(msg, action) {
   const t = document.getElementById('toast');
   clearTimeout(t._tid);
+  t.classList.remove('has-action'); // 普通提示不能继承上一条的可点击状态、挡住下面的控件。
   t.innerHTML = '';
   const span = document.createElement('span');
   span.className = 'toast-msg';
@@ -83,8 +84,9 @@ function toast(msg, action) {
     btn.onclick = () => {
       if (used) return;            // 一次撤销后按钮失效
       used = true;
-      action.onClick();
+      /* 先收起旧提示，再执行动作；动作可能显示新的错误提示或打开子任务，不能把新提示一起藏掉。 */
       hideToast(t);
+      action.onClick();
     };
     t.appendChild(btn);
     t.classList.add('has-action');

@@ -3,11 +3,22 @@
 > 写给接手本项目的下一位开发者/AI。目的：让你在**不了解任何历史对话**的情况下安全接手。
 > 交接日期：2026-08-01。交接时项目状态：**v0.2，功能完整，全部测试通过，无任何进行中的半成品工作。**
 
+## 本地工作（2026-10-06）
+
+**v0.2.36 已实现并完成本地回归，待独立 agent 验收；未提交、未部署**。基于 `1f98884` 接续已有未提交实现；用 `git diff` 查看完整交付。交互标准见 [DESIGN-SYSTEM §5](DESIGN-SYSTEM.md#5-数据任务与反馈)，数据格式/API 见 [DEVELOPMENT §5–§6](DEVELOPMENT.md#5-数据模型localstorage)。仅处理服药时间，不扩展训练、血糖或跨零点归属。
+
+- 已跑：`storage`、`contracts`、`speech`、`figures`、`encryption`、`backup-stress`、`overlay --stress --screenshots`、`lifecycle`、`settings`、`compat`、`sw`，以及 `smoke.sh`、运行脚本语法与 `git diff --check`，均通过。
+- 本轮重点回归：补记/一键不自动记时间；取消/删除/备份恢复与失败回滚；含停用药的近7天报告；跨零点同一时刻取日期与时分；旧日多层浮窗退出、跨页过期表单拒绝覆盖；四种关闭/焦点/防连点；动作提示换成普通提示后不挡点击。
+- 目视：已看 320/390px 特大字号的核对行与时间弹窗。可用 `overlay --screenshots` 重出 `/tmp/rehab-medat-*-xlarge-{list,edit}.png`。原生时间控件跟随设备语言与时间制式。
+- **未验**：真机原生时间输入、读屏、系统返回；独立 agent 验收尚未执行。真机步骤仅维护于 [MANUAL-TEST v0.2.36](MANUAL-TEST.md#v0236-真机复测服药实际时间)。
+
 ## 当前版本（2026-10-02）
 
 **生产：v0.2.35**（提交 `dca0e7a`），地址 <https://stroke-rehab-assistant.pages.dev/>，Cloudflare 部署 `4268e015`（2026-10-02，`ver=20261002125604`）。它是两条线的合并：笔记本线 v0.2.32（9 月 28 日部署 `f39824c7` 时**没有提交 Git**，2026-10-02 补存为分支 `wip-laptop-2026-10-02`）与本机线 v0.2.32～v0.2.34；冲突怎么取舍见 [CHANGELOG](CHANGELOG.md) v0.2.35。部署后已核对：22 个运行文件与 `dca0e7a` 逐字节一致（首页仅部署戳不同）；首页 CSP/HSTS/防嵌入等响应头在位；`/sw.js` 不带 CSP、有 `cache-control: no-cache`（`_headers` 的摘除规则在 Cloudflare 上确实生效）；生产上离线缓存装上、断网能打开；对生产地址跑 `settings`、`lifecycle`、`overlay` 三套 Chromium 回归全部通过。**未验：真机**（按 [MANUAL-TEST](MANUAL-TEST.md) v0.2.32/v0.2.33 两节与补记/修改相关项）。
 
 **数据兼容（务必）**：线上用户数据已经带 `trackFrom`/`timesHistory`/`medLate`。合并版全部保留；**不要部署任何不认识这三个字段的版本**——`normalizeState()` 会在下次保存时把它们丢掉（补记标记、改时间前的服药安排、登记日都会丢，登记前的日子还会重新被算成漏服）。
+
+**v0.2.36 的回滚边界（本地，尚未部署）**：新增可选字段 `medAt`，旧记录保持时间未知。v0.2.35 及更早的程序读取新数据后，下一次保存会丢掉实际时间，但 `medLog` 核对保留。上线前应备份，避免新旧页面混用；需要回滚时不能直接部署不认识 `medAt` 的旧程序。
 
 **5 张示意图仍全部是 `pending`**（未经医生复核），用 `node test/preview-figures.js --review` 出复核单找医生。
 

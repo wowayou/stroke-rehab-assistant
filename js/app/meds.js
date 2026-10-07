@@ -7,44 +7,141 @@
    【区】用药页：核对表 → 药物清单 → 服药历史 → 登记/停用/新疗程表单
    ============================================================ */
 
-/* 服药核对清单（今日核对与补记子弹窗共用）：按时间分组，行结构沿用 .med-check。
-   items 来自 Store.medStatusOn(date).items（含 medId/name/dose/note/time/taken）。 */
-function medCheckListHTML(items) {
+/* 服药核对清单：今日核对与补记子弹窗共用。实际时间放药名下，修改按钮与 checkbox 并列。
+   过去没记过时间的只保留核对，不默认填入排定时间或当前时间。 */
+function medCheckListHTML(items, date) {
+  const isToday = date === Store.today();
   const slots = {};
   items.forEach(it => { (slots[it.time] = slots[it.time] || []).push(it); });
   return Object.keys(slots).sort().map(tm => `
     <div class="med-time-group">
       <div class="med-time-label">🕐 ${esc(tm)}</div>
       ${slots[tm].map(it => `
-      <div class="med-check ${it.taken ? 'checked' : ''}" data-med="${esc(it.medId)}" data-time="${esc(it.time)}" role="checkbox" aria-checked="${it.taken}" tabindex="0">
-        <div class="mc-box">${it.taken ? '✓' : ''}</div>
-        <div>
-          <div class="mc-name">${esc(it.name)}</div>
-          <div class="mc-dose">${esc(it.dose || '')}${it.note ? ' · ' + esc(it.note) : ''}</div>
+      <div class="med-line">
+        <div class="med-check ${it.taken ? 'checked' : ''}" data-med="${esc(it.medId)}" data-time="${esc(it.time)}" role="checkbox" aria-checked="${it.taken}" tabindex="0">
+          <div class="mc-box">${it.taken ? '✓' : ''}</div>
+          <div class="mc-body">
+            <div class="mc-name">${esc(it.name)}</div>
+            <div class="mc-dose">${esc(it.dose || '')}${it.note ? ' · ' + esc(it.note) : ''}</div>
+            ${it.taken && it.at ? `<div class="mc-taken-at">${esc(it.at)} 吃的</div>` : ''}
+          </div>
         </div>
+        ${it.taken && (it.at || isToday) ? `<button type="button" class="btn small ghost mc-at" data-at-med="${esc(it.medId)}" data-at-time="${esc(it.time)}" aria-label="${esc(it.name)} ${esc(it.time)} 那次：${it.at ? esc(it.at) + ' 吃的' : '没记时间'}，点这里改">${it.at ? '改时间' : '记下时间'}</button>` : ''}
       </div>`).join('')}
     </div>`).join('');
 }
-/* 绑定核对行：Enter/空格可操作；成功后 tick() 再 after(el)。date 决定操作哪一天。 */
+/* 主页面与日核对弹窗都先核对屏幕快照：跨天/别处改过时先重画，不反向切换新数据。
+   提示条可能晚些才点，原页面或父窗口已关闭时也不能拿旧回调重画/打开错误的页面。 */
+function medScreenStale(root, date, snapshot, repaint) {
+  const main = root === $view();
+  const modal = main ? null : root.closest('.modal-mask');
+  if (!root.isConnected || dismissPending || (main ? currentView !== 'meds' || !!topOverlay() : !modal || modal !== topOverlay())) {
+    toast('请回到用药核对表再修改时间');
+    return true;
+  }
+  const newDay = (main || modal._dayBound) && Store.today() !== date;
+  const refreshed = refreshIfStale();
+  if (newDay) {
+    if (modal) dismissTopOverlay();
+    toast('已经是新的一天了，请按今天的核对表再点一次');
+    return true;
+  }
+  if ((main && refreshed) || snapshot !== JSON.stringify(Store.medStatusOn(date))) {
+    if (!main || !refreshed) repaint();
+    toast('记录刚在别的页面更新过，请看一眼再点');
+    return true;
+  }
+  return false;
+}
+/* Enter/空格可核对；今天单次核对记当前时间，提示条和常驻按钮均可更正。 */
 function bindMedChecks(root, date, after) {
+  const snapshot = JSON.stringify(Store.medStatusOn(date));
   root.querySelectorAll('.med-check').forEach(elm => {
     const act = () => {
-      /* 主页面的核对表是昨天画的（开着过了零点）或别的页面刚改过记录：屏幕上的勾已经不是真相，
-         点下去会记到昨天（成了补记）或记错。先换成最新的核对表让人重新看一眼，不替他做这一下。 */
-      if (root === $view()) {
-        const newDay = Store.today() !== date;
-        if (refreshIfStale()) {
-          toast(newDay ? '已经是新的一天了，请按今天的核对表再点一次' : '记录刚在别的页面更新过，请看一眼再点');
-          return;
-        }
-      }
-      if (!stored(Store.toggleMed(elm.dataset.med, elm.dataset.time, date))) return;
+      if (medScreenStale(root, date, snapshot, () => after(elm))) return;
+      const medId = elm.dataset.med, time = elm.dataset.time;
+      if (!stored(Store.toggleMed(medId, time, date))) return;
       tick();
       after(elm);
+      const at = Store.isMedTaken(medId, time, date) && Store.medTakenAt(medId, time, date);
+      if (at) {
+        const checked = JSON.stringify(Store.medStatusOn(date));
+        toast(`已记下 ${at} 吃的`, {
+          label: '改时间',
+          onClick: () => {
+            if (!medScreenStale(root, date, checked, () => after(elm))) openMedTimeEdit(medId, time, date, elm, () => after(elm));
+          },
+        });
+      } else hideToast(document.getElementById('toast'));
     };
     elm.onclick = act;
     elm.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } };
   });
+  root.querySelectorAll('.mc-at').forEach(b => {
+    b.onclick = () => {
+      if (medScreenStale(root, date, snapshot, () => after(b))) return;
+      openMedTimeEdit(b.dataset.atMed, b.dataset.atTime, date, b, () => after(b));
+    };
+  });
+}
+
+/* 更正服药时间是独立子任务；未保存关闭不改数据，存储失败保留输入。 */
+function openMedTimeEdit(medId, time, date, returnEl, onDone) {
+  const status = Store.medStatusOn(date);
+  const item = status.items.find(i => i.medId === medId && i.time === time);
+  if (!item || !item.taken) { toast('这一次还没有核对，请先点一下核对'); return; }
+  const snapshot = JSON.stringify(status);
+  const isToday = date === Store.today();
+  const onTimeOK = !isToday || time <= Store.timeStr();
+  const node = nodeFromHTML(`
+    <div class="vital-form">
+      <p class="muted" style="margin-bottom:0.4rem">${esc(dayLabel(date))} · ${esc(item.name)} · ${esc(time)} 那次</p>
+      <div class="today-summary">现在记的是：${item.at ? esc(item.at) + ' 吃的' : '没记时间'}</div>
+      ${onTimeOK ? `<button type="button" class="btn ghost block" id="mt-ontime" style="margin-top:0.6rem">按时吃的（${esc(time)}）</button>` : ''}
+      <div class="field" style="margin:0.8rem 0 0.6rem">
+        <label for="mt-time">或者填几点吃的</label>
+        <input id="mt-time" type="time" value="${esc(item.at || '')}">
+      </div>
+      <button type="button" class="btn block" id="mt-save">保存这个时间</button>
+      <button type="button" class="btn outline block" id="mt-clear" style="margin-top:0.6rem">记不清了，不记时间</button>
+      <div class="muted" style="margin-top:0.6rem">默认记下点核对时的时间。不是那时吃的，请改为实际时间；记不清可以不记。</div>
+    </div>`);
+  hideToast(document.getElementById('toast'));
+  const close = openModal('几点吃的', node);
+  const mask = topOverlay();
+  /* 原行可能已被重画，returnFocusTarget 按药物和排定时间找回新节点。 */
+  mask._returnFocus = returnEl;
+  if (isToday) mask._dayBound = date;
+  const commit = hhmm => {
+    if (!close.active()) return;
+    const crossed = isToday && date !== Store.today();
+    refreshIfStale();
+    if (crossed) {
+      close();
+      toast('已经是新的一天了，请回到今天的核对表查看');
+      return;
+    }
+    /* 自动同步可能已经换了 Store；只靠 save() 的磁盘冲突检查拦不住旧表单覆盖新时间。 */
+    if (snapshot !== JSON.stringify(Store.medStatusOn(date))) {
+      showError(node, '记录刚在别的页面更新过，本次没有改时间。请关闭这个窗口，看一眼记录后再改。');
+      return;
+    }
+    if (!stored(Store.setMedTakenAt(medId, time, date, hhmm))) return;
+    close();
+    onDone();
+    toast(hhmm ? `已改成 ${hhmm} 吃的` : '已改为不记时间');
+  };
+  const onTimeBtn = node.querySelector('#mt-ontime');
+  if (onTimeBtn) onTimeBtn.onclick = () => commit(time);
+  const save = () => {
+    clearFieldErrors(node);
+    const v = node.querySelector('#mt-time').value;
+    if (!v) { fieldError('mt-time', '请选择几点几分吃的。'); return; }
+    commit(v);
+  };
+  node.querySelector('#mt-save').onclick = save;
+  node.querySelector('#mt-clear').onclick = () => commit('');
+  bindEnterFlow([node.querySelector('#mt-time')], save);
 }
 
 function renderMeds() {
@@ -62,7 +159,7 @@ function renderMeds() {
   } else if (!todayItems.length) {
     checkHTML = '<div class="empty-tip">今天没有需要核对的药。<br>（清单里的药都已停用，或还没到开始服用的日期）</div>';
   } else {
-    checkHTML = medCheckListHTML(todayItems);
+    checkHTML = medCheckListHTML(todayItems, Store.today());
   }
 
   /* 今日核对：把"还差几次"说在最前面，患者不用去数勾了几个 */
@@ -91,7 +188,7 @@ function renderMeds() {
   }
 
   let html = `
-  ${pageHeading('用药核对', '按医生处方服药，吃完再做标记。')}
+  ${pageHeading('用药核对', '按医生处方服药。吃完点一下，默认记下现在；不是刚吃的可以改时间。')}
   <div class="card">
     <h2 class="card-title">今日服药核对 <span class="card-meta">吃完点一下</span></h2>
     ${todayLine}
@@ -228,22 +325,39 @@ function openMedDay(date) {
   const allDone = items.length > 0 && items.every(i => i.taken);
   node.innerHTML = `
     <p class="muted" style="margin-bottom:0.5rem">${esc(hint)}</p>
-    <div class="med-day-list">${medCheckListHTML(items)}</div>
+    <div class="med-day-list">${medCheckListHTML(items, date)}</div>
     <button class="btn ghost block" id="med-day-all" style="margin-top:0.6rem"${allDone ? ' hidden' : ''}>这天的都吃了</button>`;
   const close = openModal(title, node);
   /* 绑定到今天的核对弹窗：过夜到第二天再点，会记到已经过去的昨天且标题仍写“今天”。
      记下打开时的日期，跨天时由 refreshIfStale 关掉它，逼用户回到今天重开。 */
   if (isToday) topOverlay()._dayBound = date;
   const allBtn = node.querySelector('#med-day-all');
-  bindMedChecks(node, date, elm => {
-    const taken = Store.isMedTaken(elm.dataset.med, elm.dataset.time, date);
-    elm.classList.toggle('checked', taken);
-    elm.setAttribute('aria-checked', String(taken));
-    elm.querySelector('.mc-box').textContent = taken ? '✓' : '';
-    allBtn.hidden = Store.medStatusOn(date).items.every(i => i.taken);
+  const list = node.querySelector('.med-day-list');
+  let snapshot;
+  const paint = () => {
+    const status = Store.medStatusOn(date);
+    snapshot = JSON.stringify(status);
+    list.innerHTML = medCheckListHTML(status.items, date);
+    bindMedChecks(list, date, afterChange);
+    allBtn.hidden = !status.items.length || status.items.every(i => i.taken);
+  };
+  /* 更新清单时保留当前核对行的焦点；子任务关闭后由 returnFocusTarget 找回新节点。 */
+  const afterChange = elm => {
+    const wasRow = elm && elm.classList.contains('med-check') && document.activeElement === elm;
+    paint();
+    if (wasRow) {
+      const row = [...list.querySelectorAll('.med-check')].find(r => r.dataset.med === elm.dataset.med && r.dataset.time === elm.dataset.time);
+      if (row) row.focus({ preventScroll: true });
+    }
     render(currentView, { keepScroll: true });
+  };
+  paint();
+  close.onResume(() => {
+    if (isToday && date !== Store.today()) { refreshIfStale(); close(); return; }
+    paint();
   });
   allBtn.onclick = () => {
+    if (medScreenStale(list, date, snapshot, () => afterChange())) return;
     /* 记下本次将新勾上的键，供“撤销”只回退这几项（原已核对的保留） */
     const added = Store.medStatusOn(date).items.filter(i => !i.taken).map(i => ({ medId: i.medId, time: i.time }));
     if (!added.length) return;

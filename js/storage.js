@@ -41,6 +41,7 @@ const Store = (() => {
     meds: [],            // {id, name, dose, times:['08:00'], note, from, to, trackFrom, timesHistory, previousCourseId}
     medLog: {},          // 'YYYY-MM-DD' -> { 'medId@time': true }
     medLate: {},         // 'YYYY-MM-DD' -> { 'medId@time': true }  事后补记标记（并行于 medLog，旧版读不到只丢标记）
+    medAt: {},           // 'YYYY-MM-DD' -> { 'medId@time': 'HH:MM' }  实际服药时间（当天核对时记下、可改；补记/一键核对不记）
     vitals: {
       bp: [],            // {id, date, time, sys, dia, pulse}
       glucose: [],       // {id, date, time, gtype, value}
@@ -215,6 +216,19 @@ const Store = (() => {
         if (liveMedIds.has(id) && validTime(tm) && raw.medLate[d][k] === true && out.medLog[d][`${id}@${tm}`] === true) day[`${id}@${tm}`] = true;
       });
       if (Object.keys(day).length) out.medLate[d] = day;
+    });
+
+    /* medAt（实际服药时间）：值必须是合法 HH:MM，且同日同键在 medLog 里为 true；孤立的丢弃。 */
+    out.medAt = Object.create(null);
+    if (isObj(raw.medAt)) recentDateKeys(raw.medAt).forEach(d => {
+      if (!isObj(raw.medAt[d]) || !out.medLog[d]) return;
+      const day = Object.create(null);
+      Object.keys(raw.medAt[d]).slice(0, BACKUP_LIMITS.medChecksPerDay).forEach(k => {
+        const at = k.lastIndexOf('@');
+        const id = k.slice(0, at), tm = k.slice(at + 1);
+        if (liveMedIds.has(id) && validTime(tm) && validTime(raw.medAt[d][k]) && out.medLog[d][`${id}@${tm}`] === true) day[`${id}@${tm}`] = raw.medAt[d][k];
+      });
+      if (Object.keys(day).length) out.medAt[d] = day;
     });
 
     /* 旧数据推断 trackFrom（登记起点）：缺 trackFrom 的药按 最早核对日 E → today() 取值，不回退 from。
@@ -554,7 +568,7 @@ const Store = (() => {
   }
   function removeMed(id) {
     data.meds = data.meds.filter(m => m.id !== id);
-    [data.medLog, data.medLate].forEach(store => {
+    [data.medLog, data.medLate, data.medAt].forEach(store => {
       Object.keys(store).forEach(d => {
         Object.keys(store[d] || {}).forEach(k => {
           if (k.startsWith(id + '@')) delete store[d][k];
@@ -621,27 +635,66 @@ const Store = (() => {
   function isMedTaken(medId, time, date = today()) {
     return !!(data.medLog[date] && data.medLog[date][medKey(medId, time)]);
   }
-  function toggleMed(medId, time, date = today()) {
-    /* 拒绝：日期非法、晚于今天、该药不在 medsOn（登记前/停用）、时间点不在当天排期。 */
+  /* 实际服药时间 'HH:MM'；没记（补记、一键核对、选了“记不清”）返回 ''。 */
+  function medTakenAt(medId, time, date = today()) {
+    const v = data.medAt[date] && data.medAt[date][medKey(medId, time)];
+    return validTime(v) ? v : '';
+  }
+  /* 删掉某天某键的补记标记与实际时间（取消核对时与 medLog 同删），空日期键一并删。 */
+  function dropMedExtras(date, k) {
+    [data.medLate, data.medAt].forEach(store => {
+      if (!store[date]) return;
+      delete store[date][k];
+      if (!Object.keys(store[date]).length) delete store[date];
+    });
+  }
+  function toggleMed(medId, time, date) {
+    /* 日期与时分取同一个动作瞬间，避免正好过零点时拼出“昨天 00:00”。 */
+    const now = new Date(), td = dateStr(now);
+    if (date === undefined) date = td;
     actionErrorMessage = '';
-    if (!validDate(date) || date > today()) return refuse('还没到这一天，不能先核对');
+    if (!validDate(date) || date > td) return refuse('还没到这一天，不能先核对');
     const m = medsOn(date).find(x => x.id === medId);
     if (!m || !timesOn(m, date).includes(time)) return refuse('这一次不在当天的服药安排里，请关闭后重新打开');
     if (!data.medLog[date]) data.medLog[date] = {};
     const k = medKey(medId, time);
     if (data.medLog[date][k]) {
       delete data.medLog[date][k];
-      if (data.medLate[date]) { delete data.medLate[date][k]; if (!Object.keys(data.medLate[date]).length) delete data.medLate[date]; }
+      dropMedExtras(date, k);
       if (!Object.keys(data.medLog[date]).length) delete data.medLog[date];
     } else {
       data.medLog[date][k] = true;
-      /* 补记 = date < today() 时的核对；今天的核对（哪怕晚点）不算补记。 */
-      if (date < today()) { if (!data.medLate[date]) data.medLate[date] = {}; data.medLate[date][k] = true; }
+      /* 今天单次核对默认记当前时间，可由用户更正；过去补记只记核对，不推测服药时刻。 */
+      if (date < td) { if (!data.medLate[date]) data.medLate[date] = {}; data.medLate[date][k] = true; }
+      else { if (!data.medAt[date]) data.medAt[date] = {}; data.medAt[date][k] = timeStr(now); }
     }
     return save();
   }
+  /* 改实际服药时间：hhmm='' 清掉时间、保留核对。先校验再改（硬约定 16）；
+     排期校验与 toggleMed 相同，过去按 timesHistory，今天不能写入晚于此刻的时间。 */
+  function setMedTakenAt(medId, time, date, hhmm) {
+    const now = new Date(), td = dateStr(now);
+    actionErrorMessage = '';
+    if (!validDate(date) || date > td) return refuse('还没到这一天，不能先记时间');
+    const m = medsOn(date).find(x => x.id === medId);
+    if (!m || !timesOn(m, date).includes(time)) return refuse('这一次不在当天的服药安排里，请关闭后重新打开');
+    if (!isMedTaken(medId, time, date)) return refuse('这一次还没有核对，请先点一下核对，再改时间');
+    const k = medKey(medId, time);
+    if (hhmm === '') {
+      if (!data.medAt[date] || !data.medAt[date][k]) return true;
+      delete data.medAt[date][k];
+      if (!Object.keys(data.medAt[date]).length) delete data.medAt[date];
+      return save();
+    }
+    if (!validTime(hhmm)) return refuse('请选择几点几分吃的');
+    if (date === td && hhmm > timeStr(now)) return refuse('吃药的时间不能晚于现在，请核对一下');
+    if (!data.medAt[date]) data.medAt[date] = {};
+    data.medAt[date][k] = hhmm;
+    return save();
+  }
   /* 一键把某天应服的全部标为已核对（“这天的都吃了”），一次 save。
-     只给**本次新勾上**的键写 medLate（过去日才写），原已核对的不动。成功返回 true；
+     只给**本次新勾上**的键写 medLate（过去日才写），原已核对的不动。一键核对**不记实际时间**
+     （各次多半不是同一刻吃的，记成同一个时刻就是假数据）。成功返回 true；
      本次新勾的键列表另由 medStatusOn 前后比对取得（调用方自行记录以供“撤销”）。 */
   function checkAllMedsOn(date) {
     actionErrorMessage = '';
@@ -659,7 +712,7 @@ const Store = (() => {
     return save();
   }
   /* 撤销一批核对（供“这天的都吃了”后的“撤销”用）：只回退传入的键、一次 save。
-     仍被核对的键才删（幂等：再点已无可删则视作成功、不写盘）。medLog 与 medLate 同删。 */
+     仍被核对的键才删（幂等：再点已无可删则视作成功、不写盘）。medLog、medLate、medAt 同删。 */
   function uncheckMedsOn(date, pairs) {
     actionErrorMessage = '';
     if (!validDate(date) || date > today()) return refuse('还没到这一天，不能先核对');
@@ -670,10 +723,9 @@ const Store = (() => {
       const k = medKey(p.medId, p.time);
       if (!data.medLog[date][k]) return;
       delete data.medLog[date][k];
-      if (data.medLate[date]) delete data.medLate[date][k];
+      dropMedExtras(date, k);
       changed = true;
     });
-    if (data.medLate[date] && !Object.keys(data.medLate[date]).length) delete data.medLate[date];
     if (!Object.keys(data.medLog[date]).length) delete data.medLog[date];
     return changed ? save() : true;
   }
@@ -731,7 +783,7 @@ const Store = (() => {
   function medStatusOn(date) {
     const items = [];
     medsOn(date).forEach(m => timesOn(m, date).forEach(t => {
-      items.push({ medId: m.id, name: m.name, dose: m.dose || '', note: m.note || '', time: t, taken: isMedTaken(m.id, t, date) });
+      items.push({ medId: m.id, name: m.name, dose: m.dose || '', note: m.note || '', time: t, taken: isMedTaken(m.id, t, date), at: medTakenAt(m.id, t, date) });
     }));
     items.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
     const beforeTracking = items.length === 0 && data.meds.some(m =>
@@ -828,6 +880,20 @@ const Store = (() => {
     if (stp.length) {
       lines.push('■ 已停用的药');
       stp.forEach(m => lines.push(`  ${m.name} ${m.dose || ''} ${m.from || '?'} 至 ${m.to} 停用 ${m.note || ''}`.replace(/\s+$/, '')));
+      lines.push('');
+    }
+
+    /* 独立于当前在吃的药：即使全部停用，最近已记下的时间仍应提供给医生。 */
+    const atLines = [];
+    recentDates(7).reverse().forEach(date => {
+      const parts = medStatusOn(date).items.filter(i => i.taken && i.at)
+        .map(i => `${i.name} ${i.time} 那次 ${i.at} 吃`);
+      if (parts.length) atLines.push(`  ${date}  ${parts.join('；')}`);
+    });
+    if (atLines.length) {
+      lines.push('■ 近7天实际服药时间（患者自行记录）');
+      lines.push('  默认采用当天点核对时的时间，可手动更正；未记时间的核对不列出，不代表未服药。');
+      atLines.forEach(l => lines.push(l));
       lines.push('');
     }
 
@@ -1014,6 +1080,7 @@ const Store = (() => {
     [
       ['medLog', BACKUP_LIMITS.medChecksPerDay, '单日服药核对数量'],
       ['medLate', BACKUP_LIMITS.medChecksPerDay, '单日服药补记数量'],
+      ['medAt', BACKUP_LIMITS.medChecksPerDay, '单日服药时间数量'],
       ['exerciseLog', BACKUP_LIMITS.exercisesPerDay, '单日训练记录数量'],
       ['gameLog', BACKUP_LIMITS.gamesPerDay, '单日游戏记录数量'],
     ].forEach(([key, perDay, label]) => {
@@ -1155,7 +1222,7 @@ const Store = (() => {
     logExercise, unlogExercise, exercisesDoneToday, isExDone, streak, bestStreak, lastExerciseDate,
     exercisesOn, exerciseDaysTotal, activeDates, exerciseCalendar,
     logGame, logGameExercise, gamesOn,
-    addMed, updateMed, removeMed, isMedTaken, toggleMed, checkAllMedsOn, uncheckMedsOn, medProgressToday, adherence7d, medAdherence,
+    addMed, updateMed, removeMed, isMedTaken, medTakenAt, setMedTakenAt, toggleMed, checkAllMedsOn, uncheckMedsOn, medProgressToday, adherence7d, medAdherence,
     stopMed, undoStopMed, restartMed, canUndoStop, isMedStopped, medsOn, activeMeds, stoppedMeds, medCountOn,
     medFullDays, medStatusOn, medHistory,
     addVital, removeVital, updateVital, vitalsSorted, bpToday, vitalDelta,

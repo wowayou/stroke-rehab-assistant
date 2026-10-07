@@ -101,6 +101,8 @@ assert(!/localStorage|indexedDB/.test(swCode), 'sw.js 不得碰健康数据');
 assert(/location\.protocol === 'https:'/.test(app) && /serviceWorker\.register\('sw\.js'\)/.test(app), '离线缓存只在 HTTPS 线上注册（本地 http 预览不注册，免得改了代码刷新拿旧文件）');
 [
   [/data-med="\$\{esc\(/, /data-med="\$\{(?!esc\()/, 'med'],
+  [/data-at-med="\$\{esc\(/, /data-at-med="\$\{(?!esc\()/, 'at-med'],
+  [/data-at-time="\$\{esc\(/, /data-at-time="\$\{(?!esc\()/, 'at-time'],
   [/data-del="\$\{esc\(/, /data-del="\$\{(?!esc\()/, 'del'],
   [/data-day="\$\{esc\(/, /data-day="\$\{(?!esc\()/, 'day'],
   [/data-exday="\$\{esc\(/, /data-exday="\$\{(?!esc\()/, 'exday'],
@@ -118,6 +120,8 @@ const storage = read('js/storage.js');
 assert(!/=\s*'late'/.test(storage), 'medLog 不得存非 true 值（事后补记单独记 medLate）');
 assert(/medLate: \{\}/.test(storage), 'defaults() 必须声明并行的 medLate 字段');
 assert(/\['medLate', BACKUP_LIMITS\.medChecksPerDay/.test(storage), 'medLate 必须纳入 validateBackupLimits 限额');
+assert(/medAt: \{\}/.test(storage), '实际服药时间单独存 medAt，不改变 medLog 的 true 值');
+assert(/\['medAt', BACKUP_LIMITS\.medChecksPerDay/.test(storage), 'medAt 必须纳入备份限额');
 assert(/'toast-action'/.test(app) && /has-action/.test(app), 'toast 撤销动作按钮按现有惯例登记（toast-action / has-action）');
 assert((app.match(/whenOf\('/g) || []).length >= 3, '三个保存都要经 whenOf() 取记录时间');
 assert(/e\.isComposing/.test(app), '回车处理必须避开中文输入法组字（isComposing）');

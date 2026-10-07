@@ -696,6 +696,158 @@ async function runBackfillRegression(cdp) {
   await closeAll(cdp);
   console.log('PASS  真实超时回收焦点、隐藏撤销不可键盘/无障碍树访问、数据持久化、新提示恢复可用（AC4.4）');
 
+  // 1e. v0.2.36：今天核对记下实际服药时间；提示条/行尾按钮可改（按时 / 自己填 / 记不清）；补记的过去日不出时间按钮。
+  const atSeed = await cdp.eval(`(() => {
+    localStorage.removeItem('strokeRehab.recovery.v1');
+    localStorage.removeItem('strokeRehab.v1');
+    Store.load();
+    Store.addMed({ name: '时间回归药', times: ['00:00'] });   // 00:00 永远不晚于此刻：「按时吃的」任何时候都出现
+    const m = Store.data.meds[0];
+    m.from = Store.addDays(Store.today(), -5); m.trackFrom = Store.addDays(Store.today(), -5);
+    Store.save();
+    return { id: m.id, y: Store.addDays(Store.today(), -1) };
+  })()`);
+  await closeAll(cdp);
+  await cdp.eval("App.go('today'); App.go('meds')");
+  await click(cdp, '.med-check');
+  await waitFor(cdp, "document.querySelector('#toast.show .toast-action') && document.querySelector('#toast').textContent.includes('吃的')", '核对后提示条带「改时间」');
+  const atRecorded = await cdp.eval(`Store.medTakenAt('${atSeed.id}', '00:00')`);
+  assert(/^\d{2}:\d{2}$/.test(atRecorded), '今天核对记下点击时刻');
+  assert(await cdp.eval(`document.querySelector('#toast').textContent.includes('${atRecorded}')`), '提示条写明记下的时间');
+  assert(await cdp.eval(`document.querySelector('.mc-taken-at').textContent.includes('${atRecorded} 吃的')`), '药名下方显示几点吃的');
+  assert(await cdp.eval("document.querySelector('.mc-taken-at').getBoundingClientRect().top >= document.querySelector('.mc-name').getBoundingClientRect().bottom"), '实际时间位于药名下方');
+  assert(await cdp.eval("(() => { const r = document.querySelector('.mc-at').getBoundingClientRect(); return r.width >= 48 && r.height >= 48; })()"), '行尾时间按钮 ≥48px');
+  const atURL = await cdp.eval('location.href');
+  await click(cdp, '#toast .toast-action');
+  await waitFor(cdp, "document.querySelector('#mt-time')", '点「改时间」打开小弹窗');
+  await cdp.eval("document.querySelector('#mt-time').value = '00:00'");
+  await click(cdp, '#mt-save');
+  await waitFor(cdp, "!document.querySelector('.modal-mask')", '保存后关闭');
+  assert.strictEqual(await cdp.eval(`Store.medTakenAt('${atSeed.id}', '00:00')`), '00:00', '填写的时间已保存');
+  assert.strictEqual(await cdp.eval('location.href'), atURL, '改时间后 URL 不变');
+  assert(await cdp.eval(`document.activeElement && document.activeElement.dataset.med === '${atSeed.id}'`), '关闭后焦点回同一行');
+  assert(await cdp.eval("document.querySelector('.mc-taken-at').textContent.includes('00:00 吃的')"), '核对行同步为新时间');
+  await clickAndWait(cdp, '.mc-at', "document.querySelector('#mt-clear')", '行尾按钮打开小弹窗');
+  await click(cdp, '#mt-clear');
+  await waitFor(cdp, "!document.querySelector('.modal-mask')", '记不清后关闭');
+  assert.strictEqual(await cdp.eval(`Store.medTakenAt('${atSeed.id}', '00:00')`), '', '记不清：时间清空');
+  assert(await cdp.eval(`Store.isMedTaken('${atSeed.id}', '00:00')`), '记不清：核对保留');
+  assert(await cdp.eval("document.querySelector('.mc-at').textContent.includes('记下时间')"), '清空后行尾改成「记下时间」');
+  await clickAndWait(cdp, '.mc-at', "document.querySelector('#mt-ontime')", '再次打开小弹窗');
+  await cdp.eval('history.back()');
+  await waitFor(cdp, "!document.querySelector('.modal-mask')", '返回键关小弹窗');
+  assert.strictEqual(await cdp.eval('location.href'), atURL, '返回键只关小弹窗、不离开页面');
+  await clickAndWait(cdp, '.mc-at', "document.querySelector('#mt-ontime')", '第三次打开小弹窗');
+  await click(cdp, '#mt-ontime');
+  await waitFor(cdp, "!document.querySelector('.modal-mask')", '按时吃的后关闭');
+  assert.strictEqual(await cdp.eval(`Store.medTakenAt('${atSeed.id}', '00:00')`), '00:00', '按时吃的：记成排定时间');
+
+  // 新时间表单的写盘失败、回车与重复提交边界。
+  await clickAndWait(cdp, '.mc-at', "document.querySelector('#mt-save')", '准备时间保存失败');
+  await cdp.eval(`window.__medSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function(k, v) { if (k === 'strokeRehab.v1') throw new Error('QuotaExceededError'); return window.__medSetItem.call(this, k, v); };
+    document.querySelector('#mt-time').value = '00:00';`);
+  await click(cdp, '#mt-save');
+  await waitFor(cdp, "document.querySelector('.save-feedback')?.textContent.includes('没有保存成功')", '时间写盘失败持续提示');
+  assert.strictEqual(await cdp.eval("document.querySelector('#mt-time').value"), '00:00', '时间写盘失败保留输入');
+  assert.strictEqual(await cdp.eval(`Store.medTakenAt('${atSeed.id}', '00:00')`), '00:00', '时间写盘失败数据不变');
+  await cdp.eval('Storage.prototype.setItem = window.__medSetItem;');
+  await cdp.eval(`document.querySelector('#mt-time').focus();
+    document.querySelector('#mt-time').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true }));`);
+  assert(await cdp.eval("!!document.querySelector('#mt-time')"), '组字回车不保存时间');
+  await pressKey(cdp, 'Enter');
+  await waitFor(cdp, "!document.querySelector('#mt-time')", '写盘恢复后回车可重试保存');
+  await clickAndWait(cdp, '.mc-at', "document.querySelector('#mt-save')", '准备连续保存');
+  await cdp.eval(`window.__medSetAt = Store.setMedTakenAt; window.__medSaveCount = 0;
+    Store.setMedTakenAt = (...args) => { window.__medSaveCount++; return window.__medSetAt(...args); };`);
+  await rapidDoubleClick(cdp, '#mt-save');
+  await waitFor(cdp, "!document.querySelector('#mt-time')", '双击保存关闭');
+  assert.strictEqual(await cdp.eval('__medSaveCount'), 1, '连续点击只保存一次');
+  await cdp.eval('Store.setMedTakenAt = window.__medSetAt;');
+
+  // 历史→今天核对→改时间：四种退出均只关第三层，草稿不落盘，焦点回常驻按钮。
+  const atToday = await cdp.eval('Store.today()');
+  await clickAndWait(cdp, '#btn-med-hist', `document.querySelector('#med-day-${atToday}')`, '时间测试打开父历史');
+  await clickAndWait(cdp, `#med-day-${atToday}`, "document.querySelector('.modal-mask:not([inert]) .mc-at')", '时间测试打开今天');
+  for (const mode of ['close', 'escape', 'mask', 'back']) {
+    await clickAndWait(cdp, '.modal-mask:not([inert]) .mc-at', "document.querySelector('#mt-time')", '嵌套时间编辑 ' + mode);
+    assert.strictEqual(await cdp.eval('document.querySelectorAll(".modal-mask").length'), 3, '保留两层父窗口');
+    await cdp.eval("document.querySelector('#mt-time').value = '00:01'");
+    if (mode === 'close') await click(cdp, '.modal-close');
+    else if (mode === 'escape') await pressKey(cdp, 'Escape');
+    else if (mode === 'back') await cdp.eval('history.back()');
+    else {
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 2, y: 2, button: 'left', clickCount: 1 });
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 2, y: 2, button: 'left', clickCount: 1 });
+    }
+    await waitFor(cdp, 'document.querySelectorAll(".modal-mask").length === 2', '只关第三层 ' + mode);
+    assert.strictEqual(await cdp.eval(`Store.medTakenAt('${atSeed.id}', '00:00')`), '00:00', '关闭不保存时间草稿 ' + mode);
+    assert(await cdp.eval(`document.activeElement.dataset.atMed === '${atSeed.id}'`), '返回焦点在同一次服药的时间按钮 ' + mode);
+    assert.strictEqual(await cdp.eval('location.href'), atURL, '关闭不离开当前页面 ' + mode);
+  }
+  await closeAll(cdp);
+
+  // 窄屏/三档字号：常驻按钮不能把药名挤成窄列，时间文字与输入都不能溢出。
+  await cdp.eval(`Store.updateMed('${atSeed.id}', { name: '时间回归药物长名称测试（仅用于布局）' }); App.go('today'); App.go('meds');`);
+  for (const width of [320, 360, 390]) for (const font of ['normal', 'large', 'xlarge']) {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: true });
+    await cdp.eval(`document.documentElement.dataset.font = '${font}'`);
+    assert(await cdp.eval('document.documentElement.scrollWidth <= innerWidth'), `${width}/${font} 核对页无横向溢出`);
+    assert(await cdp.eval("document.querySelector('.mc-at').closest('[role=checkbox]') === null"), '修改按钮不嵌在 checkbox 里面');
+    if (width <= 380) assert(await cdp.eval("document.querySelector('.mc-body').getBoundingClientRect().width >= parseFloat(getComputedStyle(document.querySelector('.mc-name')).fontSize) * 5"), `${width}/${font} 药名不被按钮挤窄`);
+    const shotName = `/tmp/rehab-medat-${width}-${font}`;
+    if (cliArgs.includes('--screenshots') && (width === 320 || width === 390) && font === 'xlarge') {
+      await cdp.eval('window.scrollTo(0, 0)');
+      const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
+      fs.writeFileSync(shotName + '-list.png', Buffer.from(shot.data, 'base64'));
+    }
+    await clickAndWait(cdp, '.mc-at', "document.querySelector('#mt-time')", '布局时间编辑');
+    await cdp.eval("Promise.all(document.getAnimations().filter(a => a.effect?.target?.matches('.modal-mask, .modal-panel')).map(a => a.finished.catch(() => {}))).then(() => true)");
+    assert(await cdp.eval("(() => { const p = document.querySelector('.modal-mask:not([inert]) .modal-panel'); return p.scrollWidth <= p.clientWidth; })()"), `${width}/${font} 时间编辑无横向溢出`);
+    assert(await cdp.eval("[...document.querySelectorAll('.modal-mask:not([inert]) button, #mt-time')].every(el => { const r = el.getBoundingClientRect(); return r.width >= 48 && r.height >= 48; })"), `${width}/${font} 时间编辑控件 ≥48px`);
+    if (cliArgs.includes('--screenshots') && (width === 320 || width === 390) && font === 'xlarge') {
+      const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
+      fs.writeFileSync(shotName + '-edit.png', Buffer.from(shot.data, 'base64'));
+    }
+    await closeAll(cdp);
+  }
+  await cdp.eval("document.documentElement.dataset.font = 'normal'");
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  if (stressMode) {
+    const timeHistory = await cdp.eval('history.length');
+    for (let i = 0; i < 20; i++) {
+      await clickAndWait(cdp, '.mc-at', "document.querySelector('#mt-time')", '时间窗口压力打开');
+      await cdp.eval('history.back()');
+      await waitFor(cdp, "!document.querySelector('#mt-time')", '时间窗口压力返回');
+    }
+    assert(await cdp.eval('history.length') <= timeHistory + 1, '20 轮时间窗口历史条目不累积');
+  }
+
+  await click(cdp, '.med-check');   // 取消核对
+  await waitFor(cdp, "!document.querySelector('.mc-at')", '取消核对后时间按钮消失');
+  assert(await cdp.eval(`!Store.data.medAt[Store.today()]`), '取消核对后实际时间同删');
+  assert(await cdp.eval("!document.querySelector('#toast.show.has-action')"), '取消核对后不留已服药的过期提示');
+  await click(cdp, '.med-check');
+  await cdp.eval("toast('普通反馈测试')");
+  assert(await cdp.eval("!document.querySelector('#toast').classList.contains('has-action') && getComputedStyle(document.querySelector('#toast')).pointerEvents === 'none'"), '普通提示替换动作提示后不再拦截下面的点击');
+  await click(cdp, '.med-check');
+  await click(cdp, '.med-check');
+  await cdp.eval("App.go('today')");
+  await click(cdp, '#toast .toast-action');
+  assert(await cdp.eval("!document.querySelector('#mt-time') && document.querySelector('.nav-item.active').dataset.view === 'today'"), '切页后旧提示不能打开编辑或重画错误的页面');
+  assert(await cdp.eval("document.querySelector('#toast.show').textContent.includes('请回到用药核对表')"), '旧提示触发的新说明不会被一起隐藏');
+  await cdp.eval("App.go('meds')");
+  await click(cdp, '.med-check');
+  await clickAndWait(cdp, '#btn-med-hist', `document.querySelector('#med-day-${atSeed.y}')`, '打开服药历史');
+  await clickAndWait(cdp, `#med-day-${atSeed.y}`, "document.querySelector('.modal-mask:not([inert]) .med-check')", '打开昨天补记');
+  await click(cdp, '.modal-mask:not([inert]) .med-check');
+  await waitFor(cdp, `Store.isMedTaken('${atSeed.id}', '00:00', '${atSeed.y}')`, '补记昨天');
+  assert(await cdp.eval("!document.querySelector('.modal-mask:not([inert]) .mc-at')"), '补记的过去日不出时间按钮');
+  assert.strictEqual(await cdp.eval(`Store.medTakenAt('${atSeed.id}', '00:00', '${atSeed.y}')`), '', '补记不记时间');
+  assert(await cdp.eval("document.activeElement && document.activeElement.classList.contains('med-check')"), '补记勾选后焦点留在该行');
+  await closeAll(cdp);
+  console.log('PASS  服药时间：提示/常驻入口、四路径嵌套返回、失败重试/回车/防连点、9组布局、过期提示与补记边界（v0.2.36）');
+
   // 2. 训练补记
   const yday = await cdp.eval('Store.addDays(Store.today(), -1)');
   await cdp.eval("App.go('train'); document.querySelector('#train-history').open = true;");

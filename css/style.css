@@ -543,6 +543,13 @@ input[aria-invalid="true"], select[aria-invalid="true"] { border: 2px solid var(
 .med-check .mc-name, .check-row .mc-name { font-weight: 600; font-size: 1.05rem; }
 .med-check .mc-dose, .check-row .mc-dose { font-size: 0.88rem; color: var(--text-2); }
 .med-check.checked .mc-name, .check-row.checked .mc-name { text-decoration: line-through; color: var(--text-2); }
+/* 时间文字属于核对信息；修改按钮在 checkbox 外，避免嵌套交互控件。 */
+.med-line { display: flex; align-items: center; gap: 0.5rem; border-bottom: 1px solid var(--border); }
+.med-line:last-child { border-bottom: none; }
+.med-line > .med-check { flex: 1; min-width: 0; border-bottom: none; }
+.mc-body { min-width: 0; word-wrap: break-word; overflow-wrap: anywhere; }
+.mc-taken-at { font-size: 0.95rem; color: var(--text-2); }
+.mc-at { flex: none; min-width: 48px; white-space: nowrap; }
 
 .med-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.65rem 0.1rem; border-bottom: 1px solid var(--border); }
 .med-item:last-child { border-bottom: none; }
@@ -792,6 +799,9 @@ body.overlay-open { overflow: hidden; }
 @media (max-width: 380px) {
   .check-item, .ex-item { display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: var(--space-2) var(--space-3); }
   .ci-action, .ex-start { grid-column: 2; justify-self: start; }
+  .med-line { flex-wrap: wrap; gap: 0; padding-bottom: var(--space-2); }
+  .med-line > .med-check { flex-basis: 100%; }
+  .mc-at { margin-left: calc(34px + 0.9rem); }
   .disclosure summary { flex-wrap: wrap; }
   .disclosure summary > span:first-child { flex-basis: 100%; }
   .disclosure-action { margin-left: auto; }
