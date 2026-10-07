@@ -789,14 +789,18 @@ async function runBackfillRegression(cdp) {
 
   // 窄屏/三档字号：常驻按钮不能把药名挤成窄列，时间文字与输入都不能溢出。
   await cdp.eval(`Store.updateMed('${atSeed.id}', { name: '时间回归药物长名称测试（仅用于布局）' }); App.go('today'); App.go('meds');`);
-  for (const width of [320, 360, 390]) for (const font of ['normal', 'large', 'xlarge']) {
+  for (const width of [320, 360, 375, 390, 393, 412, 430, 460]) for (const font of ['normal', 'large', 'xlarge']) {
     await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: true });
     await cdp.eval(`document.documentElement.dataset.font = '${font}'`);
     assert(await cdp.eval('document.documentElement.scrollWidth <= innerWidth'), `${width}/${font} 核对页无横向溢出`);
     assert(await cdp.eval("document.querySelector('.mc-at').closest('[role=checkbox]') === null"), '修改按钮不嵌在 checkbox 里面');
-    if (width <= 380) assert(await cdp.eval("document.querySelector('.mc-body').getBoundingClientRect().width >= parseFloat(getComputedStyle(document.querySelector('.mc-name')).fontSize) * 5"), `${width}/${font} 药名不被按钮挤窄`);
+    const medLayout = await cdp.eval(`(() => { const at = document.querySelector('.mc-at').getBoundingClientRect(), row = document.querySelector('.med-check').getBoundingClientRect(), name = parseFloat(getComputedStyle(document.querySelector('.mc-name')).fontSize); return { stacked: at.top >= row.bottom - 1, em: document.querySelector('.mc-body').getBoundingClientRect().width / name, atW: at.width, atH: at.height }; })()`);
+    if (process.env.MED_LAYOUT_LOG) console.log(`LAYOUT ${width}/${font} ${medLayout.stacked ? 'stacked' : 'side'} ${medLayout.em.toFixed(1)}字宽`);
+    assert(medLayout.stacked || medLayout.em >= 8, `${width}/${font} 按钮要么另起一行，要么药名列不少于 8 个字宽（实测 ${medLayout.em.toFixed(1)}）`);
+    assert(medLayout.atW >= 48 && medLayout.atH >= 48, `${width}/${font} 时间按钮 ≥48px`);
+    if (medLayout.stacked) assert(await cdp.eval("Math.abs(document.querySelector('.mc-at').getBoundingClientRect().left - document.querySelector('.mc-body').getBoundingClientRect().left) <= 1"), `${width}/${font} 另起一行的按钮与药名文字左对齐`);
     const shotName = `/tmp/rehab-medat-${width}-${font}`;
-    if (cliArgs.includes('--screenshots') && (width === 320 || width === 390) && font === 'xlarge') {
+    if (cliArgs.includes('--screenshots') && (width === 320 || width === 390 || width === 412) && font === 'xlarge') {
       await cdp.eval('window.scrollTo(0, 0)');
       const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
       fs.writeFileSync(shotName + '-list.png', Buffer.from(shot.data, 'base64'));
@@ -805,7 +809,7 @@ async function runBackfillRegression(cdp) {
     await cdp.eval("Promise.all(document.getAnimations().filter(a => a.effect?.target?.matches('.modal-mask, .modal-panel')).map(a => a.finished.catch(() => {}))).then(() => true)");
     assert(await cdp.eval("(() => { const p = document.querySelector('.modal-mask:not([inert]) .modal-panel'); return p.scrollWidth <= p.clientWidth; })()"), `${width}/${font} 时间编辑无横向溢出`);
     assert(await cdp.eval("[...document.querySelectorAll('.modal-mask:not([inert]) button, #mt-time')].every(el => { const r = el.getBoundingClientRect(); return r.width >= 48 && r.height >= 48; })"), `${width}/${font} 时间编辑控件 ≥48px`);
-    if (cliArgs.includes('--screenshots') && (width === 320 || width === 390) && font === 'xlarge') {
+    if (cliArgs.includes('--screenshots') && (width === 320 || width === 390 || width === 412) && font === 'xlarge') {
       const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
       fs.writeFileSync(shotName + '-edit.png', Buffer.from(shot.data, 'base64'));
     }

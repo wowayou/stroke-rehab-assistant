@@ -26,7 +26,7 @@ function medCheckListHTML(items, date) {
             ${it.taken && it.at ? `<div class="mc-taken-at">${esc(it.at)} 吃的</div>` : ''}
           </div>
         </div>
-        ${it.taken && (it.at || isToday) ? `<button type="button" class="btn small ghost mc-at" data-at-med="${esc(it.medId)}" data-at-time="${esc(it.time)}" aria-label="${esc(it.name)} ${esc(it.time)} 那次：${it.at ? esc(it.at) + ' 吃的' : '没记时间'}，点这里改">${it.at ? '改时间' : '记下时间'}</button>` : ''}
+        ${it.taken && (it.at || isToday) ? `<button type="button" class="btn small ghost mc-at" data-at-med="${esc(it.medId)}" data-at-time="${esc(it.time)}" aria-label="${it.at ? '改时间' : '记下时间'}：${esc(it.name)} ${esc(it.time)} 那次，${it.at ? '现在记的是 ' + esc(it.at) + ' 吃的' : '现在没记时间'}">${it.at ? '改时间' : '记下时间'}</button>` : ''}
       </div>`).join('')}
     </div>`).join('');
 }

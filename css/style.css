@@ -807,6 +807,18 @@ body.overlay-open { overflow: hidden; }
   .disclosure-action { margin-left: auto; }
 }
 
+/* 大字号下药名列会被行尾按钮挤到不足 8 个字宽：按钮同样另起一行（阈值按实测定，见 test/overlay.test.js 1e）。 */
+@media (max-width: 460px) {
+  html[data-font="xlarge"] .med-line { flex-wrap: wrap; gap: 0; padding-bottom: var(--space-2); }
+  html[data-font="xlarge"] .med-line > .med-check { flex-basis: 100%; }
+  html[data-font="xlarge"] .mc-at { margin-left: calc(34px + 0.9rem); }
+}
+@media (max-width: 400px) {
+  html[data-font="large"] .med-line { flex-wrap: wrap; gap: 0; padding-bottom: var(--space-2); }
+  html[data-font="large"] .med-line > .med-check { flex-basis: 100%; }
+  html[data-font="large"] .mc-at { margin-left: calc(34px + 0.9rem); }
+}
+
 @media (min-width: 600px) {
   .bottom-nav { max-width: var(--content-width); left: 50%; transform: translateX(-50%); border-radius: 16px 16px 0 0; border: 1px solid var(--border); border-bottom: none; }
   .modal-mask { align-items: center; padding: var(--space-6); }

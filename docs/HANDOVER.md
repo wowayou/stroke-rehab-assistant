@@ -5,7 +5,7 @@
 
 ## 本地工作（2026-10-06）
 
-**v0.2.36 已实现并完成本机回归，待独立 agent 验收；已提交到验收分支 `review/med-time-v0.2.36`（实现提交 `c219a1bf`），未合并 `main`、未部署**。基线 `1f98884`，`git diff 1f98884..review/med-time-v0.2.36` 即完整交付。交互标准见 [DESIGN-SYSTEM §5](DESIGN-SYSTEM.md#5-数据任务与反馈)，数据格式/API 见 [DEVELOPMENT §5–§6](DEVELOPMENT.md#5-数据模型localstorage)。仅处理服药时间，不扩展训练、血糖或跨零点归属。
+**v0.2.36 已实现并完成本机回归，独立验收已完成（2026-10-07，见下）；已提交到验收分支 `review/med-time-v0.2.36`（实现提交 `c219a1bf`），未合并 `main`、未部署**。基线 `1f98884`，`git diff 1f98884..review/med-time-v0.2.36` 即完整交付。交互标准见 [DESIGN-SYSTEM §5](DESIGN-SYSTEM.md#5-数据任务与反馈)，数据格式/API 见 [DEVELOPMENT §5–§6](DEVELOPMENT.md#5-数据模型localstorage)。仅处理服药时间，不扩展训练、血糖或跨零点归属。
 
 ### 验收方式（另一台机器）
 
@@ -22,7 +22,8 @@ node test/overlay.test.js --stress      # 需无头 Chromium；--screenshots 可
 - 已跑：`storage`、`contracts`、`speech`、`figures`、`encryption`、`backup-stress`、`overlay --stress --screenshots`、`lifecycle`、`settings`、`compat`、`sw`，以及 `smoke.sh`、运行脚本语法与 `git diff --check`，均通过。
 - 本轮重点回归：补记/一键不自动记时间；取消/删除/备份恢复与失败回滚；含停用药的近7天报告；跨零点同一时刻取日期与时分；旧日多层浮窗退出、跨页过期表单拒绝覆盖；四种关闭/焦点/防连点；动作提示换成普通提示后不挡点击。
 - 目视：已看 320/390px 特大字号的核对行与时间弹窗。可用 `overlay --screenshots` 重出 `/tmp/rehab-medat-*-xlarge-{list,edit}.png`。原生时间控件跟随设备语言与时间制式。
-- **未验**：真机原生时间输入、读屏、系统返回；独立 agent 验收尚未执行。真机步骤仅维护于 [MANUAL-TEST v0.2.36](MANUAL-TEST.md#v0236-真机复测服药实际时间)。
+- **独立验收（2026-10-07）**：隔离 worktree 复跑上列全部回归与 smoke 通过；另用探针核对键盘焦点、提示条改时间、未到点不出「按时吃的」、补记不出时间按钮、报告口径。发现并已修复两处：① 390–430px 大/特大字号下行尾按钮把药名挤到约 6 字宽（加功能前约 11）→ 特大 ≤460px、大 ≤400px 时按钮另起一行，overlay 1e 断言扩到 8 种宽度 × 3 档字号；② 时间按钮读屏名改为以可见文字开头。
+- **未验**：真机原生时间输入、读屏、系统返回。真机步骤仅维护于 [MANUAL-TEST v0.2.36](MANUAL-TEST.md#v0236-真机复测服药实际时间)。
 
 ## 当前版本（2026-10-02）
 
@@ -30,7 +31,7 @@ node test/overlay.test.js --stress      # 需无头 Chromium；--screenshots 可
 
 **数据兼容（务必）**：线上用户数据已经带 `trackFrom`/`timesHistory`/`medLate`。合并版全部保留；**不要部署任何不认识这三个字段的版本**——`normalizeState()` 会在下次保存时把它们丢掉（补记标记、改时间前的服药安排、登记日都会丢，登记前的日子还会重新被算成漏服）。
 
-**v0.2.36 的回滚边界（本地，尚未部署）**：新增可选字段 `medAt`，旧记录保持时间未知。v0.2.35 及更早的程序读取新数据后，下一次保存会丢掉实际时间，但 `medLog` 核对保留。上线前应备份，避免新旧页面混用；需要回滚时不能直接部署不认识 `medAt` 的旧程序。
+**v0.2.36 的回滚边界（本地，尚未部署）**：新增可选字段 `medAt`，旧记录保持时间未知。v0.2.35 及更早的程序读取新数据后，下一次保存会丢掉实际时间，但 `medLog` 核对保留。上线前应备份，避免新旧页面混用：新版发布不会让已开着的旧页面自动刷新（离线缓存更新不重载页面），后台留着的旧页面下次保存就会抹掉实际时间，所以部署后请让患者把应用彻底关掉重开一次。需要回滚时不能直接部署不认识 `medAt` 的旧程序。
 
 **5 张示意图仍全部是 `pending`**（未经医生复核），用 `node test/preview-figures.js --review` 出复核单找医生。
 
