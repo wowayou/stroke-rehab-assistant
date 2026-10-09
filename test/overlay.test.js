@@ -787,33 +787,74 @@ async function runBackfillRegression(cdp) {
   }
   await closeAll(cdp);
 
-  // 窄屏/三档字号：常驻按钮不能把药名挤成窄列，时间文字与输入都不能溢出。
-  await cdp.eval(`Store.updateMed('${atSeed.id}', { name: '时间回归药物长名称测试（仅用于布局）' }); App.go('today'); App.go('meds');`);
-  for (const width of [320, 360, 375, 390, 393, 412, 430, 460]) for (const font of ['normal', 'large', 'xlarge']) {
-    await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: true });
-    await cdp.eval(`document.documentElement.dataset.font = '${font}'`);
-    assert(await cdp.eval('document.documentElement.scrollWidth <= innerWidth'), `${width}/${font} 核对页无横向溢出`);
-    assert(await cdp.eval("document.querySelector('.mc-at').closest('[role=checkbox]') === null"), '修改按钮不嵌在 checkbox 里面');
-    const medLayout = await cdp.eval(`(() => { const at = document.querySelector('.mc-at').getBoundingClientRect(), row = document.querySelector('.med-check').getBoundingClientRect(), name = parseFloat(getComputedStyle(document.querySelector('.mc-name')).fontSize); return { stacked: at.top >= row.bottom - 1, em: document.querySelector('.mc-body').getBoundingClientRect().width / name, atW: at.width, atH: at.height }; })()`);
-    if (process.env.MED_LAYOUT_LOG) console.log(`LAYOUT ${width}/${font} ${medLayout.stacked ? 'stacked' : 'side'} ${medLayout.em.toFixed(1)}字宽`);
-    assert(medLayout.stacked || medLayout.em >= 8, `${width}/${font} 按钮要么另起一行，要么药名列不少于 8 个字宽（实测 ${medLayout.em.toFixed(1)}）`);
-    assert(medLayout.atW >= 48 && medLayout.atH >= 48, `${width}/${font} 时间按钮 ≥48px`);
-    if (medLayout.stacked) assert(await cdp.eval("Math.abs(document.querySelector('.mc-at').getBoundingClientRect().left - document.querySelector('.mc-body').getBoundingClientRect().left) <= 1"), `${width}/${font} 另起一行的按钮与药名文字左对齐`);
-    const shotName = `/tmp/rehab-medat-${width}-${font}`;
-    if (cliArgs.includes('--screenshots') && (width === 320 || width === 390 || width === 412) && font === 'xlarge') {
-      await cdp.eval('window.scrollTo(0, 0)');
-      const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
-      fs.writeFileSync(shotName + '-list.png', Buffer.from(shot.data, 'base64'));
+  // 两种真实状态都测：只测「改时间」会漏掉多一个字的「记下时间」。覆盖旧/新断点两侧及共用日清单。
+  await cdp.eval(`Store.updateMed('${atSeed.id}', { name: '时间回归药物长名称测试（仅用于布局）' });`);
+  const medWidths = [320, 360, 375, 379, 380, 381, 382, 389, 390, 391, 393, 399, 400, 401, 412, 419, 420, 421, 429, 430, 431, 459, 460, 461, 480, 600, 768, 1024];
+  let medLayoutCases = 0;
+  for (const state of [{ key: 'unknown', at: '', label: '记下时间' }, { key: 'known', at: '00:00', label: '改时间' }]) {
+    assert(await cdp.eval(`Store.setMedTakenAt('${atSeed.id}', '00:00', Store.today(), '${state.at}')`), '准备真实时间状态 ' + state.label);
+    await cdp.eval("App.go('today'); App.go('meds');");
+    for (const context of ['page', 'day']) {
+      if (context === 'day') {
+        await clickAndWait(cdp, '#btn-med-hist', `document.querySelector('#med-day-${atToday}')`, '布局打开服药历史');
+        await clickAndWait(cdp, `#med-day-${atToday}`, "document.querySelector('.modal-mask:not([inert]) .med-day-list')", '布局打开今日核对');
+        await cdp.eval("Promise.all(document.getAnimations().filter(a => a.effect?.target?.matches('.modal-mask, .modal-panel')).map(a => a.finished.catch(() => {}))).then(() => true)");
+      }
+      const listSelector = context === 'page' ? '#view' : '.modal-mask:not([inert]) .med-day-list';
+      const buttonSelector = listSelector + ' .mc-at';
+      const label = await cdp.eval(`(() => {
+        const b = document.querySelector('${buttonSelector}');
+        return { visible: b.textContent.trim(), accessible: b.getAttribute('aria-label'), outsideCheckbox: !b.closest('[role=checkbox]') };
+      })()`);
+      assert.strictEqual(label.visible, state.label, `${context} 确实呈现 ${state.label}`);
+      assert(label.outsideCheckbox, `${context}/${state.label} 不嵌在 checkbox 里面`);
+      assert(label.accessible.startsWith(state.label), `${context}/${state.label} 读屏名以可见文字开头`);
+      const timeAX = await cdp.send('Accessibility.getFullAXTree');
+      assert(timeAX.nodes.some(n => !n.ignored && n.role?.value === 'button' && n.name?.value === label.accessible), `${context}/${state.label} Chromium 无障碍树暴露对应按钮`);
+      const layoutData = await cdp.eval('JSON.stringify(Store.data)');
+      for (const width of medWidths) for (const font of ['normal', 'large', 'xlarge']) {
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: true });
+        await cdp.eval(`document.documentElement.dataset.font = '${font}'`);
+        const caseName = `${context}/${width}/${font}/${state.label}`;
+        assert(await cdp.eval('document.documentElement.scrollWidth <= innerWidth'), `${caseName} 核对页无横向溢出`);
+        const medLayout = await cdp.eval(`(() => {
+          const list = document.querySelector('${listSelector}'), line = list.querySelector('.med-line');
+          const at = line.querySelector('.mc-at').getBoundingClientRect(), row = line.querySelector('.med-check').getBoundingClientRect();
+          const body = line.querySelector('.mc-body').getBoundingClientRect(), name = parseFloat(getComputedStyle(line.querySelector('.mc-name')).fontSize);
+          return { stacked: at.top >= row.bottom - 1, em: body.width / name, atW: at.width, atH: at.height,
+            aligned: Math.abs(at.left - body.left) <= 1, fits: list.scrollWidth <= list.clientWidth && line.scrollWidth <= line.clientWidth };
+        })()`);
+        if (process.env.MED_LAYOUT_LOG) console.log(`LAYOUT ${caseName} ${medLayout.stacked ? 'stacked' : 'side'} ${medLayout.em.toFixed(3)}字宽`);
+        assert(medLayout.stacked || medLayout.em >= 8, `${caseName} 按钮要么另起一行，要么药名列不少于 8 个字宽（实测 ${medLayout.em.toFixed(3)}）`);
+        assert(medLayout.fits, `${caseName} 核对清单及行内无横向溢出`);
+        assert(medLayout.atW >= 48 && medLayout.atH >= 48, `${caseName} 时间按钮 ≥48px`);
+        if (medLayout.stacked) assert(medLayout.aligned, `${caseName} 另起一行的按钮与药名文字左对齐`);
+        medLayoutCases++;
+        const screenshot = cliArgs.includes('--screenshots') && (
+          ([320, 390, 412].includes(width) && font === 'xlarge') ||
+          ([401, 412].includes(width) && font === 'large') || (width === 381 && font === 'normal')
+        );
+        const shotName = `/tmp/rehab-medat-${width}-${font}-${state.key}-${context}`;
+        if (screenshot) {
+          await cdp.eval('window.scrollTo(0, 0)');
+          const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
+          fs.writeFileSync(shotName + '-list.png', Buffer.from(shot.data, 'base64'));
+        }
+        if (context === 'page') {
+          await clickAndWait(cdp, buttonSelector, "document.querySelector('#mt-time')", '布局时间编辑 ' + state.label);
+          await cdp.eval("Promise.all(document.getAnimations().filter(a => a.effect?.target?.matches('.modal-mask, .modal-panel')).map(a => a.finished.catch(() => {}))).then(() => true)");
+          assert(await cdp.eval("(() => { const p = document.querySelector('.modal-mask:not([inert]) .modal-panel'); return p.scrollWidth <= p.clientWidth; })()"), `${caseName} 时间编辑无横向溢出`);
+          assert(await cdp.eval("[...document.querySelectorAll('.modal-mask:not([inert]) button, #mt-time')].every(el => { const r = el.getBoundingClientRect(); return r.width >= 48 && r.height >= 48; })"), `${caseName} 时间编辑控件 ≥48px`);
+          if (screenshot) {
+            const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
+            fs.writeFileSync(shotName + '-edit.png', Buffer.from(shot.data, 'base64'));
+          }
+          await closeAll(cdp);
+        }
+      }
+      assert.strictEqual(await cdp.eval('JSON.stringify(Store.data)'), layoutData, `${context}/${state.label} 布局切换与取消编辑不改数据`);
+      await closeAll(cdp);
     }
-    await clickAndWait(cdp, '.mc-at', "document.querySelector('#mt-time')", '布局时间编辑');
-    await cdp.eval("Promise.all(document.getAnimations().filter(a => a.effect?.target?.matches('.modal-mask, .modal-panel')).map(a => a.finished.catch(() => {}))).then(() => true)");
-    assert(await cdp.eval("(() => { const p = document.querySelector('.modal-mask:not([inert]) .modal-panel'); return p.scrollWidth <= p.clientWidth; })()"), `${width}/${font} 时间编辑无横向溢出`);
-    assert(await cdp.eval("[...document.querySelectorAll('.modal-mask:not([inert]) button, #mt-time')].every(el => { const r = el.getBoundingClientRect(); return r.width >= 48 && r.height >= 48; })"), `${width}/${font} 时间编辑控件 ≥48px`);
-    if (cliArgs.includes('--screenshots') && (width === 320 || width === 390 || width === 412) && font === 'xlarge') {
-      const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
-      fs.writeFileSync(shotName + '-edit.png', Buffer.from(shot.data, 'base64'));
-    }
-    await closeAll(cdp);
   }
   await cdp.eval("document.documentElement.dataset.font = 'normal'");
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -850,7 +891,7 @@ async function runBackfillRegression(cdp) {
   assert.strictEqual(await cdp.eval(`Store.medTakenAt('${atSeed.id}', '00:00', '${atSeed.y}')`), '', '补记不记时间');
   assert(await cdp.eval("document.activeElement && document.activeElement.classList.contains('med-check')"), '补记勾选后焦点留在该行');
   await closeAll(cdp);
-  console.log('PASS  服药时间：提示/常驻入口、四路径嵌套返回、失败重试/回车/防连点、9组布局、过期提示与补记边界（v0.2.36）');
+  console.log(`PASS  服药时间：提示/常驻入口、四路径嵌套返回、失败重试/回车/防连点、${medLayoutCases}组双状态布局与无障碍名称、过期提示与补记边界（v0.2.36）`);
 
   // 2. 训练补记
   const yday = await cdp.eval('Store.addDays(Store.today(), -1)');
