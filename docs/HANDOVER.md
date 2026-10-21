@@ -7,24 +7,22 @@
 
 本节记录服药实际时间功能及布局补验，**`git diff 1f98884..5971bdb` 即本次发布的完整交付**；当前发布状态见下方「当前版本」。交互标准见 [DESIGN-SYSTEM §5](DESIGN-SYSTEM.md#5-数据任务与反馈)，数据格式/API 见 [DEVELOPMENT §5–§6](DEVELOPMENT.md#5-数据模型localstorage)。仅处理服药时间，不扩展训练、血糖或跨零点归属。
 
-### 验收方式（另一台机器）
+### 验收结论（异机复核）
 
-```bash
-git fetch origin
-git worktree add ../sra-review-med-time review/med-time-v0.2.36   # 或另建 clone；不要动本机未提交的改动
-cd ../sra-review-med-time
-node test/storage.test.js && node test/contracts.test.js
-node test/overlay.test.js --stress      # 需无头 Chromium；--screenshots 可再出小屏截图
-```
+**验收通过（据用户提供的复核报告）**：复核时 `main` 为 `aa59190`，生产文件一致性与响应头核对、本地全部回归及生产 `settings`、`lifecycle`、`overlay --stress` 均通过，代码审查无返工项。该版本已合并上线，后续维护从 `main` 接手；复现本次发布用下方部署源提交，不再依赖 review 分支。
 
-验收 agent：先读 [`AGENTS.md`](../AGENTS.md) 与本文，再按 [MANUAL-TEST](MANUAL-TEST.md) 的 v0.2.36 一节、`DEVELOPMENT.md` §0/§5/§6 与 `DESIGN-SYSTEM.md` §5 独立复核；**重跑相关回归，不要直接采信上面的交付说明**；只报告问题与复现步骤，不合并、不部署。
+**复核边界**：此次异机复核未重测生产断网，也未查看下方原执行机器的临时证据；「当前版本」中的生产断网通过是部署时记录，不是此次异机复核结论。
+
+**分支清理（已完成）**：经用户确认，远程 `review/med-time-v0.2.36` 已删除；原分支提交 `5971bdb` 已包含于 `main`，仍可按提交号复核。
+
+### 开发与发布验证（历史记录）
 
 - 已跑：`storage`、`contracts`、`speech`、`figures`、`encryption`、`backup-stress`、`overlay --stress --screenshots`、`lifecycle`、`settings`、`compat`、`sw`，以及 `smoke.sh`、运行脚本语法与 `git diff --check`，均通过。
 - 本轮重点回归：补记/一键不自动记时间；取消/删除/备份恢复与失败回滚；含停用药的近7天报告；跨零点同一时刻取日期与时分；旧日多层浮窗退出、跨页过期表单拒绝覆盖；四种关闭/焦点/防连点；动作提示换成普通提示后不挡点击。
 - 目视：已看 320/381/390/401/412px 重点截图，含两种时间按钮、日核对弹窗与小屏时间编辑。可用 `overlay --screenshots` 重出 `/tmp/rehab-medat-*.png`，文件名区分已记/未记时间和主清单/日弹窗。原生时间控件跟随设备语言与时间制式。
 - **发布补验（2026-10-09）**：上轮只测“改时间”，漏掉较长的“记下时间”。新增回归在旧 CSS 下失败；修复后主页面/日弹窗的两状态 × 三字号 × 28 宽（含断点两侧）共 336 组通过，独立逐像素复核 320–500px 的 1086 组也通过；两种按钮在真实 Chromium 无障碍树中的名称正确。修复范围见 [CHANGELOG](CHANGELOG.md) 同日条目。
 - **未验**：真机原生时间输入、读屏、系统返回。真机步骤仅维护于 [MANUAL-TEST v0.2.36](MANUAL-TEST.md#v0236-真机复测服药实际时间)。
-- 修复日志、独立复核脚本与截图：`/tmp/sra-v0236-layout-fix-OTDQTQh6/`；上一轮失败证据保留在 `/tmp/sra-v0236-release-upwSNVOW/`。发布与生产验收证据：`/tmp/sra-v0236-deploy-otTtYRnz/`。
+- **临时证据（非持久归档）**：原执行机器的 `/tmp/sra-v0236-layout-fix-OTDQTQh6/`（修复日志、独立复核脚本与截图）、`/tmp/sra-v0236-release-upwSNVOW/`（上一轮失败证据）、`/tmp/sra-v0236-deploy-otTtYRnz/`（发布与生产验收证据）。这些目录不随 Git 同步，重启或清理后可能消失，仅供临时查找，不作为后续验收前提；后续复核应按固定提交重跑仓库内测试，截图生成见上文。
 
 ## 当前版本（2026-10-09）
 
