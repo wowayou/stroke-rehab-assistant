@@ -35,6 +35,7 @@
 node test/storage.test.js      # 数据层（改 storage.js 必跑；输出里的 JSON SyntaxError 告警是预期的兜底测试）
 node test/contracts.test.js    # 跨模块静态硬约定（改 js/app/、css、_headers 必跑，很快）
 node test/records.test.js      # 血压/血糖判定与图表小结（改 records.js 必跑）
+node test/medical-content.test.js # 医学安全文案护栏（改文章/急救/相关 README 必跑，不能替代医生复核）
 node test/speech.test.js       # 朗读层（改 speech.js 或朗读稿必跑）
 node test/figures.test.js      # 简笔画几何（改 figures.js 必跑）
 

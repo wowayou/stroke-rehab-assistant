@@ -9,7 +9,7 @@
 | 要做的事 | 改哪里 | 先读 | 改完必跑 |
 |---|---|---|---|
 | 改/加训练动作 | `js/data-exercises.js`（`id` 发布后不能改） | §6 data-exercises · 硬约定 6 | contracts · speech · smoke |
-| 改/加科普文章、急救要点 | `js/data-articles.js` | §8 · RESEARCH §八 | speech（朗读稿全量扫描）· smoke |
+| 改/加科普文章、急救要点 | `js/data-articles.js` | §8 · RESEARCH §八 | medical-content · speech（朗读稿全量扫描）· smoke |
 | 朗读听着别扭 | `js/speech.js` 的 `SPEAK_RULES`（不改显示文案） | §6 speech · 硬约定 12 | speech |
 | 画/改动作示意图 | `js/figures.js` 的 `POSES` | §6 figures | figures + `preview-figures.js` 看图 |
 | 认知游戏 | `js/games.js` | §6 games · 硬约定 5 | smoke · overlay |
@@ -79,6 +79,7 @@ stroke-rehab-assistant/
 │   ├── storage.test.js   # 数据层单元测试（node 直接跑）
 │   ├── encryption.test.js # 可选加密备份单元测试（node 直接跑）
 │   ├── contracts.test.js  # 跨模块静态契约检查（node 直接跑）
+│   ├── medical-content.test.js # 医学安全文案护栏（适用范围、急诊与既有警示；不替代医生复核）
 │   ├── records.test.js   # 血压/血糖判定与图表小结（偏低/偏高/混合、危险优先与边界）
 │   ├── figures.test.js    # 简笔画几何校验 + 临床角度护栏（node 直接跑）
 │   ├── figure-angles.js   # 简笔画关节角度推导（测试与复核单共用，不随应用发布）
@@ -343,6 +344,9 @@ node test/encryption.test.js
 
 # 1b) 跨模块契约检查（少算数、触控尺寸、CSP、动态属性转义）
 node test/contracts.test.js
+
+# 1b-1) 医学安全文案护栏（不替代权威来源核对与医生复核）
+node test/medical-content.test.js
 
 # 1c) 记录页判定与图表小结（不在目标内不等于偏高，危险提示先于差值）
 node test/records.test.js

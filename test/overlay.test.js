@@ -594,6 +594,49 @@ async function runRecordsSummaryRegression(cdp) {
   console.log('PASS  图表小结：低值/混合状态、危险提示优先，48组主页面/历史布局，查看不改数据（v0.2.37）');
 }
 
+async function runMedicalContentRegression(cdp) {
+  await closeAll(cdp);
+  await cdp.eval("App.go('learn')");
+  const snapshot = await cdp.eval('JSON.stringify(Store.data)');
+  for (const id of ['prevention', 'followup']) {
+    await clickAndWait(cdp, `[data-art="${id}"]`, "document.querySelector('.article-view')", '打开安全文案 ' + id);
+    await cdp.eval("Promise.all(document.getAnimations().filter(a => a.effect?.target?.matches('.modal-mask, .modal-panel')).map(a => a.finished.catch(() => {}))).then(() => true)");
+    const text = await cdp.eval("document.querySelector('.article-view').textContent");
+    const script = await cdp.eval(`articleSpeechText(ARTICLES.find(a => a.id === '${id}'))`);
+    const normalized = await cdp.eval(`Speech.normalize(articleSpeechText(ARTICLES.find(a => a.id === '${id}')))`);
+    const signals = id === 'prevention'
+      ? ['发病早期', '非心源性轻型脑梗', '高危短暂性脑缺血发作', '颈动脉支架术后', '不能照搬', '不要自行延长、提前停药、恢复双抗或改成单药']
+      : ['突然出现或突然加重', '一侧麻木无力', '看不见或视野缺损', '立即拨打 120', '不要等门诊', '即使几分钟后缓解', '急诊评估', '大便发黑', '肌肉酸痛乏力'];
+    signals.forEach(signal => {
+      assert(text.includes(signal), `${id} 显示文案缺少 ${signal}`);
+      assert(script.includes(signal) && normalized.includes(signal), `${id} 实际朗读稿不能丢 ${signal}`);
+    });
+    assert(!/[<>]/.test(normalized), '朗读稿不包含HTML标签');
+    assert(!normalized.includes('这种吃法通常'), '朗读不回到泛化三周方案');
+    if (id === 'prevention') assert(normalized.includes('3 周') && normalized.includes('三周'), '朗读保留方案期限与不能照搬的例外');
+    for (const width of [320, 390]) for (const font of ['normal', 'large', 'xlarge']) {
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: true });
+      await cdp.eval(`document.documentElement.dataset.font = '${font}'; document.querySelector('.modal-panel').scrollTop = 0`);
+      assert(await cdp.eval("(() => { const p = document.querySelector('.modal-panel'), a = document.querySelector('.article-view'); return p.scrollWidth <= p.clientWidth && a.scrollWidth <= a.clientWidth && document.documentElement.scrollWidth <= innerWidth; })()"), `${width}/${font}/${id} 文章和面板无横向溢出`);
+      if (id === 'followup') {
+        assert(await cdp.eval("document.querySelector('.article-view').firstElementChild.classList.contains('art-warn')"), '复诊文章先显示红色急诊警示');
+        assert(await cdp.eval("(() => { const w = document.querySelector('.article-view .art-warn').getBoundingClientRect(); return w.top < innerHeight && w.bottom > 0; })()"), `${width}/${font} 打开文章即能看到急诊提示`);
+      }
+      assert(await cdp.eval("(() => { const b = document.querySelector('.modal-mask:not([inert]) .btn-emergency'), r = b.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight && r.width >= 48 && r.height >= 48; })()"), '文章急救按钮仍在首屏且触控达标');
+      if (cliArgs.includes('--screenshots') && width === 320 && font === 'xlarge') {
+        if (id === 'prevention') await cdp.eval("[...document.querySelectorAll('.article-view li')].find(li => li.textContent.includes('颈动脉支架术后')).scrollIntoView({ block: 'center' })");
+        const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
+        fs.writeFileSync(`/tmp/rehab-v0237-${id}-article.png`, Buffer.from(shot.data, 'base64'));
+      }
+    }
+    await clickAndWait(cdp, '.modal-close', "!document.querySelector('.modal-mask')", '关闭安全文案');
+    assert.strictEqual(await cdp.eval('document.activeElement.dataset.art'), id, '关闭文章焦点回原条目');
+    assert.strictEqual(await cdp.eval('JSON.stringify(Store.data)'), snapshot, '阅读/朗读稿生成和改布局不改健康数据');
+  }
+  await cdp.eval('applyFont(Store.data.profile.font)');
+  console.log('PASS  医学安全文案：真实文章/朗读稿保留条件及警示，12组小屏三字号布局、急救可达且数据不变（v0.2.37）');
+}
+
 async function runBackfillRegression(cdp) {
   await closeAll(cdp);
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -1193,6 +1236,7 @@ async function runBackfillRegression(cdp) {
 
     await runUXRegression(cdp);
     await runRecordsSummaryRegression(cdp);
+    await runMedicalContentRegression(cdp);
     await runBackfillRegression(cdp);
     if (stressMode) await runOverlayStress(cdp);
 
