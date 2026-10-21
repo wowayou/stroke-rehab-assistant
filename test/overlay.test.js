@@ -536,6 +536,64 @@ async function runUXRegression(cdp) {
   }
 }
 
+async function runRecordsSummaryRegression(cdp) {
+  await closeAll(cdp);
+  const saved = await cdp.eval('JSON.stringify({ vitals: Store.data.vitals, targets: Store.data.profile.targets })');
+  const cases = [
+    { key: 'low-bp', kind: 'bp', values: [{ sys: 85, dia: 55 }, { sys: 88, dia: 58 }], expected: ['有 2 次偏低，注意头晕跌倒'], trend: '高压比最早一条高了 3' },
+    { key: 'low-glucose', kind: 'glucose', values: [{ gtype: '空腹', value: 3.5 }, { gtype: '空腹', value: 3.7 }], expected: ['有 2 次偏低，警惕低血糖'], trend: '血糖比最早一条高了 0.2' },
+    { key: 'mixed-bp', kind: 'bp', values: [{ sys: 180, dia: 110 }, { sys: 85, dia: 55 }, { sys: 150, dia: 95 }, { sys: 120, dia: 80 }], expected: ['血压很高，尽快联系医生', '有 1 次偏低', '有 1 次偏高', '有 1 次在您的目标内（遵医嘱）'], trend: '高压比最早一条低了 60' },
+    { key: 'mixed-glucose', kind: 'glucose', values: [{ gtype: '空腹', value: 11 }, { gtype: '空腹', value: 3.5 }, { gtype: '空腹', value: 8 }, { gtype: '空腹', value: 6 }], expected: ['明显偏高，联系医生', '偏低，警惕低血糖', '有 1 次空腹偏高', '有 1 次在您的目标内（遵医嘱）'], trend: '血糖比最早一条低了 5' },
+  ];
+  try {
+    for (const item of cases) {
+      await cdp.eval(`(() => {
+        Store.data.vitals = { bp: [], glucose: [], weight: [] };
+        Store.data.profile.targets = { bpSys: 140, bpDia: 90, gluFast: 7, gluPost: 10 };
+        Store.save();
+        ${JSON.stringify(item.values)}.forEach((v, i) => {
+          if (!Store.addVital('${item.kind}', { ...v, date: Store.today(), time: '08:0' + i })) throw new Error('合成记录未保存');
+        });
+        recTab = '${item.kind}'; App.go('today'); App.go('records');
+      })()`);
+      const snapshot = await cdp.eval('JSON.stringify(Store.data)');
+      for (const width of [320, 390]) for (const font of ['normal', 'large', 'xlarge']) {
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: true });
+        await cdp.eval(`document.documentElement.dataset.font = '${font}'`);
+        const inspect = async selector => {
+          await cdp.eval("Promise.all(document.getAnimations().filter(a => a.effect?.target?.matches('.modal-mask, .modal-panel')).map(a => a.finished.catch(() => {}))).then(() => true)");
+          const text = await cdp.eval(`document.querySelector('${selector}').textContent`);
+          item.expected.forEach(expected => assert(text.includes(expected), `${item.key} 缺少 ${expected}：${text}`));
+          assert(!text.includes('都超过'), `${item.key} 不能将低值/混合说成全都偏高`);
+          assert(text.indexOf(item.expected[0]) < text.indexOf(item.trend), `${item.key} 安全提示先于首尾差值`);
+          assert(await cdp.eval(`(() => {
+            const el = document.querySelector('${selector}');
+            return el.scrollWidth <= el.clientWidth && document.documentElement.scrollWidth <= innerWidth;
+          })()`), `${width}/${font}/${item.key} 小结和页面无横向溢出`);
+          if (cliArgs.includes('--screenshots') && width === 320 && font === 'xlarge') {
+            await cdp.eval(`document.querySelector('${selector}').scrollIntoView({ block: 'center' })`);
+            const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
+            fs.writeFileSync(`/tmp/rehab-v0237-${item.key}-${selector.startsWith('#view') ? 'page' : 'history'}.png`, Buffer.from(shot.data, 'base64'));
+          }
+          return text;
+        };
+        const main = await inspect('#view .chart-summary');
+        await clickAndWait(cdp, `[data-hist="${item.kind}"]`, "document.querySelector('.modal-mask:not([inert]) .chart-summary')", '小结历史入口');
+        assert.strictEqual(await inspect('.modal-mask:not([inert]) .chart-summary'), main, '主页面和历史使用同一小结');
+        await closeAll(cdp);
+        assert.strictEqual(await cdp.eval('JSON.stringify(Store.data)'), snapshot, '查看小结/历史和改字号不改健康数据');
+      }
+    }
+  } finally {
+    await closeAll(cdp);
+    await cdp.eval(`(() => {
+      const saved = ${saved}; Store.data.vitals = saved.vitals; Store.data.profile.targets = saved.targets; Store.save();
+      applyFont(Store.data.profile.font); recTab = 'bp'; App.go('today');
+    })()`);
+  }
+  console.log('PASS  图表小结：低值/混合状态、危险提示优先，48组主页面/历史布局，查看不改数据（v0.2.37）');
+}
+
 async function runBackfillRegression(cdp) {
   await closeAll(cdp);
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -1134,6 +1192,7 @@ async function runBackfillRegression(cdp) {
     console.log('PASS  加密并下载后应用仍在当前页面');
 
     await runUXRegression(cdp);
+    await runRecordsSummaryRegression(cdp);
     await runBackfillRegression(cdp);
     if (stressMode) await runOverlayStress(cdp);
 

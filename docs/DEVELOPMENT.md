@@ -15,6 +15,7 @@
 | 认知游戏 | `js/games.js` | §6 games · 硬约定 5 | smoke · overlay |
 | 数据结构、校验、统计口径 | `js/storage.js`：`normalizeState` / `medProblem` / `medCountOn` | §5 · §6 storage · 硬约定 7、8、16 | storage |
 | 某个页面的显示与交互 | `js/app/` 下对应的一个文件：`today.js` `train.js` `records.js` `meds.js` `learn.js` `settings.js` `backup.js`，文件内搜 `【区】` | `js/app/core.js` 头部的文件地图 · DESIGN-SYSTEM | overlay · settings · smoke |
+| 血压/血糖判定、图表小结 | `js/app/records.js` 的 `bpBadge/gluBadge/vitalStatus/chartSummaryHTML` | RESEARCH §八 · DESIGN-SYSTEM | records · contracts · overlay |
 | 加弹窗/浮层 | `js/app/overlay.js`：`openModal()`、`overlayPush()` | §6 应用层 浮层 · 硬约定 10 | overlay --stress |
 | 补记服药/训练、修改健康记录 | `js/app/meds.js` 的 `openMedDay()`、`js/app/train.js` 的 `openExerciseDay()`、`js/app/records.js` 的 `openVitalEdit()` | 硬约定 8、18 · DESIGN-SYSTEM §4 | storage · overlay |
 | 服药实际时间（自动记录、更正、报告） | `js/storage.js` 的 `medTakenAt` / `setMedTakenAt` / `exportReport`；`js/app/meds.js` 的 `openMedTimeEdit()` | §5 · §6 storage · 硬约定 8 · DESIGN-SYSTEM §5 | storage · overlay · lifecycle |
@@ -78,6 +79,7 @@ stroke-rehab-assistant/
 │   ├── storage.test.js   # 数据层单元测试（node 直接跑）
 │   ├── encryption.test.js # 可选加密备份单元测试（node 直接跑）
 │   ├── contracts.test.js  # 跨模块静态契约检查（node 直接跑）
+│   ├── records.test.js   # 血压/血糖判定与图表小结（偏低/偏高/混合、危险优先与边界）
 │   ├── figures.test.js    # 简笔画几何校验 + 临床角度护栏（node 直接跑）
 │   ├── figure-angles.js   # 简笔画关节角度推导（测试与复核单共用，不随应用发布）
 │   ├── speech.test.js     # 朗读层：归一化规则全表 + 句间停顿（node 直接跑）
@@ -342,7 +344,10 @@ node test/encryption.test.js
 # 1b) 跨模块契约检查（少算数、触控尺寸、CSP、动态属性转义）
 node test/contracts.test.js
 
-# 1c) 简笔画几何校验（快，每次改 figures.js 必跑）
+# 1c) 记录页判定与图表小结（不在目标内不等于偏高，危险提示先于差值）
+node test/records.test.js
+
+# 1c-1) 简笔画几何校验（快，每次改 figures.js 必跑）
 node test/figures.test.js
 
 # 1c-2) 朗读层（归一化规则 + 真的量出句间停顿 + 音色回落；改 speech.js 或朗读稿必跑）

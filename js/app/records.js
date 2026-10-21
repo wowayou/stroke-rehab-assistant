@@ -79,7 +79,7 @@ function deltaLineHTML(kind) {
   return `<div class="delta-line">↕ ${prefix}${esc(body)}<span class="muted">（上次 ${esc(d.prevDate)}${d.prevTime ? ' ' + esc(d.prevTime) : ''}）</span></div>`;
 }
 
-/* 图表上方一句话小结：不看图也能知道大概情况，避免"看图 + 心算"双重负担 */
+/* 图表小结：复用单条判定，安全提示先于首尾差值；不看图也能知道情况。 */
 function chartSummaryHTML(kind, list) {
   if (list.length < 2) return '';
   const first = list[0], last = list[list.length - 1];
@@ -92,15 +92,25 @@ function chartSummaryHTML(kind, list) {
   if (!amount) trend = `${nameOf}和最早一条差不多`;
   else trend = `这 ${list.length} 条里，${nameOf}比最早一条${UP_DOWN(diff)}了 ${amount}${unit}`;
 
-  let inTarget = '';
+  let statusText = '';
   if (kind !== 'weight') {
-    const ok = list.filter(v => vitalStatus(kind, v)[0] === 'ok').length;
-    /* 说"有几次在目标内"而不是百分比；一次都没有也不说重话 */
-    inTarget = ok
-      ? `　·　其中 ${ok} 次在您的目标内`
-      : '　·　这段时间都超过了目标值，可以带记录去问问医生';
+    const groups = [];
+    let ok = 0;
+    list.forEach(v => {
+      const [cls, txt] = vitalStatus(kind, v);
+      if (cls === 'ok') { ok++; return; }
+      /* 不在目标内可能是偏低或偏高；直接按同一判定的原文分组，不另写阈值。 */
+      const group = groups.find(g => g.cls === cls && g.txt === txt);
+      if (group) group.count++;
+      else groups.push({ cls, txt, count: 1 });
+    });
+    const lines = groups.filter(g => g.cls === 'bad').concat(groups.filter(g => g.cls !== 'bad'))
+      .map(g => `有 ${g.count} 次${g.txt}`);
+    if (ok) lines.push(`有 ${ok} 次在您的目标内（遵医嘱）`);
+    if (groups.length && !groups.some(g => g.cls === 'bad')) lines.push('可带记录咨询医生');
+    statusText = lines.join('；');
   }
-  return `<div class="chart-summary">${esc(trend)}${inTarget}</div>`;
+  return `<div class="chart-summary">${statusText ? esc(statusText) + '<br>' : ''}${esc(trend)}</div>`;
 }
 /* 趋势图颜色与图例的单一数据源：canvas 画线与下方图例都从这里读，保证颜色一一对应。
    series.key 对应记录字段；refs 为参考线（y=目标值，label 画在图上，legend 出现在图例）。
