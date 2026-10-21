@@ -20,7 +20,7 @@ const medSection = prevention.body.split('<h3>2.')[0];
 const items = [...medSection.matchAll(/<li>([\s\S]*?)<\/li>/g)].map(m => plain(m[1]));
 const shortCourse = items.find(text => /3\s*周/.test(text));
 assert(shortCourse, '保留有来源依据的短期方案，不把医学事实整段删除');
-for (const condition of ['发病早期', '非心源性', '轻型脑梗', '高危短暂性脑缺血发作', '医生', '阿司匹林', '氯吡格雷']) {
+for (const condition of ['发病 24 小时内', '非心源性', '轻型脑梗', '高危短暂性脑缺血发作', '医生', '阿司匹林', '氯吡格雷']) {
   assert(shortCourse.includes(condition), `三周方案必须在同条说明 ${condition}，不能泛化到所有双抗`);
 }
 const stentException = items.find(text => text.includes('颈动脉支架术后'));

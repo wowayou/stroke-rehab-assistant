@@ -605,7 +605,7 @@ async function runMedicalContentRegression(cdp) {
     const script = await cdp.eval(`articleSpeechText(ARTICLES.find(a => a.id === '${id}'))`);
     const normalized = await cdp.eval(`Speech.normalize(articleSpeechText(ARTICLES.find(a => a.id === '${id}')))`);
     const signals = id === 'prevention'
-      ? ['发病早期', '非心源性轻型脑梗', '高危短暂性脑缺血发作', '颈动脉支架术后', '不能照搬', '不要自行延长、提前停药、恢复双抗或改成单药']
+      ? ['发病 24 小时内', '非心源性轻型脑梗', '高危短暂性脑缺血发作', '颈动脉支架术后', '不能照搬', '不要自行延长、提前停药、恢复双抗或改成单药']
       : ['突然出现或突然加重', '一侧麻木无力', '看不见或视野缺损', '立即拨打 120', '不要等门诊', '即使几分钟后缓解', '急诊评估', '大便发黑', '肌肉酸痛乏力'];
     signals.forEach(signal => {
       assert(text.includes(signal), `${id} 显示文案缺少 ${signal}`);
