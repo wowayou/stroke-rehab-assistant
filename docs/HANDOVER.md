@@ -9,7 +9,7 @@
 
 **本轮独立验收**：已审查全部运行代码、测试与文档差异；重跑 storage/contracts/records/medical-content/settings/lifecycle/compat、overlay --stress --screenshots（40轮）、smoke 均通过，包含三项优化、跨天/跨页、草稿/位置/焦点、四阶段完整性与六宽度×三字号。已复看390px标准和320px特大字号截图；18个运行脚本通过 Node8.17/24语法检查，sw.js 通过 Node24检查；diff检查通过。初次数据层子进程/浏览器运行受沙箱限制，授权环境重跑通过。证据位于 `/tmp/rehab-accept-20261110/` 与 `/tmp/rehab-accept-*.log`，仅临时留存；专项可用 `lifecycle --edit-conflicts`、`lifecycle --optimizations`、`overlay --optimizations --screenshots` 重跑。
 
-**发布状态**：用户已授权验收通过后提交、推送并部署。发布前实际 fetch 确认本地基线和远程均为 `25d70f2`；生产23个运行文件与该提交一致（首页仅部署戳不同），安全响应头及 sw.js 无 CSP/no-cache 正常。部署暂被登录账号阻塞：当前 Wrangler 登录账号无权访问原生产账号（`pages project list` 返回 Authentication error 10000），已请用户登录 HANDOVER §1.2 所列生产账号。尚未尝试上传或更换站点，当前生产仍为下节 v0.2.37。
+**发布状态**：用户已授权验收通过后提交、推送并部署；代码提交 `930b74f` 已普通推送至 `origin/main`，待从干净工作区部署。发布前实际 fetch 确认本地基线和远程均为 `25d70f2`；生产23个运行文件与该提交一致（首页仅部署戳不同），安全响应头及 sw.js 无 CSP/no-cache 正常。部署暂被登录账号阻塞：当前 Wrangler 登录账号无权访问原生产账号（`pages project list` 返回 Authentication error 10000），已请用户登录 HANDOVER §1.2 所列生产账号。尚未尝试上传或更换站点，当前生产仍为下节 v0.2.37。
 
 **未验与边界**：本轮未做新版生产浏览器/生产断网测试、真机原生键盘/返回/读屏或真人任务验证；医学复核仍待下节所列专业人员确认。编辑快照与保存前检查不是跨进程事务锁，不能承诺两进程完全同时写入时无竞争。无新增外部付费服务或持续运行任务；部署沿用现有静态 Pages 直传，不新增 Functions、构建或自动化。
 
