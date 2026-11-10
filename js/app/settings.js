@@ -102,6 +102,10 @@ function openSettings() {
     <button class="btn block" id="set-save">保存设置</button>`);
 
   const close = openModal('设置', node);
+  const canEdit = guardEdit(node, close, () => {
+    const profile = Store.data.profile;
+    return { name: profile.name, strokeDate: profile.strokeDate, height: profile.height, targets: profile.targets };
+  });
   close.onResume(() => {
     if (revision !== settingsRevision) {
       const y = node.closest('.modal-panel').scrollTop;
@@ -212,6 +216,7 @@ function openSettings() {
     }
   };
   node.querySelector('#set-save').onclick = () => {
+    if (!canEdit()) return;
     /* 字号与语速不在这里读：它们点一下就已经落盘了（见上方 bindSegGroup）。
        若在此按 DOM 再赋一次值，任何时序差都会把已生效的偏好覆盖回旧值。 */
     const g = id => +node.querySelector(id).value;

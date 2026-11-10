@@ -447,6 +447,9 @@ function openMedForm(med, seed = null) {
     </div>`);
 
   const close = openModal(isEdit ? '修改药物' : seed ? '登记新疗程' : '添加药物', node);
+  const canEdit = guardEdit(node, close, () => Store.data.meds.filter(m =>
+    (isEdit && (m.id === med.id || m.previousCourseId === med.id)) ||
+    (prevId && (m.id === prevId || m.previousCourseId === prevId))));
 
   const timeChips = node.querySelector('#time-chips');
   /* 时间块渲染 COMMON_TIMES ∩ 已选的全集，全部可点切换（非常用时间取消后消失） */
@@ -470,8 +473,9 @@ function openMedForm(med, seed = null) {
   };
   bindEnterFlow(
     [node.querySelector('#med-name'), node.querySelector('#med-dose'), node.querySelector('#med-note')],
-    () => node.querySelector('#med-note').blur());
+    () => node.querySelector('#med-save').click());
   node.querySelector('#med-save').onclick = () => {
+    if (!canEdit()) return;
     clearFieldErrors(node);
     const name = node.querySelector('#med-name').value.trim();
     const dose = node.querySelector('#med-dose').value.trim();
@@ -491,6 +495,7 @@ function openMedForm(med, seed = null) {
   };
   const stopBtn = node.querySelector('#med-stop');
   if (stopBtn) stopBtn.onclick = () => {
+    if (!canEdit()) return;
     const d = node.querySelector('#med-stop-date').value || Store.today();
     if (d > Store.today()) { showError(node, '停用日期不能晚于今天'); return; }
     if (med.from && d < med.from) { showError(node, '停用日期不能早于开始服用日期'); return; }
@@ -501,6 +506,7 @@ function openMedForm(med, seed = null) {
   };
   const undoStopBtn = node.querySelector('#med-undo-stop');
   if (undoStopBtn) undoStopBtn.onclick = () => {
+    if (!canEdit()) return;
     if (!stored(Store.undoStopMed(med.id))) return;
     close();
     toast('已撤销停用，重新进入每日核对');
@@ -508,6 +514,7 @@ function openMedForm(med, seed = null) {
   };
   const newCourseBtn = node.querySelector('#med-new-course');
   if (newCourseBtn) newCourseBtn.onclick = () => {
+    if (!canEdit()) return;
     const nextDay = med.to && med.to >= Store.today() ? Store.addDays(med.to, 1) : Store.today();
     const seedData = { name: med.name, dose: med.dose, times: med.times, note: med.note, from: nextDay, previousCourseId: med.id };
     close.replace(() => openMedForm(null, seedData));
@@ -519,6 +526,7 @@ function openMedForm(med, seed = null) {
       confirmLabel: '确定删除',
       cancelLabel: '不删了',
       onConfirm: () => {
+        if (!canEdit()) return false;
         if (!stored(Store.removeMed(med.id))) return false;
         close();
         toast('已删除');

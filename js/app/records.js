@@ -288,20 +288,24 @@ function openVitalHistory(kind) {
     </div>`;
 
     node.querySelectorAll('[data-vital]').forEach(b => b.onclick = () => openVitalEdit(kind, b.dataset.vital));
-    node.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
-      const v = Store.vitalsSorted(kind).find(x => x.id === b.dataset.del);
-      const plain = !v ? '' : kind === 'bp' ? `${v.sys}/${v.dia} mmHg`
-        : kind === 'glucose' ? `${v.value} mmol/L ${v.gtype}` : `${v.value} 公斤`;
-      confirmInPlace(b.closest('.rec-row'), {
-        message: `删除这条记录（${v ? v.date + (v.time ? ' ' + v.time : '') + ' · ' + plain : ''}）？删除后无法恢复。`,
-        confirmLabel: '删除',
-        cancelLabel: '不删了',
-        onConfirm: () => {
-          if (!stored(Store.removeVital(kind, b.dataset.del))) return false;
-          paint();
-          render('records', { keepScroll: true, preserveInputs: true });
-        },
-      });
+    node.querySelectorAll('[data-del]').forEach(b => {
+      const canDelete = guardEdit(node, close, () => Store.data.vitals[kind].find(x => x.id === b.dataset.del));
+      b.onclick = () => {
+        const v = sorted.find(x => x.id === b.dataset.del);
+        const plain = !v ? '' : kind === 'bp' ? `${v.sys}/${v.dia} mmHg`
+          : kind === 'glucose' ? `${v.value} mmol/L ${v.gtype}` : `${v.value} 公斤`;
+        confirmInPlace(b.closest('.rec-row'), {
+          message: `删除这条记录（${v ? v.date + (v.time ? ' ' + v.time : '') + ' · ' + plain : ''}）？删除后无法恢复。`,
+          confirmLabel: '删除',
+          cancelLabel: '不删了',
+          onConfirm: () => {
+            if (!canDelete()) return false;
+            if (!stored(Store.removeVital(kind, b.dataset.del))) return false;
+            paint();
+            render('records', { keepScroll: true, preserveInputs: true });
+          },
+        });
+      };
     });
     const moreBtn = node.querySelector('#rec-more');
     if (moreBtn) moreBtn.onclick = () => { shown += 60; paint(); };
@@ -349,9 +353,11 @@ function openVitalEdit(kind, id) {
       <button class="btn red block" id="ev-del" style="margin-top:0.6rem">删除这条记录</button>
     </div>`);
   const close = openModal(`修改${meta.name}记录`, node);
+  const canEdit = guardEdit(node, close, () => Store.data.vitals[kind].find(x => x.id === id));
   const flowIds = kind === 'bp' ? ['ev-sys', 'ev-dia', 'ev-pulse'] : ['ev-val'];
   bindEnterFlow(flowIds.map(i => node.querySelector('#' + i)), () => node.querySelector('#ev-save').click());
   node.querySelector('#ev-save').onclick = () => {
+    if (!canEdit()) return;
     clearFieldErrors(node);
     const when = { date: node.querySelector('#ev-date').value, time: hasTime ? node.querySelector('#ev-time').value : '' };
     const entry = readVital(kind, 'ev', when);
@@ -367,6 +373,7 @@ function openVitalEdit(kind, id) {
       confirmLabel: '删除',
       cancelLabel: '不删了',
       onConfirm: () => {
+        if (!canEdit()) return false;
         if (!stored(Store.removeVital(kind, id))) return false;
         close();
         toast('已删除');
@@ -383,6 +390,7 @@ function renderRecords() {
     ${Object.entries(REC_KINDS).map(([k, v]) =>
       `<button class="rec-tab ${recTab === k ? 'active' : ''}" aria-pressed="${recTab === k}" aria-controls="rec-body" data-rectab="${k}">${v.name}</button>`).join('')}
   </div>
+  ${Store.data.vitals[recTab].length ? `<button class="btn ghost block" id="btn-rec-history" style="margin-bottom:1rem">查看${REC_KINDS[recTab].name}记录</button>` : ''}
   <div id="rec-body"></div>
   <button class="btn ghost block" id="btn-export" style="margin-top:0.2rem">📤 导出记录给医生看</button>
   <div class="disclaimer">浅绿为目标区（遵医嘱，可在设置里调整）；140/90 为一般提示线。指南建议多数患者在能耐受时降至 130/80 以下（部分情况例外），你的控制目标以医生要求为准。</div>`;
@@ -396,6 +404,8 @@ function renderRecords() {
     $view().querySelector(`[data-rectab="${recTab}"]`).focus({ preventScroll: true });
   });
   document.getElementById('btn-export').onclick = openExport;
+  const historyBtn = document.getElementById('btn-rec-history');
+  if (historyBtn) historyBtn.onclick = () => openVitalHistory(recTab);
 
   const body = document.getElementById('rec-body');
   if (recTab === 'bp') renderBP(body);

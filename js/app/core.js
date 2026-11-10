@@ -151,6 +151,19 @@ function stored(ok) {
     (Store.storageStatus() || {}).message || Store.actionError() || Store.backupError() || '没有保存成功，请重试');
   return false;
 }
+/* 自动同步会更新 Store，却不会更新打开的编辑草稿。保存/删除前核对该任务打开时的值；
+   只读取任务相关字段，避免一次无关打卡或即时字号修改误拦正常保存。 */
+function guardEdit(node, close, readCurrent) {
+  const snapshot = JSON.stringify(readCurrent());
+  return () => {
+    if (!close.active()) return false;
+    refreshIfStale();
+    if (snapshot === JSON.stringify(readCurrent())) return true;
+    hideToast(document.getElementById('toast'));
+    showError(node, '这项内容已在别的页面更新，本次没有修改。请关闭这个窗口，看一眼最新内容后再操作。');
+    return false;
+  };
+}
 /* 提示音：训练页打开期间共用一个 AudioContext，并在用户点按时解锁。
    iOS 上不在点按里创建的 AudioContext 一直是 suspended，计时结束那一声
    （由定时器触发，不是点按）就会静音——老人放下手机做动作，最需要这一声。 */

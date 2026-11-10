@@ -312,10 +312,162 @@ async function runMedTimeLifecycle(port, pages) {
   console.log('PASS  服药时间按动作时刻记录、未来时分拒绝、跨天多层退出、跨页编辑/核对/一键操作保护');
 }
 
+/* 旧表单不能因 Store 已自动同步而绕过磁盘冲突检测。用真实两个页面保存并触发 storage。 */
+async function runEditConflictLifecycle(port, pages) {
+  const page = await openPage(port, caseURL('edit-conflicts'));
+  pages.push(page);
+  await dismissGuide(page);
+  const other = await openPage(port, caseURL('edit-conflicts-other'));
+  pages.push(other);
+  await dismissGuide(other);
+  const cases = [
+    { kind: 'bp', entry: "{sys:120,dia:80,time:'08:00'}", patch: '{sys:140}', input: '#ev-sys', draft: '125', field: 'sys', expected: 140 },
+    { kind: 'glucose', entry: "{value:5.5,gtype:'空腹',time:'08:00'}", patch: '{value:6.5}', input: '#ev-val', draft: '5.8', field: 'value', expected: 6.5 },
+    { kind: 'weight', entry: '{value:60}', patch: '{value:62}', input: '#ev-val', draft: '61', field: 'value', expected: 62 },
+    { kind: 'med', input: '#med-dose', draft: '旧窗口用量', expected: '新用量' },
+    { kind: 'settings', input: '#set-name', draft: '旧窗口称呼', expected: '新称呼' },
+  ];
+  for (const c of cases) {
+    await page.eval('Store.resetAll(); Store.markGuideSeen();');
+    const vital = !['med', 'settings'].includes(c.kind);
+    const open = vital ? `App.go('records'); openVitalEdit('${c.kind}', Store.data.vitals.${c.kind}[0].id)`
+      : c.kind === 'med' ? "App.go('meds'); openMedForm(Store.data.meds[0])" : 'openSettings()';
+    const read = vital ? `Store.data.vitals.${c.kind}[0].${c.field}`
+      : c.kind === 'med' ? 'Store.data.meds[0].dose' : 'Store.data.profile.name';
+    await page.eval(vital ? `Store.addVital('${c.kind}', {date:Store.today(), ...${c.entry}})`
+      : c.kind === 'med' ? "Store.addMed({name:'并发编辑示例药',dose:'原用量',times:['08:00']})" : 'true');
+    await page.eval(open);
+    await page.eval(`document.querySelector('${c.input}').value = '${c.draft}'`);
+    await other.eval('Store.reloadIfChanged()');
+    assert(await other.eval(vital ? `Store.updateVital('${c.kind}', Store.data.vitals.${c.kind}[0].id, ${c.patch})`
+      : c.kind === 'med' ? "Store.updateMed(Store.data.meds[0].id,{dose:'新用量'})"
+        : "Store.data.profile.name='新称呼'; Store.save()"), '另一页保存成功');
+    await waitFor(page, `${read} === ${JSON.stringify(c.expected)}`, '旧编辑开着时数据已同步');
+    const saved = await other.eval('JSON.stringify(Store.data)');
+    await page.eval("toast('上次已保存')");
+    await click(page, vital ? '#ev-save' : c.kind === 'med' ? '#med-save' : '#set-save');
+    assert.strictEqual(await page.eval(read), c.expected, c.kind + ' 旧表单不能覆盖已同步的新值');
+    assert.strictEqual(await page.eval(`document.querySelector('${c.input}')?.value`), c.draft, '冲突保留输入');
+    assert(await page.eval("document.querySelector('.save-feedback')?.textContent.includes('别的页面')"), '冲突说明关闭后重新查看');
+    assert(await page.eval("!document.querySelector('#toast.show')"), '冲突时不残留上一笔保存成功提示');
+    await waitFor(page, "getComputedStyle(document.getElementById('toast')).opacity === '0'", '上一笔反馈完成退场');
+    if (process.argv.includes('--screenshots')) {
+      await page.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 740, deviceScaleFactor: 1, mobile: true });
+      await page.eval("applyFont('xlarge'); document.querySelector('.save-feedback').scrollIntoView({block:'center'})");
+      assert(await page.eval("document.querySelector('.modal-panel').scrollWidth <= 320 && document.documentElement.scrollWidth <= 320"), '冲突提示特大字号小屏不横溢');
+      const shot = await page.send('Page.captureScreenshot', { format: 'png' });
+      fs.writeFileSync(`/tmp/rehab-edit-conflict-${c.kind}.png`, Buffer.from(shot.data, 'base64'));
+      await page.eval('applyFont(Store.data.profile.font)');
+      await page.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    }
+    if (vital || c.kind === 'med') {
+      await click(page, vital ? '#ev-del' : '#med-del');
+      await click(page, '[data-confirm="yes"]');
+      assert.strictEqual(await page.eval('JSON.stringify(Store.data)'), saved, '旧编辑也不能删除别人更新过的记录');
+      await click(page, '[data-confirm="no"]');
+      if (c.kind === 'med') {
+        await click(page, '#med-stop');
+        assert.strictEqual(await page.eval('JSON.stringify(Store.data)'), saved, '旧药物表单不能停用已更新的药');
+      }
+    }
+    await click(page, '.modal-mask:not([inert]) .modal-close');
+    await waitFor(page, '!topOverlay()', '关闭旧编辑');
+    await page.eval(open);
+    await page.eval(`document.querySelector('${c.input}').value = '${c.draft}'`);
+    // 无关的训练打卡不应阻止当前条目的正常修改。
+    await other.eval("Store.reloadIfChanged(); Store.logExercise('bobath')");
+    await waitFor(page, "Store.exercisesDoneToday().includes('bobath')", '无关数据也已同步');
+    if (c.kind === 'med') {
+      await page.eval(`document.querySelector('#med-note').focus();
+        document.querySelector('#med-note').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', isComposing:true, bubbles:true}));`);
+      assert(await page.eval("!!document.querySelector('#med-note')"), '药物备注组字回车不提交');
+      await page.send('Input.dispatchKeyEvent', {type:'keyDown', key:'Enter', code:'Enter', windowsVirtualKeyCode:13});
+      await page.send('Input.dispatchKeyEvent', {type:'keyUp', key:'Enter', code:'Enter', windowsVirtualKeyCode:13});
+    } else await click(page, vital ? '#ev-save' : '#set-save');
+    await waitFor(page, '!topOverlay()', '重新查看后可正常保存');
+    assert.strictEqual(String(await page.eval(read)), c.draft, '重新打开后允许有意修改');
+  }
+  // 保存设置不应把本页即时字号修改误判成外部冲突。
+  await page.eval("openSettings(); document.querySelector('#set-name').value='保留字号';");
+  await click(page, '[data-seg="font"][data-seg-key="large"]');
+  await click(page, '#set-save');
+  await waitFor(page, '!topOverlay()', '即时设置后可保存文本');
+  assert(await page.eval("Store.data.profile.font==='large' && Store.data.profile.name==='保留字号'"), '即时字号与文本都落盘');
+  // 历史行的删除确认也必须绑定打开时所见记录，确认期间的外部修改不能被误删。
+  await page.eval("Store.addVital('weight',{date:Store.today(),value:60}); App.go('records'); openVitalHistory('weight')");
+  await click(page, '.rec-del');
+  await other.eval("Store.reloadIfChanged(); Store.updateVital('weight',Store.data.vitals.weight[0].id,{value:65})");
+  await waitFor(page, 'Store.data.vitals.weight[0].value===65', '确认期间记录被另一页修改');
+  await click(page, '[data-confirm="yes"]');
+  assert(await page.eval('Store.data.vitals.weight[0].value===65'), '旧历史行确认不能删除新记录');
+  assert(await page.eval("!document.querySelector('[data-confirm=\"no\"]').disabled"), '冲突后仍可取消删除');
+  await click(page, '[data-confirm="no"]');
+  await click(page, '.modal-mask:not([inert]) .modal-close');
+  await waitFor(page, '!topOverlay()', '结束历史删除冲突回归');
+  console.log('PASS  血压/血糖/体重/药物/设置：跨页旧表单拒绝覆盖、删除与停用，保留草稿，重开与无关更新可正常保存');
+}
+
+async function runTodayMedStates(port, pages) {
+  const page = await openPage(port, caseURL('today-med-states'));
+  pages.push(page);
+  await dismissGuide(page);
+  await page.eval(`Store.data.meds = []; Store.data.medLog = {}; Store.data.medLate = {}; Store.data.medAt = {}; Store.save(); App.go('today'); render('today');`);
+  const check = async (message, button, total, done) => {
+    assert.strictEqual(await page.eval("document.querySelector('[data-go=meds]').textContent"), button);
+    assert(await page.eval(`document.querySelector('[data-go=meds]').closest('.check-item').textContent.includes(${JSON.stringify(message)})`), message);
+    assert.deepStrictEqual(await page.eval('Store.medProgressToday()'), { total, done });
+    assert.strictEqual(await page.eval('Store.medsOn(Store.today()).reduce((n,m) => n + m.times.length,0)'), total, '今日状态按真实排期');
+    assert.strictEqual(await page.eval("document.querySelector('[data-go=meds]').classList.contains('done')"), total > 0 && done === total, '无排期不能当作已服药');
+    if (!total) {
+      assert(await page.eval(`document.querySelector('.today-summary').textContent.includes(${JSON.stringify(button === '去登记' ? '尚未登记' : '今天没有已登记的服药安排')})`), '总述区分无登记安排');
+      assert(await page.eval("!document.querySelector('.today-summary').textContent.includes('剩下')"), '无排期不催促剩余服药');
+    }
+    const snapshot = await page.eval('JSON.stringify(Store.data)');
+    await click(page, '[data-go=meds]');
+    assert.strictEqual(await page.eval("document.querySelectorAll('#view .med-check').length"), total, '进入用药后排期一致');
+    assert(await page.eval("Boolean(document.querySelector('#btn-add-med'))"), '仍可登记药物');
+    await page.eval("App.go('today')");
+    assert.strictEqual(await page.eval('JSON.stringify(Store.data)'), snapshot, '仅查看不改登记与核对数据');
+  };
+  await check('尚未登记药物', '去登记', 0, 0);
+  await page.eval(`Store.addMed({name:'已停用示例',times:['08:00'],from:Store.addDays(Store.today(),-3)}); Store.stopMed(Store.data.meds.find(m=>m.name==='已停用示例').id,Store.addDays(Store.today(),-1)); render('today');`);
+  await check('今天没有已登记的服药安排', '查看药物', 0, 0);
+  await page.eval(`Store.data.meds=[]; Store.save(); Store.addMed({name:'未来示例',times:['09:00'],from:Store.addDays(Store.today(),1)}); render('today');`);
+  await check('今天没有已登记的服药安排', '查看药物', 0, 0);
+  await page.eval(`Store.addMed({name:'当前示例',times:['08:00','20:00'],from:Store.today()}); Store.addMed({name:'已停用示例',times:['08:00'],from:Store.addDays(Store.today(),-3)}); Store.stopMed(Store.data.meds.find(m=>m.name==='已停用示例').id,Store.addDays(Store.today(),-1)); render('today');`);
+  await check('2 次没核对，一项一项来', '去核对', 2, 0);
+  await page.eval(`Store.toggleMed(Store.data.meds.find(m=>m.name==='当前示例').id,'08:00'); render('today');`);
+  await check('还差 1 次没核对', '去核对', 2, 1);
+  await page.eval(`Store.toggleMed(Store.data.meds.find(m=>m.name==='当前示例').id,'20:00'); render('today');`);
+  await check('今天该吃的都核对了', '已完成', 2, 2);
+  await page.eval(`Store.data.meds=Store.data.meds.filter(m=>m.name==='未来示例'); Store.save(); render('today'); __setVisible(false); __goto(2,10,0); __setVisible(true);`);
+  await waitFor(page, "document.querySelector('[data-go=meds]').textContent==='去核对'", '未来疗程跨天成为今日安排');
+  await check('1 次没核对，一项一项来', '去核对', 1, 0);
+  const other = await openPage(port, caseURL('today-med-other'));
+  pages.push(other);
+  // 两页时钟一致；停用与重新登记均必须通过跨页事件刷新今日页。
+  await other.eval(`__goto(2,10,0); Store.stopMed(Store.data.meds[0].id,Store.addDays(Store.today(),-1));`);
+  await waitFor(page, "document.querySelector('[data-go=meds]').textContent==='查看药物'", '另一页停用后今日无排期');
+  await check('今天没有已登记的服药安排', '查看药物', 0, 0);
+  await other.eval(`Store.reloadIfChanged(); Store.addMed({name:'另一页新增示例',times:['12:00'],from:Store.today()});`);
+  await waitFor(page, "document.querySelector('[data-go=meds]').textContent==='去核对'", '另一页登记后今日出现排期');
+  await check('1 次没核对，一项一项来', '去核对', 1, 0);
+  console.log('PASS  O1 今日用药四态、停用/未来/混合排期、跨天与跨页同步，入口一致且查看不改数据');
+}
+
 (async () => {
   const { browser, profile, port } = await launch();
   const pages = [];
   try {
+    if (process.argv.includes('--optimizations')) {
+      await runTodayMedStates(port, pages);
+      for (const page of pages) assert.deepStrictEqual(exceptionsOf(page), []);
+      return;
+    }
+    if (process.argv.includes('--edit-conflicts')) {
+      await runEditConflictLifecycle(port, pages);
+      return;
+    }
     const cdp = await openPage(port, caseURL('main'));
     pages.push(cdp);
     await dismissGuide(cdp);
@@ -537,6 +689,8 @@ async function runMedTimeLifecycle(port, pages) {
     console.log('PASS  两个页面同开：另一页的记录自动同步，本页再保存不冲突；浮层开着时不被冲掉');
 
     await runMedTimeLifecycle(port, pages);
+    await runEditConflictLifecycle(port, pages);
+    await runTodayMedStates(port, pages);
     for (const page of pages) assert.deepStrictEqual(exceptionsOf(page), [], '运行期间不应有未捕获异常');
 
     /* ⑧ iOS 桌面图标第一次打开：提醒"浏览器里的旧记录不会自动过来" */

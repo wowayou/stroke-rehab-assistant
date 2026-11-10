@@ -19,6 +19,7 @@ function renderToday() {
   const doneIds = Store.exercisesDoneToday();
   const planDone = plan.filter(e => doneIds.includes(e.id)).length;
   const mp = Store.medProgressToday();
+  const hasMeds = Store.data.meds.length > 0;
   const bpDone = Store.bpToday();
 
   const stageName = (STAGES.find(s => s.key === p.stage) || {}).name || '';
@@ -27,11 +28,18 @@ function renderToday() {
   const trainDone = plan.length > 0 && planDone >= plan.length;
   /* 三件事里"已经做到"的件数：只用来说一句肯定的话，不做评分 */
   const thingsDone = [bpDone, medDone, trainDone].filter(Boolean).length;
-  const summary = thingsDone === 3
+  let summary = thingsDone === 3
     ? '今天三件事都做到了，很稳。'
     : thingsDone > 0
       ? `今天已经做到 ${thingsDone} 件，剩下的慢慢来就好。`
       : '一天做一点就好，从最容易的一件开始。';
+  if (!mp.total) {
+    summary = (hasMeds ? '今天没有已登记的服药安排。' : '用药尚未登记，请按医嘱核对。')
+      + (bpDone && trainDone ? '血压记录和推荐训练都做到了。'
+        : bpDone ? '血压已记录，训练慢慢来就好。'
+          : trainDone ? '推荐训练已完成，血压记得记录。'
+            : '血压记录和训练，从容易的一件开始。');
+  }
 
   /* 连续天数断了不清零、不指责：先肯定过去，再把重新开始说成很轻的一步 */
   const best = Store.bestStreak();
@@ -70,10 +78,10 @@ function renderToday() {
         <div class="ci-name">按时服药</div>
         <div class="ci-sub">${mp.total
           ? (medDone ? '今天该吃的都核对了 ✓' : leftText(mp.done, mp.total, '次没核对'))
-          : '先到「用药」页登记药物'}</div>
+          : hasMeds ? '今天没有已登记的服药安排' : '尚未登记药物，请按医嘱到「用药」页登记'}</div>
         ${mp.total ? dotsHTML(mp.done, mp.total) : ''}
       </div>
-      <button class="ci-action ${medDone ? 'done' : ''}" data-go="meds">${medDone ? '已完成' : '去核对'}</button>
+      <button class="ci-action ${medDone ? 'done' : ''}" data-go="meds">${mp.total ? (medDone ? '已完成' : '去核对') : hasMeds ? '查看药物' : '去登记'}</button>
     </div>
     <div class="check-item ${trainDone ? 'done' : ''}">
       <div class="ci-icon" aria-hidden="true">💪</div>

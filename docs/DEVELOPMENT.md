@@ -121,6 +121,8 @@ data-exercises.js → data-articles.js → storage.js → charts.js → games.js
 
 全局名清单：`EXERCISES` `EX_CATS` `STAGES` `DAILY_PLAN` `ARTICLES` `BEFAST` `Store` `Charts` `Games` `FIG` `POSES` `FIGURES` `Speech` `App`，外加 `js/app/` 各文件的顶层函数与变量。服药时间入口 `medScreenStale` / `openMedTimeEdit` 位于 `js/app/meds.js`，不新增脚本或改变加载顺序。
 
+`guardEdit` 位于 `js/app/core.js`，供记录、药物和设置表单复用编辑快照检查；脚本组成与加载顺序不变。
+
 **`js/app/` 是同一个程序切成的几段**（2026-10 由 2800 行的 app.js 拆出，纯搬移、逻辑未改）：普通 `<script>` 共用一个全局作用域，所以一个文件里的函数可以直接调用另一个文件里的函数（运行时都已加载）；但**文件顶层立即执行的代码只能用排在它前面的文件里的东西**——`boot.js` 的 `RENDERERS` 在加载时就引用各页的 `renderXxx`，所以它必须最后。代价是这些名字都成了全局名，两条护栏防止出事：`contracts.test.js` 查各文件顶层名字不重复（`let/const` 重复整页加载失败，`function` 重复会悄悄覆盖）；`compat.test.js` 在真实浏览器里查它们不与浏览器自带的全局名同名（同名会盖掉 `window` 上的东西）。为什么不用 ES Modules：会让 `file://` 白屏、老设备兼容更差（硬约定 2、17），而切文件已经拿到"一次只读一块"的主要好处。
 
 `sw.js` 不在这个顺序里（它跑在 Service Worker 线程，由 `js/app/boot.js` 的 `registerOffline()` 注册），也不读任何全局名。新增脚本时放在 `js/app/boot.js` 之前的合适位置，同步改 `index.html`、本节、`contracts.test.js` 的 `APP_FILES`（应用层文件）与 `test/smoke.sh` 的静态资源清单；`deploy.sh` 整目录拷贝 `js/`，无需改。
@@ -209,7 +211,8 @@ data-exercises.js → data-articles.js → storage.js → charts.js → games.js
 - **记录时间与键盘流（v0.2.32）**：`bindWhenToggle(prefix)` 维护 `row.dataset.touched`，未改过时小条显“现在 · 修改”（体重“今天”），`whenOf(prefix)` 未改过取保存那刻、改过取输入值；日期 `max=今天`。三表单与修改弹窗共用 `readVital(kind, prefix, when)`。`bindEnterFlow(inputs, onDone)` 设 `enterkeyhint`、回车跳下一框、最后一框 `onDone`（`isComposing`/keyCode 229 时不触发）。
 - **应用内确认与轻震（v0.2.32，硬约定 18）**：`confirmInPlace/tick/bindEnterFlow` 在 `js/app/core.js`；`confirmInPlace` 的确认键点一次后禁用双键（防连点双删）；**`onConfirm()` 返回 `false`（保存失败）时解除禁用、焦点回取消键**（行里无 ✕ 可退，不恢复就卡死；F2 修）；三处调用方失败分支 `return false`。
 - **改服药时间后的“孤儿”核对（v0.2.32，已知取舍）**：`updateMed` 改时间点时今天旧时间点的核对会落在当天时间表之外，而 `toggleMed` 拒绝不在排期的时间点，所以用户当天无法取消这些旧记录（只能留在数据里，不影响计数：历史日按 `timesOn` 分版本，今天用新时间点统计）。影响小，未改代码。
-- **补记计数与改时间点/开始日期的偏差（v0.2.32，已知取舍）**：`medAdherence` 的 `late` 直接数 `data.medLate[date]` 的键，而 `done/total` 只按当天 `timesOn` 计；若先补记、再改服药时间点或把开始日期回填得更早，个别 medLate 会落在当天时间表外成为孤儿，使报告「其中 N 次为事后补记」的 N 偏大（可能超过实际计入 `done` 的补记数）。概率极低，只影响给医生看的补记条数、不动主依从率与患者主界面，未改代码。
+- **补记计数（2026-11 修正）**：`medAdherence().late` 只数计入日中 `medsOn × timesOn` 内已核对且带补记标记的次数，与 `done` 同一范围；停止疗程、修正开始日期或残留旧时间点都不能让 `late > done`。原始核对与补记键保留，回归在 `storage.test.js`。
+- **编辑快照（2026-11）**：记录编辑/历史删除、药物编辑/停用/撤销停用/新疗程、设置保存通过 `guardEdit(node, close, readCurrent)` 捕获任务相关值，操作前先同步再比对。即使 `Store` 已收到另一页更新，旧草稿仍须拒绝覆盖；冲突保留输入，无关打卡或即时字号变化不误拦。读值回调不含 DOM 草稿；药物包含前后关联疗程，设置只包含需按保存的字段。回归：`lifecycle.test.js --edit-conflicts`；加 `--screenshots` 可查看小屏错误状态。
 - **补记标记与一键撤销（v0.2.32 P2#1）**：`date<today()` 时的核对算补记，写 `Store.medLate`（`medLog` 仍只存 true）。“这天的都吃了”（`openMedDay` 内 `#med-day-all`）**不加两步确认**，成功后 `toast(msg, {label:'撤销', onClick})` 带一个可点撤销键（≥48px、一次后失效）。提示条在弹窗外、DOM 里排在弹窗之前：`init` 的 Tab 处理把 `#toast.show.has-action .toast-action` 接到焦点环末尾，`focusin` 对 `#toast` 置例外。`hideToast` 在设 `inert=true` 前记下提示条是否持有焦点，有焦点才接回顶层弹窗；`toast` 重建内容后恢复 `inert=false`。交互契约见 [DESIGN-SYSTEM](DESIGN-SYSTEM.md#3-组件契约)。撤销走 `Store.uncheckMedsOn(date, added)` **一次性回退本次新勾上的键**（原已核对的保留）并只 save 一次；写盘失败经 `stored()` 提示、内存回滚，数据与历史行仍是“全吃到”两边一致（不会逐项 toggle 到一半）；成功后重画背景页并调 `topOverlay()?._onResume?.()` 同步历史行文案。报告与“给医生看的数字”折叠区在 `late>0` 时加“其中 N 次为事后补记”；患者主界面（核对列表/圆点/每天那行）不区分补记（§5 不指责）。回归在 `storage.test.js`（medLate 读写/规范化/备份往返/限额/late 数值/报告，及撤销写盘失败回滚）与 `overlay.test.js`（AC4.3 从自动恢复焦点的日期行发真实 Tab、双向循环、回车撤销与焦点回标题；AC4.4 真实 8 秒超时、隐藏键不可达、无障碍树、持久化及新提示再次可撤销）。Chromium 检查不替代真机读屏，执行项见 [MANUAL-TEST](MANUAL-TEST.md) 20a-2/20a-3。
 - **安全/转义纪律**：所有**用户输入**（姓名、药名、剂量、备注等）插入 HTML 前必须过 `esc()`。`data-*.js` 里的静态内容是我们自己写的，直接插入；**如果未来文章/动作内容改为用户可编辑或远程下发，必须改为全量转义或消毒**。
 - 提示反馈：`toast(msg[, action])`（默认 5s 自动消失；带 `action={label,onClick}` 时留 8s、按钮可点）；普通提示不拦截下层点击，替换提示必须清掉旧动作状态，动作回调产生的新反馈不得被旧提示的收尾隐藏。需用户处理的错误用 `showError()` 持续显示，存储问题另由 `renderStorageNotice()` 显示；`beep()`（WebAudio 提示音+震动，失败静默）。
@@ -409,6 +412,20 @@ for f in js/*.js; do node --check "$f"; done
 ## 9. 已知限制与后续路线
 
 **优先级硬规则（2026-08-10 用户确认）**：先处理会影响患者能否正确、安全、持续完成康复的交互与信息准确性，再做有明确恢复收益的功能；备份、离线、平台迁移等便利性工作排在后面。医学内容必须先有权威依据和专业复核，不能用“功能更多”替代准确。
+
+### 2026-11-10 走查后的优化方案（已实施）
+
+用户已确认实施以下三项，当前验证与发布状态见 [HANDOVER](HANDOVER.md)。医学阈值、动作内容、数据格式、依赖与发布链路不变。界面行为和验收标准只维护在 [DESIGN-SYSTEM §9](DESIGN-SYSTEM.md#9-2026-11-10-优化验收标准)。
+
+| 顺序 / 编号 | 走查依据与具体方案 | 涉及范围与取舍 |
+|---|---|---|
+| 1 / O1 今日用药状态 | 原来无排期一律提示先登记，停用/未来疗程时信息不准确。 | `today.js` 复用 `medProgressToday()`，仅用药物清单是否为空区分未登记；回归在 `lifecycle.test.js --optimizations`。 |
+| 2 / O2 直接查看历史 | 原入口在录入卡下方，小屏需继续滚动才看到。 | `records.js` 增加次要入口并复用 `openVitalHistory()`；稳定按钮 ID 供重画后恢复焦点。回归在 `overlay.test.js --optimizations`。 |
+| 3 / O3 收起其他阶段动作 | 全部阶段连续展示使列表过长，折叠的代价是多一次展开。 | `train.js` 复用原生 `details/summary` 与 disclosure 样式；稳定 ID 由 `render(..., { keepScroll: true })` 保留开合。回归同 O2。 |
+
+暂不加入数值预填/“和上次差不多”快捷保存：会增加把旧读数误当新测量的风险，当前不值得用这个代价减少输入。暂无新增付费服务、后台任务或自动化运行；若后续改变托管或调用外部服务，须另核费用和限额。
+
+### 既有边界与长期路线
 
 当前明确不做/做不了（对应 §2 的取舍）：
 

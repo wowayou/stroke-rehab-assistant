@@ -879,6 +879,29 @@ assert(!/事后补记/.test(Store.exportReport()), 'P2#1 无补记时报告不�
 assert(Store.medAdherence(7).late === 0, 'P2#1 无补记时 late=0');
 v32Fresh();
 
+/* 补记只能是计入 done 的子集：停用/修正开始日期后保留的旧核对、排期外键不计入。 */
+['停用示例药', '改开始日期示例药', '仍在服用示例药'].forEach(name => Store.addMed({ name, times: ['08:00'] }));
+const lateIds = Store.data.meds.map(m => m.id);
+const lateDay = Store.addDays(T, -1);
+Store.data.meds.forEach(m => { m.from = Store.addDays(T, -3); m.trackFrom = m.from; });
+Store.save();
+Store.checkAllMedsOn(lateDay);
+assert(Store.medAdherence(7).late === 3, '改排期前计入三次补记');
+Store.stopMed(lateIds[0], Store.addDays(T, -2));
+Store.updateMed(lateIds[1], { from: T });
+// 模拟备份中保留的旧时间点；不删除历史，只从统计中排除。
+Store.data.medLog[lateDay][lateIds[2] + '@12:00'] = true;
+Store.data.medLate[lateDay][lateIds[2] + '@12:00'] = true;
+Store.save();
+const lateSnapshot = JSON.stringify(Store.data);
+const filteredLate = Store.medAdherence(7);
+assert(filteredLate.done === 1 && filteredLate.late === 1, '补记只数当天排期内且已核对的次数，实际 ' + JSON.stringify(filteredLate));
+assert(/其中 1 次为事后补记/.test(Store.exportReport()), '报告必须使用筛选后的补记次数');
+assert(JSON.stringify(Store.data) === lateSnapshot, '统计不删除排期外的历史核对和补记标记');
+Store.load();
+assert(Store.medAdherence(7).late === 1, '重读后补记统计口径不变');
+v32Fresh();
+
 /* --- v0.2.36：实际服药时间 medAt（今天核对记下点击时刻，可改；补记/一键核对不记） --- */
 v32Fresh();
 Store.addMed({ name: '时间药', times: ['08:00', '20:00'] });

@@ -751,7 +751,10 @@ const Store = (() => {
       if (!c.total) return;
       if (!(date < td || c.done >= c.total)) return;
       days++; total += c.total; done += c.done;
-      if (data.medLate[date]) late += Object.keys(data.medLate[date]).length;
+      /* 补记必须属于计入 done 的核对；停用/改开始日后保留的旧键不能单独抬高补记数。 */
+      if (data.medLate[date]) medsOn(date).forEach(m => timesOn(m, date).forEach(tm => {
+        if (isMedTaken(m.id, tm, date) && data.medLate[date][medKey(m.id, tm)]) late++;
+      }));
     });
     if (!days) return null;
     return { pct: Math.round(done / total * 100), done, total, days, late };

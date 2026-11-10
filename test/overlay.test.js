@@ -107,9 +107,9 @@ async function waitFor(cdp, expression, label, timeout = 5000) {
 
 // 通过 Chromium DevTools Protocol（浏览器调试协议）发送真实按键，包含浏览器默认的 Tab/回车行为。
 async function pressKey(cdp, key, shift = false) {
-  const keyCode = { Tab: 9, Enter: 13, Escape: 27 }[key];
+  const keyCode = { Tab: 9, Enter: 13, Escape: 27, ' ': 32 }[key];
   assert(keyCode, `未支持的测试按键：${key}`);
-  const params = { key, code: key, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers: shift ? 8 : 0 };
+  const params = { key, code: key === ' ' ? 'Space' : key, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers: shift ? 8 : 0 };
   await cdp.send('Input.dispatchKeyEvent', { ...params, type: key === 'Enter' ? 'keyDown' : 'rawKeyDown', ...(key === 'Enter' ? { text: '\r' } : {}) });
   await cdp.send('Input.dispatchKeyEvent', { ...params, type: 'keyUp' });
 }
@@ -316,6 +316,152 @@ async function closeAll(cdp) {
     await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape' });
     await delay(100);
   }
+}
+
+async function runOptimizationRegression(cdp) {
+  await closeAll(cdp);
+  await cdp.eval(`window.__optBefore = JSON.parse(JSON.stringify(Store.data));
+    Store.data.vitals = {bp:[],glucose:[],weight:[]}; Store.save();
+    Object.keys(recordDrafts).forEach(k=>delete recordDrafts[k]); recordSaved=null;
+    App.go('records'); render('records');`);
+  const kinds = [
+    ['bp', '血压', 'bp-sys', '137', { sys: 130, dia: 80, time: '09:00' }],
+    ['glucose', '血糖', 'glu-val', '6.1', { value: 5.8, gtype: '空腹', time: '09:00' }],
+    ['weight', '体重', 'wt-val', '61', { value: 60 }],
+  ];
+  for (const [kind, name, input, draft, entry] of kinds) {
+    await click(cdp, `[data-rectab="${kind}"]`);
+    assert(await cdp.eval("!document.querySelector('#btn-rec-history') && !!document.querySelector('.empty-tip')"), `${name}空态不摆历史入口`);
+    await cdp.eval(`Store.addVital('${kind}',Object.assign({date:Store.today()},${JSON.stringify(entry)})); render('records',{keepScroll:true});
+      document.querySelector('#${input}').value='${draft}'; document.querySelector('#${input}').dispatchEvent(new Event('input',{bubbles:true}));`);
+    for (const font of ['normal', 'large', 'xlarge']) {
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+      await cdp.eval(`document.documentElement.dataset.font='${font}'; scrollTo(0,0);`);
+      assert.strictEqual(await cdp.eval("document.querySelector('#btn-rec-history').textContent"), `查看${name}记录`);
+      if (font === 'normal') assert(await cdp.eval(`(() => { const r=document.querySelector('#btn-rec-history').getBoundingClientRect(); return r.top>=0 && r.bottom < document.querySelector('.bottom-nav').getBoundingClientRect().top; })()`), `${name}历史入口首屏可见`);
+      assert(await cdp.eval("document.querySelector('#btn-rec-history').classList.contains('ghost')"), '历史是次要入口');
+      const snapshot = await cdp.eval('JSON.stringify(Store.data)');
+      for (const method of ['click', 'keyboard']) {
+        if (method === 'click') await click(cdp, '#btn-rec-history');
+        else {
+          await cdp.eval(`document.querySelector('[data-rectab="weight"]').focus()`);
+          await pressKey(cdp, 'Tab');
+          assert.strictEqual(await cdp.eval('document.activeElement.id'), 'btn-rec-history', 'Tab 从类型栏到历史入口');
+          await pressKey(cdp, 'Enter');
+        }
+        const y = await cdp.eval('scrollY');
+        await waitFor(cdp, "document.querySelector('.m-title')", '打开历史');
+        assert(await cdp.eval(`document.querySelector('.m-title').textContent.includes('${name}历史') && document.querySelectorAll('.rec-row').length===1`), `${name}一次打开对应历史`);
+        if (method === 'click') await click(cdp, '.modal-close');
+        else await cdp.eval('history.back()');
+        await waitFor(cdp, '!topOverlay()', '关闭历史');
+        assert.strictEqual(await cdp.eval('document.activeElement.id'), 'btn-rec-history', '焦点回直达入口');
+        assert.strictEqual(await cdp.eval(`document.querySelector('#${input}').value`), draft, '未保存输入仍在');
+        assert.strictEqual(await cdp.eval('recTab'), kind, '所选类型不变');
+        assert(await cdp.eval(`Math.abs(scrollY-${y})<=2`), '滚动位置不变');
+        assert.strictEqual(await cdp.eval('JSON.stringify(Store.data)'), snapshot, '查看不保存草稿或改健康记录');
+      }
+    }
+  }
+  for (const [kind, name, input, draft] of kinds) {
+    await click(cdp, `[data-rectab="${kind}"]`);
+    for (const trigger of ['#btn-rec-history', `#rec-body [data-hist="${kind}"]`]) {
+      await click(cdp, trigger);
+      await click(cdp, '.rec-open');
+      await cdp.eval(`document.querySelector('${kind==='bp' ? '#ev-sys' : '#ev-val'}').value='${kind==='bp' ? 133 : kind==='glucose' ? 6.3 : 62}'`);
+      await click(cdp, '#ev-save');
+      await waitFor(cdp, "document.querySelectorAll('.modal-mask').length===1", '编辑后回历史');
+      await click(cdp, '.modal-close');
+      await waitFor(cdp, '!topOverlay()', '重画后退出历史');
+      assert(await cdp.eval(`document.activeElement.matches(${JSON.stringify(trigger)})`), `${name}编辑后回原历史入口`);
+      assert.strictEqual(await cdp.eval(`document.querySelector('#${input}').value`), draft, '历史编辑不覆盖录入草稿');
+    }
+  }
+  console.log('PASS  O2 三类空/有记录、三字号、首屏直达、Tab/回车、编辑与返回保留草稿/类型/位置/原入口焦点');
+
+  await cdp.eval("document.documentElement.dataset.font='normal'; catTab='limb'; App.go('train');");
+  for (const stage of ['bed','sitting','standing','walking']) {
+    await cdp.eval("document.querySelector('#train-stage').open=true");
+    await click(cdp, `[data-stage="${stage}"]`);
+    assert(await cdp.eval(`JSON.stringify([...document.querySelectorAll('#ex-list > .ex-item [data-ex]')].map(b=>b.dataset.ex))===JSON.stringify(EXERCISES.filter(e=>e.cat==='limb' && e.stage==='${stage}').map(e=>e.id))`), `${stage}当前阶段完整展开`);
+    assert(await cdp.eval(`JSON.stringify([...document.querySelectorAll('#train-other-stages [data-ex]')].map(b=>b.dataset.ex))===JSON.stringify(EXERCISES.filter(e=>e.cat==='limb' && e.stage!=='${stage}').map(e=>e.id))`), `${stage}其余动作 ID 无增减`);
+    assert(await cdp.eval("!document.querySelector('#train-other-stages').open"), `${stage}其他阶段默认收起`);
+    await cdp.eval("document.querySelector('#ex-list > .ex-item:last-of-type [data-ex]').focus()");
+    await pressKey(cdp, 'Tab');
+    assert(await cdp.eval("document.activeElement.matches('#train-other-stages summary')"), 'Tab 可到折叠标题');
+    for (const [key, expected] of [['Enter',true], [' ',false], [' ',true]]) {
+      await pressKey(cdp, key);
+      assert.strictEqual(await cdp.eval("document.querySelector('#train-other-stages').open"), expected, '回车/空格可展开收起');
+      const tree = await cdp.send('Accessibility.getFullAXTree');
+      const summary = tree.nodes.find(n => !n.ignored && n.name?.value.includes('其他阶段动作') && n.properties?.some(p=>p.name==='expanded'));
+      assert(summary && summary.properties.find(p=>p.name==='expanded').value.value===expected, '无障碍树报告开合状态');
+    }
+    assert(await cdp.eval(`EXERCISES.filter(e=>e.cat==='limb').every(e=>{const row=document.querySelector('[data-ex="'+e.id+'"]').closest('.ex-item');return row.querySelector('.ex-name').textContent.includes(e.name) && row.querySelector('.ex-dose').textContent===e.dose;})`), '原名称/剂量完整');
+    const ids = await cdp.eval("[...document.querySelectorAll('#train-other-stages [data-ex]')].map(b=>b.dataset.ex)");
+    for (const id of ids) {
+      await click(cdp, `[data-ex="${id}"]`);
+      assert(await cdp.eval(`document.querySelector('.trainer-caution').textContent.includes(EXERCISES.find(e=>e.id==='${id}').caution)`), `${id}原安全警示完整`);
+      await pressKey(cdp, 'Escape');
+      await waitFor(cdp, '!topOverlay()', '退出训练');
+      assert(await cdp.eval("document.querySelector('#train-other-stages').open"), '返回保留展开');
+      assert.strictEqual(await cdp.eval('document.activeElement.dataset.ex'), id, '返回原动作');
+    }
+    const rep = await cdp.eval("EXERCISES.find(e=>e.cat==='limb' && e.stage!==Store.data.profile.stage && e.mode.type==='reps').id");
+    await click(cdp, `[data-ex="${rep}"]`);
+    const y = await cdp.eval('scrollY');
+    const count = await cdp.eval("Number(document.querySelector('#rep-count').textContent)");
+    await click(cdp, '#rep-btn');
+    assert.strictEqual(await cdp.eval("Number(document.querySelector('#rep-count').textContent)"), count-1, '计次正常');
+    await click(cdp, '#trainer-done');
+    await waitFor(cdp, '!topOverlay()', '提前结束仍打卡');
+    assert(await cdp.eval(`Store.isExDone('${rep}') && document.querySelector('#train-other-stages').open && Math.abs(scrollY-${y})<=2`), '打卡重画保持展开与位置');
+    assert.strictEqual(await cdp.eval('document.activeElement.dataset.ex'), rep, '重画后焦点回原动作');
+    await click(cdp, '#train-other-stages summary');
+  }
+  console.log('PASS  O3 四阶段分组、完整条目/剂量/警示、键盘与无障碍开合、返回/计次/打卡保留状态');
+  await click(cdp, '#train-other-stages summary');
+  await click(cdp, '[data-ex="sit-balance"]');
+  await click(cdp, '#timer-toggle');
+  const time = await cdp.eval("document.querySelector('#timer-num').textContent");
+  await waitFor(cdp, `document.querySelector('#timer-num').textContent!==${JSON.stringify(time)}`, '计时继续递减');
+  await click(cdp, '#trainer-done');
+  await waitFor(cdp, '!topOverlay()', '计时中途结束仍打卡');
+  assert(await cdp.eval("Store.isExDone('sit-balance') && document.querySelector('#train-other-stages').open"));
+  await click(cdp, '[data-cat="cognitive"]');
+  await click(cdp, '[data-ex="game-math"]');
+  await click(cdp, '.level-btn');
+  await click(cdp, '.game-foot .link-btn:last-child');
+  await waitFor(cdp, '!topOverlay()', '游戏中途收工');
+  assert(await cdp.eval("Store.isExDone('game-math') && document.activeElement.dataset.ex==='game-math'"), '游戏中途收工仍打卡并回原动作');
+  await click(cdp, '[data-cat="limb"]');
+  console.log('PASS  计时与认知游戏中途收工仍打卡');
+
+  // 三项新增状态都进入六宽度 × 三字号审计；训练收起/展开均检查。
+  await cdp.eval("Store.data.meds=[]; Store.save(); Store.addMed({name:'未来示例',times:['08:00'],from:Store.addDays(Store.today(),1)});");
+  for (const width of [320,360,390,768,1024,1280]) for (const font of ['normal','large','xlarge']) {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: width<1024 });
+    await cdp.eval(`document.documentElement.dataset.font='${font}'`);
+    for (const view of ['today','records','train']) {
+      await cdp.eval(`App.go('${view}')`);
+      for (const open of view==='train' ? [false,true] : [false]) {
+        if (view==='train') await cdp.eval(`document.querySelector('#train-other-stages').open=${open}`);
+        assert(await cdp.eval('document.documentElement.scrollWidth<=innerWidth'), `${width}/${font}/${view}/${open} 无横向溢出`);
+        assert(await cdp.eval(`Array.from(document.querySelectorAll('#view button, #view summary')).filter(el=>!el.closest('details:not([open]) .disclosure-body')).every(el=>{const r=el.getBoundingClientRect();return r.width>=48 && r.height>=48;})`), '新增控件可触达且至少48px');
+        assert(await cdp.eval(`Array.from(document.querySelectorAll('.ci-sub, #btn-rec-history, #train-other-stages summary, .ex-name, .ex-dose')).filter(el=>!el.closest('details:not([open]) .disclosure-body')).every(el=>el.scrollWidth<=el.clientWidth+1 && el.scrollHeight<=el.clientHeight+1)`), '关键文字完整无裁剪');
+        if (cliArgs.includes('--screenshots') && ((width===390 && font==='normal') || (width===320 && font==='xlarge'))) {
+          await cdp.eval("hideToast(document.getElementById('toast'))");
+          if (view==='train') await cdp.eval("scrollTo(0,scrollY+document.querySelector('#train-other-stages summary').getBoundingClientRect().top-document.querySelector('.app-header').getBoundingClientRect().bottom-12)");
+          await delay(260); // 等提示淡出与开合箭头动画结束再截图。
+          const shot=await cdp.send('Page.captureScreenshot',{format:'png'});
+          fs.writeFileSync(`/tmp/rehab-opt-${view}-${width}-${font}-${open}.png`,Buffer.from(shot.data,'base64'));
+        }
+      }
+    }
+  }
+  await cdp.eval(`Object.assign(Store.data,window.__optBefore); Store.save(); delete window.__optBefore;
+    Object.keys(recordDrafts).forEach(k=>delete recordDrafts[k]); recordSaved=null; recTab='bp'; catTab='limb';
+    document.documentElement.dataset.font='normal'; App.go('today');`);
+  console.log('PASS  O1–O3 六宽度 × 三字号（训练双状态）：无溢出/裁剪、控件至少48px');
 }
 
 async function runUXRegression(cdp) {
@@ -662,6 +808,18 @@ async function runBackfillRegression(cdp) {
   await cdp.eval("App.go('meds')");
   const medHistURL = await cdp.eval('location.href');
   await clickAndWait(cdp, '#btn-med-hist', `document.querySelector('#med-day-${seed.qian}')`, '服药历史打开');
+  await cdp.eval("document.querySelector('.modal-mask summary').focus()");
+  await pressKey(cdp, 'Enter');
+  assert(await cdp.eval("document.querySelector('.modal-mask details').open"), '键盘可展开医生数字');
+  await pressKey(cdp, 'Tab');
+  assert(await cdp.eval("document.activeElement.classList.contains('day-go')"), '折叠标题后 Tab 继续到日期行，不跳回标题栏');
+  await pressKey(cdp, 'Tab', true);
+  assert(await cdp.eval("document.activeElement.tagName === 'SUMMARY'"), '日期行 Shift+Tab 回到折叠标题');
+  await pressKey(cdp, 'Tab', true);
+  assert(await cdp.eval("document.activeElement.classList.contains('modal-close')"), '折叠标题 Shift+Tab 按顺序回到关闭按钮');
+  await pressKey(cdp, 'Tab');
+  await pressKey(cdp, 'Enter');
+  assert(await cdp.eval("!document.querySelector('.modal-mask details').open"), '键盘可再次收起医生数字');
   await clickAndWait(cdp, `#med-day-${seed.qian}`, "document.querySelector('.modal-mask:not([inert]) .med-check')", '打开补记子弹窗');
   await click(cdp, '.modal-mask:not([inert]) .med-check');
   await delay(180);
@@ -1206,6 +1364,12 @@ async function runBackfillRegression(cdp) {
 (async () => {
   const { browser, cdp, profile } = await launch();
   try {
+    if (cliArgs.includes('--optimizations')) {
+      await prepare(cdp, 'optimizations');
+      await runOptimizationRegression(cdp);
+      assert.strictEqual(cdp.events.filter(event=>event.method==='Runtime.exceptionThrown').length,0);
+      return;
+    }
     let url = await prepare(cdp, 'close');
     await clickAndWait(cdp, '.modal-close', "document.querySelectorAll('.modal-mask').length === 1 && document.querySelector('#set-save') && !document.querySelector('#set-save').closest('[inert]')", '关闭备份弹窗');
     await assertAppAlive(cdp, url, '关闭备份');
@@ -1235,6 +1399,7 @@ async function runBackfillRegression(cdp) {
     console.log('PASS  加密并下载后应用仍在当前页面');
 
     await runUXRegression(cdp);
+    await runOptimizationRegression(cdp);
     await runRecordsSummaryRegression(cdp);
     await runMedicalContentRegression(cdp);
     await runBackfillRegression(cdp);

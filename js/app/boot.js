@@ -153,7 +153,7 @@ function init() {
     if (!top) return;
     if (e.key === 'Escape') { e.preventDefault(); dismissTopOverlay(); }
     if (e.key === 'Tab') {
-      const items = [...top.querySelectorAll('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]')]
+      const items = [...top.querySelectorAll('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]')]
         .filter(el => el.tabIndex >= 0 && el.getClientRects().length);
       const first = items[0], last = items[items.length - 1];
       /* 撤销提示条在弹窗外（DOM 里还排在弹窗之前），原生 Tab 到不了；把它接到焦点环末尾，

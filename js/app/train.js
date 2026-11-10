@@ -56,8 +56,10 @@ function renderTrain() {
     document.getElementById('ex-list').innerHTML =
       `<div class="ex-group-label">适合当前阶段（${esc(stageName(p.stage))}）</div>`
       + mine.map(e => exCardHTML(e, doneIds.includes(e.id))).join('')
-      + `<div class="ex-group-label">其他阶段动作（量力选做）</div>`
-      + others.map(e => exCardHTML(e, doneIds.includes(e.id), stageName(e.stage))).join('');
+      + `<details class="disclosure" id="train-other-stages">
+          <summary><span><strong>其他阶段动作（量力选做）</strong><span class="disclosure-hint">点此展开或收起</span></span><span class="disclosure-arrow" aria-hidden="true"></span></summary>
+          <div class="disclosure-body">${others.map(e => exCardHTML(e, doneIds.includes(e.id), stageName(e.stage))).join('')}</div>
+        </details>`;
   } else {
     document.getElementById('ex-list').innerHTML =
       list.map(e => exCardHTML(e, doneIds.includes(e.id))).join('');

@@ -7,6 +7,9 @@
 
 | 日期 | 版本 | 变更 |
 |---|---|---|
+| 2026-11-10 | v0.2.38（验收通过，待部署） | 用户要求验收后提交、推送部署。独立审查三项优化及同轮走查修复，无返工项。重跑 storage/contracts/records/medical-content/settings/lifecycle/compat、overlay --stress（40轮、六宽×三字号）、smoke通过；复看小屏截图，Node8/24语法及diff通过，生产23文件与发布前基线一致。未验：新版生产、真机/真人任务、医学复核；部署被原生产账号登录权限阻塞，状态见HANDOVER。 |
+| 2026-11-10 | 三项优化，本地完成 | 用户确认实施 O1–O3：今日用药四态、记录历史直达、其他阶段动作折叠；保留原表单、动作与警示。验证：四态/跨天/跨页、草稿与新旧入口焦点、四阶段开合/打卡、六宽×三字号通过；storage/contracts/records/medical-content/settings/lifecycle/compat、overlay --stress（40轮）、smoke、语法/diff通过，小屏截图已看。未验：真机/真人任务、生产及旧版JS解析器；未提交/推送/部署。 |
+| 2026-11-10 | 本地修复，待验收 | 对齐本地/远程 `25d70f2` 与生产23文件。走查修复旧表单跨页覆盖/误删、补记次数偏大、折叠标题Tab顺序、药物末项回车未保存；冲突保留输入并收起旧成功提示。验证：新增数据/覆盖回归旧版失败；storage/contracts/records/settings/lifecycle/compat、overlay --stress --screenshots、smoke、语法及diff通过，小屏截图已看。优化方案与标准已落档，待用户确认。未验：真机、医生复核、新版生产；未提交/推送/部署。 |
 | 2026-10-21 | v0.2.37（部署 `c049c8e2`） | 用户授权后推送 `main` 并从干净工作区部署。验证：23/23 运行文件与 `d31b869` 一致（`ver=20261021115716`），安全响应头及 sw.js 无 CSP/no-cache 在位；生产 settings、lifecycle、overlay --stress（含 40 轮）通过；隔离浏览器确认 22 项离线缓存含新版脚本，断网后页面打开、本地读写及新版文章可见。未验：真机朗读/读屏/返回、医生复核。 |
 | 2026-10-21 | v0.2.37（验收补正，本地） | 验收反证发现“发病早期”仍可能被读成任意早期，削弱适用范围护栏。按 ESO 原文把短期双抗窗口写明“发病 24 小时内”，保持医生判断与支架例外不变。验证：medical-content（含旧版反验）、speech、contracts、overlay 及 smoke 重跑。未验：医生复核、真机、生产；未推送、未部署。 |
 | 2026-10-21 | v0.2.37（阶段2，本地） | 双抗三周限定适用人群，明确支架术后不能照搬；README去掉泛化示例。复诊文章前置突发症状立即120、缓解仍急诊，其余警示保留，依据见RESEARCH。验证：medical-content/records旧版反验及6项变异均拒绝；全部Node/Chromium回归、overlay --stress --screenshots、smoke、Node8/24语法与diff检查通过；新增12组文章布局及实际朗读稿、小屏截图已核对。未验：医生专业复核、真机、生产；未推送、未部署。 |

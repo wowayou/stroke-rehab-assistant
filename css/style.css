@@ -391,6 +391,10 @@ input[aria-invalid="true"], select[aria-invalid="true"] { border: 2px solid var(
 .disclosure-action .disclosure-arrow { border-color: currentColor; }
 .disclosure[open] .disclosure-arrow { transform: translateY(0.06em) rotate(-135deg); }
 .disclosure-body { padding: 0 1rem 1rem; }
+/* 其他阶段仍在同一张训练列表卡内，不再叠加一层内缩。 */
+#train-other-stages { margin-top: 0; }
+#train-other-stages summary { padding: 0.85rem 0.15rem; }
+#train-other-stages .disclosure-body { padding: 0; }
 
 /* 设置页输入控件：弹性填满行宽，任何字号下都与标签同行（iOS 设置列表式） */
 .set-input {
