@@ -19,7 +19,7 @@ function medCheckListHTML(items, date) {
       ${slots[tm].map(it => `
       <div class="med-line">
         <div class="med-check ${it.taken ? 'checked' : ''}" data-med="${esc(it.medId)}" data-time="${esc(it.time)}" role="checkbox" aria-checked="${it.taken}" tabindex="0">
-          <div class="mc-box">${it.taken ? '✓' : ''}</div>
+          <div class="mc-box" aria-hidden="true"></div>
           <div class="mc-body">
             <div class="mc-name">${esc(it.name)}</div>
             <div class="mc-dose">${esc(it.dose || '')}${it.note ? ' · ' + esc(it.note) : ''}</div>
@@ -167,7 +167,7 @@ function renderMeds() {
   const mp = Store.medProgressToday();
   const todayLine = mp.total
     ? (mp.done >= mp.total
-      ? `<div class="today-summary complete">今天该吃的 ${mp.total} 次都核对完了 ✓</div>`
+      ? `<div class="today-summary complete with-check">今天该吃的 ${mp.total} 次都核对完了</div>`
       : `<div class="today-summary">今天一共 ${mp.total} 次，${leftText(mp.done, mp.total, '次还没核对')}${dotsHTML(mp.done, mp.total)}</div>`)
     : '';
 
@@ -280,11 +280,11 @@ function openMedHistory() {
         </div>`;
       }
       const done = d.done >= d.total, missing = d.total - d.done;
-      const status = done ? '全吃到 ✓' : (d.date === t ? `还有 ${missing} 次` : `${missing} 次没记上`);
+      const status = done ? '全吃到' : (d.date === t ? `还有 ${missing} 次` : `${missing} 次没记上`);
       return `<button type="button" class="day-row day-go" id="med-day-${esc(d.date)}" data-day="${esc(d.date)}" aria-label="${esc(label)} ${esc(status)}，点这里补记">
         <span class="dg-top">
           <span class="day-date">${esc(label)}</span>
-          <span class="day-score ${done ? 'ok' : ''}">${esc(status)}</span>
+          <span class="day-score ${done ? 'ok with-check' : ''}">${esc(status)}</span>
           <span class="dg-arrow" aria-hidden="true">›</span>
         </span>
         <span class="dot-row">${dots}</span>
@@ -369,7 +369,7 @@ function openMedDay(date) {
       onClick: () => {
         /* 一次性回退并写盘；写盘失败要提示（存储满时别悄悄只撤一半）。
            撤销时补记子弹窗已关，topOverlay 是「服药历史」弹窗，_onResume 让那一行文案
-           也跟着更新——否则数据退回了、历史行还写着「全吃到 ✓」（AC4.3）。 */
+           也跟着更新——否则数据退回了、历史行还写着「全吃到」（AC4.3）。 */
         if (!stored(Store.uncheckMedsOn(date, added))) return;
         render(currentView, { keepScroll: true });
         const top = topOverlay();
@@ -407,10 +407,11 @@ function openMedForm(med, seed = null) {
         <input id="med-dose" type="text" placeholder="如 100mg，1片" value="${esc(formData.dose || '')}">
       </div>
       <div class="field" style="margin-bottom:0.7rem">
-        <label for="custom-time" id="med-time-label">每天服药时间（可多选）</label>
-        <div class="time-chip-row" id="time-chips" role="group" aria-labelledby="med-time-label"></div>
-        <div style="display:flex;gap:0.5rem;margin-top:0.5rem;align-items:center">
-          <input id="custom-time" type="time" style="flex:1">
+        <div id="med-time-label" class="time-group-label">每天服药时间（可多选）</div>
+        <div class="time-options" id="time-chips" role="group" aria-labelledby="med-time-label"></div>
+        <label for="custom-time" class="custom-time-label">自定时间</label>
+        <div class="custom-time-row">
+          <input id="custom-time" type="time">
           <button class="btn small outline" id="add-custom-time">添加自定时间</button>
         </div>
         <div class="muted" style="margin-top:0.3rem">已选：<span id="sel-times"></span>（点时间块可取消）</div>
@@ -452,18 +453,25 @@ function openMedForm(med, seed = null) {
     (prevId && (m.id === prevId || m.previousCourseId === prevId))));
 
   const timeChips = node.querySelector('#time-chips');
-  /* 时间块渲染 COMMON_TIMES ∩ 已选的全集，全部可点切换（非常用时间取消后消失） */
+  const showTimes = () => { node.querySelector('#sel-times').textContent = [...sel].sort().join('、') || '无'; };
   const refreshChips = () => {
-    node.querySelector('#sel-times').textContent = [...sel].sort().join('、') || '无';
-    timeChips.innerHTML = [...new Set([...COMMON_TIMES, ...sel])].sort().map(tm =>
-      `<button type="button" class="time-chip ${sel.has(tm) ? 'active' : ''}" data-t="${esc(tm)}" aria-pressed="${sel.has(tm)}">${esc(tm)}</button>`).join('');
-    timeChips.querySelectorAll('.time-chip').forEach(c => c.onclick = () => {
-      const tm = c.dataset.t;
-      if (sel.has(tm)) sel.delete(tm); else sel.add(tm);
-      refreshChips();
-    });
+    showTimes();
+    timeChips.innerHTML = [...new Set([...COMMON_TIMES, ...sel])].sort().map(tm => `
+      <label class="time-option">
+        <input type="checkbox" value="${esc(tm)}"${sel.has(tm) ? ' checked' : ''}>
+        <span>${esc(tm)}</span>
+      </label>`).join('');
   };
   refreshChips();
+  timeChips.onchange = e => {
+    const input = e.target;
+    if (input.checked) sel.add(input.value); else sel.delete(input.value);
+    if (!input.checked && !COMMON_TIMES.includes(input.value)) {
+      input.parentNode.remove();
+      node.querySelector('#custom-time').focus();
+    }
+    showTimes();
+  };
   node.querySelectorAll('[data-preset]').forEach(b => b.onclick = () => {
     node.querySelector('#med-name').value = b.dataset.preset;
   });

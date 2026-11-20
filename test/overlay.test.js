@@ -318,6 +318,26 @@ async function closeAll(cdp) {
   }
 }
 
+async function checkHistoryRowLayout(cdp, name, font) {
+  // 最后回到打开历史时的 390px，接着验证关闭后的焦点、位置和草稿。
+  for (const width of [320, 360, 768, 1024, 1280, 390]) {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: width < 1024 });
+    const readable = await cdp.eval(`(() => {
+      const row = document.querySelector('.rec-row');
+      const value = row.querySelector('.rec-val');
+      const rect = selector => row.querySelector(selector).getBoundingClientRect();
+      const edit = rect('.rec-open'), del = rect('.rec-del'), arrow = rect('.dg-arrow');
+      const text = document.createRange();
+      text.selectNodeContents(value);
+      return value.clientWidth >= 6 * parseFloat(getComputedStyle(value).fontSize) &&
+        Array.from(text.getClientRects()).every(r => r.left >= edit.left - 1 && r.right <= arrow.left + 1) &&
+        edit.width >= 48 && edit.height >= 48 && del.width >= 48 && del.height >= 48 &&
+        edit.right <= del.left && del.right <= row.getBoundingClientRect().right + 1;
+    })()`);
+    assert(readable, `${width}/${font}/${name} 历史读数及状态有足够行宽，不与箭头或删除键重叠`);
+  }
+}
+
 async function runOptimizationRegression(cdp) {
   await closeAll(cdp);
   await cdp.eval(`window.__optBefore = JSON.parse(JSON.stringify(Store.data));
@@ -325,8 +345,8 @@ async function runOptimizationRegression(cdp) {
     Object.keys(recordDrafts).forEach(k=>delete recordDrafts[k]); recordSaved=null;
     App.go('records'); render('records');`);
   const kinds = [
-    ['bp', '血压', 'bp-sys', '137', { sys: 130, dia: 80, time: '09:00' }],
-    ['glucose', '血糖', 'glu-val', '6.1', { value: 5.8, gtype: '空腹', time: '09:00' }],
+    ['bp', '血压', 'bp-sys', '137', { sys: 135, dia: 85, pulse: 72, time: '09:00' }],
+    ['glucose', '血糖', 'glu-val', '6.1', { value: 13.9, gtype: '餐后2小时', time: '09:00' }],
     ['weight', '体重', 'wt-val', '61', { value: 60 }],
   ];
   for (const [kind, name, input, draft, entry] of kinds) {
@@ -352,8 +372,10 @@ async function runOptimizationRegression(cdp) {
         const y = await cdp.eval('scrollY');
         await waitFor(cdp, "document.querySelector('.m-title')", '打开历史');
         assert(await cdp.eval(`document.querySelector('.m-title').textContent.includes('${name}历史') && document.querySelectorAll('.rec-row').length===1`), `${name}一次打开对应历史`);
-        if (method === 'click') await click(cdp, '.modal-close');
-        else await cdp.eval('history.back()');
+        if (method === 'click') {
+          await checkHistoryRowLayout(cdp, name, font);
+          await click(cdp, '.modal-close');
+        } else await cdp.eval('history.back()');
         await waitFor(cdp, '!topOverlay()', '关闭历史');
         assert.strictEqual(await cdp.eval('document.activeElement.id'), 'btn-rec-history', '焦点回直达入口');
         assert.strictEqual(await cdp.eval(`document.querySelector('#${input}').value`), draft, '未保存输入仍在');
@@ -550,11 +572,22 @@ async function runUXRegression(cdp) {
   await cdp.eval("Store.addMed({ name: '回归用药物', dose: '按医嘱', times: ['08:00'], from: Store.today() }); App.go('meds');");
   const med = await cdp.eval("document.querySelector('[data-edit-med]').dataset.editMed");
   await click(cdp, `[data-edit-med="${med}"]`);
+  const evening = '#time-chips input[value="18:00"]';
+  await click(cdp, evening);
+  assert(await cdp.eval(`document.activeElement.matches('${evening}') && document.querySelector('#sel-times').textContent === '08:00、18:00'`), '勾选第二个时间后保留焦点和第一个选择');
+  await pressKey(cdp, ' ');
+  assert.strictEqual(await cdp.eval("document.querySelector('#sel-times').textContent"), '08:00', '空格只取消当前时间');
+  await cdp.eval("document.querySelector('#custom-time').value = '09:25'");
+  await click(cdp, '#add-custom-time');
+  await click(cdp, '#time-chips input[value="09:25"]');
+  assert(await cdp.eval(`!document.querySelector('#time-chips input[value="09:25"]') && document.activeElement.id === 'custom-time'`), '取消自定时间后回到输入框');
+  await click(cdp, evening);
   await cdp.eval("document.querySelector('#med-note').value = '回归备注'");
   await click(cdp, '#med-save');
   await waitFor(cdp, "!document.querySelector('.modal-mask')", '药物修改返回');
   assert.strictEqual(await cdp.eval('document.activeElement.dataset.editMed'), med, '保存后焦点回同一药物');
   assert.strictEqual(await cdp.eval(`Store.data.meds.find(m => m.id === ${JSON.stringify(med)}).note`), '回归备注');
+  assert.deepStrictEqual(await cdp.eval(`Store.medStatusOn(Store.today()).items.filter(i => i.medId === ${JSON.stringify(med)}).map(i => i.time)`), ['08:00', '18:00'], '多选结果随表单保存');
   console.log('PASS  训练打卡与药物修改后，焦点回重建列表的原条目');
 
   // 响应式只改变布局；跨断点和打开浮层不能重建输入或挪动底下页面。

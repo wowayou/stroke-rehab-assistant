@@ -67,7 +67,7 @@ function renderToday() {
       <div class="ci-icon" aria-hidden="true">🩺</div>
       <div class="ci-body">
         <div class="ci-name">测量血压</div>
-        <div class="ci-sub">${bpDone ? '今天记好了 ✓' : '每天固定时间测量并记录'}</div>
+        <div class="ci-sub${bpDone ? ' with-check' : ''}">${bpDone ? '今天记好了' : '每天固定时间测量并记录'}</div>
       </div>
       <button class="ci-action ${bpDone ? 'done' : ''}" data-go="records" data-rec="bp">${bpDone ? '看血压记录' : '去记录'}</button>
     </div>
@@ -75,8 +75,8 @@ function renderToday() {
       <div class="ci-icon" aria-hidden="true">💊</div>
       <div class="ci-body">
         <div class="ci-name">按时服药</div>
-        <div class="ci-sub">${mp.total
-          ? (medDone ? '今天该吃的都核对了 ✓' : leftText(mp.done, mp.total, '次没核对'))
+        <div class="ci-sub${medDone ? ' with-check' : ''}">${mp.total
+          ? (medDone ? '今天该吃的都核对了' : leftText(mp.done, mp.total, '次没核对'))
           : hasMeds ? '今天没有已登记的服药安排' : '尚未登记药物，请按医嘱到「用药」页登记'}</div>
         ${mp.total ? dotsHTML(mp.done, mp.total) : ''}
       </div>
@@ -86,7 +86,7 @@ function renderToday() {
       <div class="ci-icon" aria-hidden="true">💪</div>
       <div class="ci-body">
         <div class="ci-name">康复训练</div>
-        <div class="ci-sub">${esc(stageName)}${trainDone ? '推荐都练过了 ✓' : ' · ' + leftText(planDone, plan.length, '项')}</div>
+        <div class="ci-sub${trainDone ? ' with-check' : ''}">${esc(stageName)}${trainDone ? '推荐都练过了' : ' · ' + leftText(planDone, plan.length, '项')}</div>
         ${dotsHTML(planDone, plan.length)}
       </div>
       <button class="ci-action ${trainDone ? 'done' : ''}" data-go="train">${trainDone ? '查看动作' : '去训练'}</button>
@@ -119,7 +119,7 @@ function exItemHTML(e, done, stageTag) {
     <div class="ex-body">
       <div class="ex-name">${e.name}${stageTag ? ` <span class="badge info ex-stage-tag">${esc(stageTag)}</span>` : ''}</div>
       <div class="ex-dose">${e.dose}</div>
-      ${done ? '<div class="ex-done-mark">✓ 今日已完成</div>' : ''}
+      ${done ? '<div class="ex-done-mark with-check">今日已完成</div>' : ''}
     </div>
     <button class="ex-start ${done ? 'done' : ''}" data-ex="${e.id}" aria-label="${done ? '再练一次' : '开始'}：${esc(e.name)}">${done ? '再练一次' : '开始'}</button>
   </div>`;

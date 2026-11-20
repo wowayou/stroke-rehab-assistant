@@ -19,6 +19,14 @@ function openSettings() {
     const want = Store.data.profile.speechVoice;
     return voiceOpts.some(o => o.key === want) ? want : Speech.voiceName();
   };
+  const targetField = (id, label, key, unit, decimal) => `
+    <label class="target-field" for="${id}">
+      <span>${label}</span>
+      <span class="measure-input">
+        <input id="${id}" class="set-input" type="number" inputmode="${decimal ? 'decimal' : 'numeric'}"${decimal ? ' step="0.1"' : ''} value="${esc(p.targets[key])}">
+        <span class="measure-unit">${unit}</span>
+      </span>
+    </label>`;
   const node = nodeFromHTML(`
     <div class="card">
       <div class="card-title">👤 基本信息</div>
@@ -39,13 +47,13 @@ function openSettings() {
       <div class="card-title">🔊 显示与朗读</div>
       <div class="setting-row">
         <div class="sr-label">字体大小</div>
-        ${segGroupHTML('font', '字体大小', FONT_OPTIONS, p.font)}
+        ${segGroupHTML('font', '字体大小', FONT_OPTIONS, p.font, 'choice-trio')}
       </div>
       <div class="muted seg-hint">点一下立刻变大，不用再按保存。</div>
       ${Speech.supported() ? `
       <div class="setting-row">
         <div class="sr-label">朗读语速</div>
-        ${segGroupHTML('rate', '朗读语速', RATE_OPTIONS, p.speechRate)}
+        ${segGroupHTML('rate', '朗读语速', RATE_OPTIONS, p.speechRate, 'choice-trio')}
       </div>
       <div class="muted">点一下就按这个速度念一句给您听，选好即生效。训练动作和科普文章里都有「<span class="nowrap">🔊 听一遍</span>」，读字费劲时可以让它念。<button class="link-btn" id="set-rate-try">再听一句</button></div>
       <div class="muted seg-hint">觉得声音太生硬？<button class="link-btn" id="set-voice-guide">教您换更自然的声音 →</button></div>
@@ -60,22 +68,10 @@ function openSettings() {
     </div>
     <div class="card">
       <div class="card-title">🎯 个人目标值（遵医嘱）</div>
-      <div class="setting-row">
-        <label class="sr-label" for="set-bpsys">血压高压目标</label>
-        <input id="set-bpsys" class="set-input" type="number" inputmode="numeric" value="${esc(p.targets.bpSys)}"><span class="muted"> mmHg</span>
-      </div>
-      <div class="setting-row">
-        <label class="sr-label" for="set-bpdia">血压低压目标</label>
-        <input id="set-bpdia" class="set-input" type="number" inputmode="numeric" value="${esc(p.targets.bpDia)}"><span class="muted"> mmHg</span>
-      </div>
-      <div class="setting-row">
-        <label class="sr-label" for="set-glufast">血糖空腹目标</label>
-        <input id="set-glufast" class="set-input" type="number" step="0.1" inputmode="decimal" value="${esc(p.targets.gluFast)}"><span class="muted"> mmol/L</span>
-      </div>
-      <div class="setting-row">
-        <label class="sr-label" for="set-glupost">血糖餐后2h目标</label>
-        <input id="set-glupost" class="set-input" type="number" step="0.1" inputmode="decimal" value="${esc(p.targets.gluPost)}"><span class="muted"> mmol/L</span>
-      </div>
+      ${targetField('set-bpsys', '血压高压目标', 'bpSys', 'mmHg', false)}
+      ${targetField('set-bpdia', '血压低压目标', 'bpDia', 'mmHg', false)}
+      ${targetField('set-glufast', '血糖空腹目标', 'gluFast', 'mmol/L', true)}
+      ${targetField('set-glupost', '血糖餐后2h目标', 'gluPost', 'mmol/L', true)}
       <div class="muted" style="margin-top:0.4rem">目标值按医生要求填写，图上会画出目标区、超过会提示"偏高"；血压 180/110、血糖极低/明显偏高等危险情况仍会单独警示。默认 140/90、空腹 7.0、餐后 10.0 仅为一般参考，以医嘱为准。</div>
     </div>
     <div class="section-label">使用帮助</div>

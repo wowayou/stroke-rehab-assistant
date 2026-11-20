@@ -260,15 +260,17 @@ function openVitalHistory(kind) {
     const all = [...sorted].reverse();
     const rows = all.slice(0, shown).map(v => {
       const [cls, txt] = vitalStatus(kind, v);
+      const when = esc([v.date, v.time].filter(Boolean).join(' '));
       return `
       <div class="rec-row">
         <button class="rec-open" id="vital-row-${esc(v.id)}" data-vital="${esc(v.id)}">
-          <span class="rec-dot ${cls}"></span>
-          <span class="rec-date">${esc(v.date)}<br>${esc(v.time || '')}</span>
-          <span class="rec-val">${VITAL_FMT[kind](v)}${txt ? `<br><span class="rec-note ${cls}">${txt}</span>` : ''}</span>
+          <span class="rec-summary">
+            <span class="rec-date">${when}</span>
+            <span class="rec-val">${VITAL_FMT[kind](v)}${txt ? `<span class="rec-note ${cls}"><i class="rec-dot ${cls}" aria-hidden="true"></i>${esc(txt)}</span>` : ''}</span>
+          </span>
           <span class="dg-arrow" aria-hidden="true">›</span>
         </button>
-        <button class="rec-del" data-del="${esc(v.id)}" aria-label="删除这条记录">🗑</button>
+        <button class="rec-del" data-del="${esc(v.id)}" aria-label="删除 ${when} 的${meta.name}记录">删除</button>
       </div>`;
     }).join('');
     const remain = Math.max(0, all.length - shown);
@@ -335,7 +337,7 @@ function openVitalEdit(kind, id) {
   } else if (kind === 'glucose') {
     fields = `
       <div class="form-row">
-        <div class="field"><label for="ev-type">测量类型</label>
+        <div class="field measure-type"><label for="ev-type">测量类型</label>
           <select id="ev-type">${['空腹', '餐后2小时', '随机'].map(o => `<option ${o === v.gtype ? 'selected' : ''}>${o}</option>`).join('')}</select></div>
         <div class="field"><label for="ev-val">数值 mmol/L</label><input id="ev-val" type="number" step="0.1" inputmode="decimal" value="${esc(v.value)}"></div>
       </div>`;
@@ -445,7 +447,7 @@ function renderRecords() {
   form.addEventListener('change', markDraft);
   if (recordDrafts[recTab]) markDraft();
   else if (recordSaved && recordSaved.kind === recTab) {
-    status.classList.add('saved');
+    status.classList.add('saved', 'with-check');
     status.textContent = recordSaved.message;
   } else status.textContent = '填好后请点保存，记录仅保存在本机。';
 }
@@ -620,7 +622,7 @@ function renderBP(body) {
     if (!entry) return;
     if (!stored(Store.addVital('bp', entry))) return;
     const [cls, txt] = bpBadge(entry.sys, entry.dia);
-    recordSaveDone(`✓ 已保存血压 ${entry.sys}/${entry.dia} mmHg · ${fmtWhen(entry.date, entry.time)}${cls === 'bad' ? '。' + txt : ''}`);
+    recordSaveDone(`已保存血压 ${entry.sys}/${entry.dia} mmHg · ${fmtWhen(entry.date, entry.time)}${cls === 'bad' ? '。' + txt : ''}`);
   };
   bindEnterFlow(['bp-sys', 'bp-dia', 'bp-pulse'].map(i => document.getElementById(i)), bpSave);
   document.getElementById('bp-save').onclick = bpSave;
@@ -649,7 +651,7 @@ function renderGlucose(body) {
     <h2 class="card-title">记一次血糖</h2>
     <div class="vital-form">
       <div class="form-row">
-        <div class="field"><label for="glu-type">测量类型</label>
+        <div class="field measure-type"><label for="glu-type">测量类型</label>
           <select id="glu-type"><option>空腹</option><option>餐后2小时</option><option>随机</option></select>
         </div>
         <div class="field"><label for="glu-val">数值 mmol/L</label><input id="glu-val" type="number" step="0.1" inputmode="decimal" placeholder="如 6.2"></div>
@@ -678,7 +680,7 @@ function renderGlucose(body) {
     const entry = readVital('glucose', 'glu', whenOf('glu'));
     if (!entry) return;
     if (!stored(Store.addVital('glucose', entry))) return;
-    recordSaveDone(`✓ 已保存${entry.gtype}血糖 ${entry.value} mmol/L · ${fmtWhen(entry.date, entry.time)}`);
+    recordSaveDone(`已保存${entry.gtype}血糖 ${entry.value} mmol/L · ${fmtWhen(entry.date, entry.time)}`);
   };
   bindEnterFlow([document.getElementById('glu-val')], gluSave);
   document.getElementById('glu-save').onclick = gluSave;
@@ -741,7 +743,7 @@ function renderWeight(body) {
     const entry = readVital('weight', 'wt', whenOf('wt'));
     if (!entry) return;
     if (!stored(Store.addVital('weight', entry))) return;
-    recordSaveDone(`✓ 已保存体重 ${entry.value} 公斤 · ${fmtWhen(entry.date)}`);
+    recordSaveDone(`已保存体重 ${entry.value} 公斤 · ${fmtWhen(entry.date)}`);
   };
   bindEnterFlow([document.getElementById('wt-val')], wtSave);
   document.getElementById('wt-save').onclick = wtSave;

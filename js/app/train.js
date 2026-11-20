@@ -201,7 +201,7 @@ function openExerciseDay(date) {
   const rowHTML = ex => {
     const done = Store.exercisesOn(date).includes(ex.id);
     return `<div class="check-row ${done ? 'checked' : ''}" role="checkbox" aria-checked="${done}" tabindex="0" data-exid="${esc(ex.id)}">
-      <div class="mc-box">${done ? '✓' : ''}</div>
+      <div class="mc-box" aria-hidden="true"></div>
       <div><div class="mc-name">${esc(ex.name)}</div><div class="mc-dose">${esc(ex.dose || '')}</div></div>
     </div>`;
   };
@@ -231,7 +231,6 @@ function openExerciseDay(date) {
       const now = Store.exercisesOn(date).includes(id);
       row.classList.toggle('checked', now);
       row.setAttribute('aria-checked', String(now));
-      row.querySelector('.mc-box').textContent = now ? '✓' : '';
       render(currentView, { keepScroll: true });
     };
     row.onclick = act;
@@ -303,7 +302,7 @@ function openTrainer(ex) {
       </div>
       ${ex.caution ? `<div class="trainer-caution">⚠️ ${ex.caution}</div>` : ''}
       ${modeHTML}
-      ${ex.mode.type !== 'game' ? `<button class="btn green block huge" id="trainer-done" style="margin-top:0.8rem">✓ 完成训练，打卡</button>` : ''}
+      ${ex.mode.type !== 'game' ? `<button class="btn green block huge with-check" id="trainer-done" style="margin-top:0.8rem">完成训练，打卡</button>` : ''}
     </div>`;
 
   document.body.appendChild(wrap);
@@ -352,7 +351,8 @@ function openTrainer(ex) {
         hint.textContent = '还差这么多次';
         note.textContent = `做了 ${count} 次 · 目标 ${target} 次`;
       } else {
-        cnt.textContent = '✓';
+        cnt.textContent = '';
+        cnt.classList.add('with-check');
         hint.textContent = left === 0 ? '够了！' : '够了，多做的也算';
         note.textContent = left === 0
           ? `做满 ${target} 次了，随时可以打卡`

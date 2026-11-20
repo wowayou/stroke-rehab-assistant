@@ -192,6 +192,10 @@ const appliedFont = cdp => cdp.eval(
     assert.strictEqual(await appliedFont(cdp), 'xlarge', '关闭设置后字号应保持特大');
 
     await openSettings(cdp);
+    const tree = await cdp.send('Accessibility.getFullAXTree');
+    for (const [name, unit] of [['血压高压目标', 'mmHg'], ['血压低压目标', 'mmHg'], ['血糖空腹目标', 'mmol/L'], ['血糖餐后2h目标', 'mmol/L']]) {
+      assert(tree.nodes.some(n => !n.ignored && n.role?.value === 'spinbutton' && n.name?.value.includes(name) && n.name.value.includes(unit)), `${name}在无障碍树中包含单位`);
+    }
     assert.strictEqual(await shownFont(cdp), 'xlarge', '重新打开设置必须回显特大（v0.2.25 守的 bug）');
     console.log('PASS  ✕ 关闭后重开设置，字号回显与实际一致');
 

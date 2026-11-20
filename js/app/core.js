@@ -304,7 +304,7 @@ function dotsHTML(done, total, cls = '') {
 function leftText(done, total, unit = '项') {
   const left = Math.max(0, total - done);
   if (!total) return '';
-  if (left === 0) return `都做完了 ✓`;
+  if (left === 0) return '都做完了';
   if (done === 0) return `${total} ${unit}，一项一项来`;
   return `还差 ${left} ${unit}`;
 }

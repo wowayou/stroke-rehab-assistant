@@ -35,6 +35,9 @@
   --radius-sheet: 20px;
   --content-width: 600px;
   --touch-target: 48px;
+  /* 与导航图标共用 24 格画布、圆端和圆角折线。随 CSS 一起离线缓存。 */
+  --icon-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m5 9 7 7 7-7' fill='none' stroke='%231f55b5' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --icon-check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m4 12.5 5 5L20 6.5' fill='none' stroke='black' stroke-width='2.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 /* 字号档位：标准 18 / 大 20 / 特大 22 */
@@ -58,6 +61,15 @@ button:disabled { cursor: not-allowed; }
 input, select, textarea { font-family: inherit; }
 .ui-icon { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .btn-icon .ui-icon circle { fill: var(--card); }
+
+/* 勾号只作状态图形。可读名称和选中态仍由文字和原生/ARIA 语义提供。 */
+.with-check::before, .font-chip[aria-checked="true"]::before, [aria-checked="true"] > .mc-box::after {
+  content: ''; display: inline-block; width: 1em; height: 1em; flex: none;
+  background-color: currentColor; -webkit-mask: var(--icon-check) center / contain no-repeat; mask: var(--icon-check) center / contain no-repeat;
+  vertical-align: -0.12em;
+}
+.with-check::before { margin-right: 0.2em; }
+.btn.with-check::before, .rep-count.with-check::before { margin-right: 0; }
 
 /* ---------- 顶栏 ---------- */
 .app-header {
@@ -340,6 +352,8 @@ h1[tabindex="-1"]:focus { outline: none; }
 .field .label-opt { white-space: nowrap; }   /* 标签里的括号说明是整体，窄列下整段换行，不许断成"（收缩/压）" */
 /* 数字输入框最小宽度，防止占位符（如 135）被裁剪；放不下时整字段换行 */
 .vital-form .field { min-width: 5.5em; }
+/* 完整容纳「餐后2小时」以及选择器箭头，空间不足时数值字段自然换行。 */
+.vital-form .measure-type { min-width: 9.25rem; }
 /* 日期/时间永远独占整行：iOS 对原生日期控件有强制最小宽度（桌面浏览器验证不到），
    并排挤窄了框会戳出卡片；全宽则任何引擎都放得下 */
 .field.wide { flex: 1 1 100%; }
@@ -362,6 +376,11 @@ input[type="date"].set-input { min-width: 9.5em; }
   width: 100%; min-height: 54px;
   border: 1.5px solid var(--control-border); border-radius: 12px;
   padding: 0 0.8rem; font-size: 1.25rem; background: var(--card); color: var(--text);
+}
+.field select {
+  -webkit-appearance: none; appearance: none;
+  padding-right: 2.25rem; background-image: var(--icon-chevron); background-repeat: no-repeat;
+  background-size: 1.12rem; background-position: right var(--space-3) center;
 }
 .report-options { border-top: 1px solid var(--border); }
 .report-option {
@@ -408,11 +427,13 @@ input[aria-invalid="true"], select[aria-invalid="true"] { border: 2px solid var(
 .disclosure summary::-webkit-details-marker { display: none; }
 .disclosure summary > span:first-child { flex: 1; min-width: 0; }
 .disclosure-hint { display: block; font-size: 0.9rem; color: var(--text-2); margin-top: 0.15rem; }
-/* 展开箭头用边框画的 V 形，跨平台一致、随字号缩放；开合时平滑旋转（减少动画时全局降为 0.01ms） */
-.disclosure-arrow { display: inline-block; flex-shrink: 0; width: 0.62em; height: 0.62em; border-right: 2.5px solid var(--primary-dark); border-bottom: 2.5px solid var(--primary-dark); border-radius: 2px; transform: translateY(-0.12em) rotate(45deg); transition: transform 0.2s ease; }
-.disclosure-action { display: flex; align-items: center; gap: 0.4rem; color: var(--primary-dark); font-size: 0.9rem; }
-.disclosure-action .disclosure-arrow { border-color: currentColor; }
-.disclosure[open] .disclosure-arrow { transform: translateY(0.06em) rotate(-135deg); }
+/* 箭头的旋转中心始终在行尾同一点。 */
+.disclosure-arrow {
+  display: inline-block; flex: none; width: 1.12rem; height: 1.12rem;
+  background: var(--icon-chevron) center / contain no-repeat; transition: transform 0.2s ease;
+}
+.disclosure-action { display: flex; align-items: center; gap: var(--space-1); color: var(--primary-dark); font-size: 0.9rem; }
+.disclosure[open] > summary .disclosure-arrow { transform: rotate(180deg); }
 .disclosure-body { padding: 0 1rem 1rem; }
 /* 其他阶段仍在同一张训练列表卡内，不再叠加一层内缩。 */
 #train-other-stages { margin-top: 0; }
@@ -424,6 +445,15 @@ input[aria-invalid="true"], select[aria-invalid="true"] { border: 2px solid var(
   flex: 1 1 auto; min-width: 0; min-height: 48px;
   border: 1.5px solid var(--control-border); border-radius: 10px;
   padding: 0 0.6rem; font-size: 1.05rem; background: var(--card); color: var(--text);
+}
+.target-field { display: block; padding-bottom: var(--space-3); font-weight: 600; }
+.measure-input { display: inline-flex; vertical-align: top; align-items: stretch; max-width: 100%; }
+.target-field > span:first-child { display: block; margin-bottom: var(--space-1); }
+.measure-input .set-input { flex: none; width: 5.5em; border-radius: var(--radius-control) 0 0 var(--radius-control); }
+.measure-unit {
+  display: flex; align-items: center; padding: 0 var(--space-2); border: 1px solid var(--control-border); border-left: 0;
+  border-radius: 0 var(--radius-control) var(--radius-control) 0; background: var(--surface-subtle);
+  color: var(--text-2); font-size: 0.95rem; font-weight: 500;
 }
 .nowrap { white-space: nowrap; }
 
@@ -481,18 +511,20 @@ input[aria-invalid="true"], select[aria-invalid="true"] { border: 2px solid var(
   font-size: 0.98rem;
 }
 .rec-row:last-child { border-bottom: none; }
-.rec-row .rec-date { color: var(--text-2); font-size: 0.88rem; width: 7.2em; flex-shrink: 0; }
-.rec-row .rec-val { font-weight: 700; font-variant-numeric: tabular-nums; flex: 1; }
-.rec-del { min-width: 48px; min-height: 48px; border: none; background: none; color: var(--text-2); font-size: 1.1rem; }
+.rec-del {
+  flex: none; min-width: var(--touch-target); min-height: var(--touch-target);
+  border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--card);
+  font-size: 0.9rem; color: var(--text-2);
+}
 /* 历史列表里的红黄绿状态点 */
 .rec-dot {
-  width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
+  display: inline-block; width: 0.65em; height: 0.65em; border-radius: 50%; margin-right: var(--space-1);
   background: var(--border);
 }
 .rec-dot.ok { background: var(--green); }
 .rec-dot.warn { background: var(--orange); }
 .rec-dot.bad { background: var(--red); }
-.rec-note { font-size: 0.82rem; font-weight: 400; color: var(--text-2); }
+.rec-note { display: block; margin-top: var(--space-1); font-size: 0.82rem; font-weight: 400; color: var(--text-2); }
 .rec-note.warn { color: var(--orange); }
 .rec-note.bad { color: var(--red); }
 
@@ -562,9 +594,9 @@ input[aria-invalid="true"], select[aria-invalid="true"] { border: 2px solid var(
 .med-check:last-child, .check-row:last-child { border-bottom: none; }
 .med-check .mc-box, .check-row .mc-box {
   width: 34px; height: 34px; border-radius: 10px;
-  border: 2.5px solid var(--border); background: #fff;
+  border: 2px solid var(--control-border); background: var(--card);
   display: flex; align-items: center; justify-content: center;
-  font-size: 1.25rem; color: #fff; flex-shrink: 0;
+  font-size: 24px; color: #fff; flex-shrink: 0;
 }
 .med-check.checked .mc-box, .check-row.checked .mc-box { background: var(--green); border-color: var(--green); }
 .med-check .mc-name, .check-row .mc-name { font-weight: 600; font-size: 1.05rem; }
@@ -596,13 +628,35 @@ input[aria-invalid="true"], select[aria-invalid="true"] { border: 2px solid var(
 }
 .stop-box .sb-title { font-weight: 700; margin-bottom: 0.2rem; }
 
+.time-group-label { font-size: 0.95rem; font-weight: 600; margin-bottom: var(--space-1); }
+.time-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(5.6rem, 1fr)); gap: var(--space-2); }
+.field .time-option { display: block; position: relative; margin: 0; font-size: 1rem; cursor: pointer; }
+.time-option input { position: absolute; top: 0; left: 0; width: 100%; height: 100%; min-height: 0; opacity: 0; cursor: pointer; }
+.time-option span {
+  display: flex; align-items: center; justify-content: center; min-height: var(--touch-target); gap: var(--space-1);
+  border: 1px solid var(--control-border); border-radius: var(--radius-control); background: var(--card);
+  font-weight: 500; font-variant-numeric: tabular-nums;
+}
+.time-option span::before { content: ''; width: 0.88em; height: 0.88em; border: 1.5px solid var(--control-border); border-radius: 3px; }
+.time-option input:checked + span { background: var(--primary-soft); color: var(--primary-dark); border-color: currentColor; font-weight: 700; }
+.time-option input:checked + span::before {
+  border-color: transparent; background: currentColor;
+  -webkit-mask: var(--icon-check) center / contain no-repeat; mask: var(--icon-check) center / contain no-repeat;
+}
+.time-option input:focus + span { outline: 2px solid var(--primary); outline-offset: 2px; }
+@media (forced-colors: active) {
+  .time-option input:checked + span::before { background: ButtonText; forced-color-adjust: none; }
+}
+.field .custom-time-label { margin-top: var(--space-3); }
+.custom-time-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.custom-time-row input { flex: 1 1 8em; }
+.custom-time-row button { flex: 1 0 auto; }
 .time-chip-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .time-chip {
   min-height: 48px; padding: 0.3rem 0.8rem; border-radius: 12px;
   border: 1.5px solid var(--border); background: var(--card); font-size: 1rem;
   display: inline-flex; align-items: center; gap: 0.4rem;
 }
-.time-chip.active { background: var(--primary-soft); border-color: var(--primary); color: var(--primary); font-weight: 700; }
 
 .adherence-ring { display: flex; align-items: center; gap: 1rem; }
 .ring-num { font-size: 2rem; font-weight: 800; color: var(--green); }
@@ -761,7 +815,9 @@ body.overlay-open { overflow: hidden; }
 .font-chip { min-width: 56px; min-height: 48px; border-radius: 12px; border: 1.5px solid var(--border); background: var(--card); }
 /* 选中不只靠颜色：反白 + 加粗 + 一个对勾，色觉障碍与低对比屏也分得清哪个是当前档 */
 .font-chip.active { background: var(--primary); color: #fff; border-color: var(--primary); font-weight: 700; }
-.font-chip.active::before { content: '✓ '; }
+.font-chips.choice-trio { display: grid; flex: 1 1 12rem; grid-template-columns: repeat(3, minmax(max-content, 1fr)); gap: var(--space-1); }
+.choice-trio .font-chip { padding: 0 var(--space-1); }
+.font-chip[aria-checked="true"]::before { width: 0.72rem; height: 0.72rem; margin-right: 0.12rem; vertical-align: 0; }
 .font-chip.f1 { font-size: 0.9rem; } .font-chip.f2 { font-size: 1.05rem; } .font-chip.f3 { font-size: 1.2rem; }
 /* "点一下立刻生效"的说明紧跟控件，不要和上一行挤在一起 */
 .seg-hint { margin: 0.35rem 0 0; }
@@ -827,9 +883,7 @@ body.overlay-open { overflow: hidden; }
 @media (max-width: 380px) {
   .check-item, .ex-item { display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: var(--space-2) var(--space-3); }
   .ci-action, .ex-start { grid-column: 2; justify-self: start; }
-  .disclosure summary { flex-wrap: wrap; }
-  .disclosure summary > span:first-child { flex-basis: 100%; }
-  .disclosure-action { margin-left: auto; }
+  .disclosure-action { flex: none; }
 }
 
 /* 用药行按较长的「记下时间」确定换行范围并留余量，避免横排时药名不足 8 字宽；双状态/断点两侧回归见 test/overlay.test.js 1e。 */
@@ -900,14 +954,16 @@ button.day-row:active, button.hist-day:active { background: var(--surface-hover)
 .day-score.pending { color: var(--orange); }
 /* 记录历史行：主体可点开修改，行尾删除 */
 .rec-open {
-  flex: 1; min-height: 48px; min-width: 0;
-  display: flex; align-items: center; gap: 0.6rem;
+  flex: 1; min-width: 0; min-height: var(--touch-target);
+  display: flex; align-items: center; gap: var(--space-1);
   background: none; border: none; text-align: left; cursor: pointer;
-  font-size: 0.98rem; padding: 0.1rem 0;
+  font-size: 0.98rem; padding: var(--space-1) 0; line-height: 1.45;
 }
 .rec-open:active { background: var(--surface-hover); }
-.rec-open .rec-date { color: var(--text-2); font-size: 0.88rem; width: 7.2em; flex-shrink: 0; }
-.rec-open .rec-val { font-weight: 700; font-variant-numeric: tabular-nums; flex: 1; min-width: 0; }
+/* 日期和读数按自身所需的字宽换行，给箭头和独立删除键留出固定的点击区域。 */
+.rec-summary { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); }
+.rec-date { flex: 1 1 7em; color: var(--text-2); font-size: 0.88rem; }
+.rec-val { flex: 3 1 10em; min-width: 0; font-weight: 700; font-variant-numeric: tabular-nums; }
 .rec-open .dg-arrow { color: var(--text-2); font-size: 1.3rem; flex-shrink: 0; }
 /* 应用内两步确认（代替原生 confirm） */
 .confirm-box {
@@ -951,7 +1007,13 @@ button.day-row:active, button.hist-day:active { background: var(--surface-hover)
 /* 键盘可见焦点：家属用电脑帮着录数据时靠它定位 */
 :focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
 
-/* 晕动/前庭不适的人会在系统里关动画，必须尊重 */
+/* 系统强制对比色下使用系统墨色，原生选择器交给平台着色。 */
+@media (forced-colors: active) {
+  .field select { -webkit-appearance: menulist; appearance: auto; background-image: none; }
+  .disclosure-arrow { background: ButtonText; -webkit-mask: var(--icon-chevron) center / contain no-repeat; mask: var(--icon-chevron) center / contain no-repeat; forced-color-adjust: none; }
+  .with-check::before, .font-chip[aria-checked="true"]::before, [aria-checked="true"] > .mc-box::after { background: ButtonText; forced-color-adjust: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

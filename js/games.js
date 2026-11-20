@@ -31,7 +31,7 @@ const Games = (() => {
     const row = el('div', 'btn-row');
     const again = el('button', 'btn ghost', '再玩一次');
     again.onclick = replay;
-    const ok = el('button', 'btn green', '完成打卡 ✓');
+    const ok = el('button', 'btn green with-check', '完成打卡');
     ok.onclick = onDone;
     row.appendChild(again); row.appendChild(ok);
     box.appendChild(row);
