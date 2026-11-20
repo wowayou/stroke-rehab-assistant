@@ -55,29 +55,16 @@ function renderTrain() {
     const stageName = k => (STAGES.find(s => s.key === k) || {}).name || '';
     document.getElementById('ex-list').innerHTML =
       `<div class="ex-group-label">适合当前阶段（${esc(stageName(p.stage))}）</div>`
-      + mine.map(e => exCardHTML(e, doneIds.includes(e.id))).join('')
+      + mine.map(e => exItemHTML(e, doneIds.includes(e.id))).join('')
       + `<details class="disclosure" id="train-other-stages">
           <summary><span><strong>其他阶段动作（量力选做）</strong><span class="disclosure-hint">点此展开或收起</span></span><span class="disclosure-arrow" aria-hidden="true"></span></summary>
-          <div class="disclosure-body">${others.map(e => exCardHTML(e, doneIds.includes(e.id), stageName(e.stage))).join('')}</div>
+          <div class="disclosure-body">${others.map(e => exItemHTML(e, doneIds.includes(e.id), stageName(e.stage))).join('')}</div>
         </details>`;
   } else {
     document.getElementById('ex-list').innerHTML =
-      list.map(e => exCardHTML(e, doneIds.includes(e.id))).join('');
+      list.map(e => exItemHTML(e, doneIds.includes(e.id))).join('');
   }
   bindExItems($view());
-}
-
-function exCardHTML(e, done, stageTag) {
-  return `
-  <div class="ex-item">
-    <div class="ex-icon" aria-hidden="true">${e.icon}</div>
-    <div class="ex-body">
-      <div class="ex-name">${e.name}${stageTag ? ` <span class="badge info" style="font-size:0.75rem">${stageTag}</span>` : ''}</div>
-      <div class="ex-dose">${e.dose}</div>
-      ${done ? '<div class="ex-done-mark">✓ 今日已完成</div>' : ''}
-    </div>
-    <button class="ex-start ${done ? 'done' : ''}" data-ex="${e.id}" aria-label="${done ? '再练' : '开始'}：${esc(e.name)}">${done ? '再练' : '开始'}</button>
-  </div>`;
 }
 
 /* ============================================================

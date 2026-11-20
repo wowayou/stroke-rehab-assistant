@@ -392,7 +392,22 @@ function renderRecords() {
   </div>
   ${Store.data.vitals[recTab].length ? `<button class="btn ghost block" id="btn-rec-history" style="margin-bottom:1rem">查看${REC_KINDS[recTab].name}记录</button>` : ''}
   <div id="rec-body"></div>
-  <button class="btn ghost block" id="btn-export" style="margin-top:0.2rem">📤 导出记录给医生看</button>
+  <div class="card handover-card">
+    <h2 class="card-title">病情交接</h2>
+    <p class="muted">换人照护或复诊前，把发生的事和还要问的问题记在一起。</p>
+    <button class="btn outline block" id="add-handover">记一条病情</button>
+    ${Store.data.handover.length ? `<details class="disclosure" id="handover-history"><summary><span>查看或修改交接记录</span><i class="disclosure-arrow" aria-hidden="true"></i></summary><div class="disclosure-body">
+      ${Store.handoverSorted().map(n => `<button class="hist-day" id="note-${esc(n.id)}" data-handover="${esc(n.id)}"><b>${esc(n.date || '日期待核实')} · ${esc(n.source)}</b><span>${esc(n.event)}</span></button>`).join('')}</div></details>` : ''}
+    <h3 class="section-label">选择要分享的记录</h3>
+    <div class="report-options">
+      <button type="button" class="report-option" id="btn-export" aria-labelledby="report-standard" aria-describedby="report-standard-hint">
+        <span><strong id="report-standard">导出记录给医生看</strong><span class="disclosure-hint" id="report-standard-hint">用药、测量和训练记录</span></span>
+      </button>
+      <button type="button" class="report-option" id="preview-handover" aria-labelledby="report-full" aria-describedby="report-full-hint">
+        <span><strong id="report-full">查看交接档案</strong><span class="disclosure-hint" id="report-full-hint">含上述记录，另附病史、照护提醒和待确认事项</span></span>
+      </button>
+    </div>
+  </div>
   <div class="disclaimer">浅绿为目标区（遵医嘱，可在设置里调整）；140/90 为一般提示线。指南建议多数患者在能耐受时降至 130/80 以下（部分情况例外），你的控制目标以医生要求为准。</div>`;
   $view().innerHTML = html;
 
@@ -403,7 +418,10 @@ function renderRecords() {
     render('records', { keepScroll: true });
     $view().querySelector(`[data-rectab="${recTab}"]`).focus({ preventScroll: true });
   });
-  document.getElementById('btn-export').onclick = openExport;
+  document.getElementById('btn-export').onclick = () => openExport();
+  document.getElementById('add-handover').onclick = () => openHandoverEdit('');
+  document.getElementById('preview-handover').onclick = () => openExport('handover');
+  $view().querySelectorAll('[data-handover]').forEach(b => b.onclick = () => openHandoverEdit(b.dataset.handover));
   const historyBtn = document.getElementById('btn-rec-history');
   if (historyBtn) historyBtn.onclick = () => openVitalHistory(recTab);
 
@@ -731,16 +749,71 @@ function renderWeight(body) {
   drawVitalChart('weight', document.getElementById('wt-chart'), sorted.slice(-14));
 }
 
-function openExport() {
-  const text = Store.exportReport();
+function openHandoverEdit(id) {
+  const find = () => Store.data.handover.find(v => v.id === id);
+  const note = find();
+  if (id && !note) return;
   const node = nodeFromHTML(`
-    <p class="muted" style="margin-bottom:0.5rem">复诊时把这份记录给医生看，或复制后发给家人打印。</p>
-    <textarea id="export-text" style="width:100%;height:45vh;border:1.5px solid var(--border);border-radius:12px;padding:0.7rem;font-size:0.9rem;line-height:1.5" readonly></textarea>
+    <div class="vital-form handover-form">
+      <div class="field"><label for="ho-event">当时发生了什么？</label><textarea id="ho-event" rows="3" maxlength="600" placeholder="如突然不舒服，请记下何时开始、上次状态如常的时间和就诊经过。也可记录既往治疗或康复变化。"></textarea></div>
+      <div class="field"><label for="ho-date">发生日期（记不清可留空）</label><input id="ho-date" maxlength="10" aria-describedby="ho-date-hint"><div class="muted" id="ho-date-hint">只填知道的部分，如 2024、2024-03 或 2024-03-15。</div></div>
+      <div class="field"><label for="ho-source">这件事是怎么知道的？</label><select id="ho-source">${Store.handoverSources.map(s => `<option>${esc(s)}</option>`).join('')}</select></div>
+      <div class="field"><label for="ho-care">交接时请留意（选填）</label><textarea id="ho-care" rows="2" maxlength="600" placeholder="如走路需要怎样扶助，医生交代暂停哪些动作"></textarea></div>
+      <div class="field"><label for="ho-pending">还要确认什么（选填）</label><textarea id="ho-pending" rows="2" maxlength="600" placeholder="如哪份报告待取，何时复诊，由谁跟进"></textarea></div>
+      <button class="btn block" id="ho-save">保存这条病情</button>
+      ${id ? '<button class="btn ghost block" id="ho-delete">删除这条记录</button>' : ''}
+    </div>`);
+  const field = key => node.querySelector('#ho-' + key);
+  const keys = ['event', 'date', 'source', 'care', 'pending'];
+  if (note) keys.forEach(key => { field(key).value = note[key]; });
+  const close = openModal(id ? '修改交接记录' : '记一条病情', node);
+  const canEdit = guardEdit(node, close, find);
+  const done = message => {
+    close();
+    render('records', { keepScroll: true, preserveInputs: true });
+    toast(message);
+  };
+  field('save').onclick = () => {
+    if (!canEdit()) return;
+    const values = {};
+    keys.forEach(key => { values[key] = field(key).value.trim(); });
+    if (stored(Store.saveHandover(id, values))) done('交接记录已保存');
+  };
+  if (id) field('delete').onclick = () => confirmInPlace(field('delete'), {
+    message: '删除这条交接记录？删除后无法恢复。', confirmLabel: '删除', onConfirm: () => {
+      if (!canEdit() || !stored(Store.removeHandover(id))) return false;
+      done('交接记录已删除');
+    },
+  });
+}
+
+function openExport(mode) {
+  const handover = mode === 'handover';
+  const report = handover ? Store.exportHandover : Store.exportReport;
+  const node = nodeFromHTML(`
+    <p class="muted" style="margin-bottom:0.5rem">${handover ? '档案含病史、待确认事项和用药记录。' : '记录含用药和测量数据。'}复制前请核对内容，只发给你信任的人。</p>
+    <textarea id="export-text" class="report-preview" aria-label="报告全文" readonly></textarea>
     <button class="btn block" id="copy-export" style="margin-top:0.7rem">📋 复制全部内容</button>`);
-  node.querySelector('#export-text').value = text;
-  openModal('导出健康记录', node);
+  openModal(handover ? '交接档案' : '导出健康记录', node);
+  let preview = '';
+  const ta = node.querySelector('#export-text');
+  const refresh = () => {
+    refreshIfStale();
+    try {
+      const next = report();
+      const changed = preview !== next;
+      if (changed) { preview = next; ta.value = next; }
+      return changed;
+    } catch (e) {
+      ta.value = '';
+      node.querySelector('#copy-export').disabled = true;
+      showError(node, e.message);
+      return true;
+    }
+  };
+  refresh();
   node.querySelector('#copy-export').onclick = async () => {
-    const ta = node.querySelector('#export-text');
+    if (refresh()) { if (ta.value) showError(node, '记录已更新，请看过新内容后再复制。'); return; }
     try {
       await navigator.clipboard.writeText(ta.value);
       toast('已复制，可粘贴到微信发给家人');

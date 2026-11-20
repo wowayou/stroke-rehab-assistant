@@ -56,21 +56,20 @@ function renderToday() {
   <div class="today-hero">
     <div class="date-line">${now.getMonth() + 1}月${now.getDate()}日 ${Store.weekdayCN(now)}</div>
     <h1 class="greet" tabindex="-1">${greet}${name}</h1>
-    ${rd ? `<div class="rehab-day">今天是康复第 <b>${rd}</b> 天，每一天都算数</div>`
-         : `<div class="rehab-day">坚持康复，每一天都算数</div>`}
+    ${rd ? `<div class="rehab-day">今天是康复第 <b>${rd}</b> 天</div>` : ''}
     ${streakHTML}
   </div>
 
   <div class="card">
     <h2 class="card-title">今日三件事</h2>
-    <div class="today-summary">${summary}</div>
+    <div class="today-summary${thingsDone === 3 ? ' complete' : ''}">${summary}</div>
     <div class="check-item ${bpDone ? 'done' : ''}">
       <div class="ci-icon" aria-hidden="true">🩺</div>
       <div class="ci-body">
         <div class="ci-name">测量血压</div>
         <div class="ci-sub">${bpDone ? '今天记好了 ✓' : '每天固定时间测量并记录'}</div>
       </div>
-      <button class="ci-action ${bpDone ? 'done' : ''}" data-go="records" data-rec="bp">${bpDone ? '已完成' : '去记录'}</button>
+      <button class="ci-action ${bpDone ? 'done' : ''}" data-go="records" data-rec="bp">${bpDone ? '看血压记录' : '去记录'}</button>
     </div>
     <div class="check-item ${medDone ? 'done' : ''}">
       <div class="ci-icon" aria-hidden="true">💊</div>
@@ -81,7 +80,7 @@ function renderToday() {
           : hasMeds ? '今天没有已登记的服药安排' : '尚未登记药物，请按医嘱到「用药」页登记'}</div>
         ${mp.total ? dotsHTML(mp.done, mp.total) : ''}
       </div>
-      <button class="ci-action ${medDone ? 'done' : ''}" data-go="meds">${mp.total ? (medDone ? '已完成' : '去核对') : hasMeds ? '查看药物' : '去登记'}</button>
+      <button class="ci-action ${medDone ? 'done' : ''}" data-go="meds">${mp.total ? (medDone ? '看核对表' : '去核对') : hasMeds ? '查看药物' : '去登记'}</button>
     </div>
     <div class="check-item ${trainDone ? 'done' : ''}">
       <div class="ci-icon" aria-hidden="true">💪</div>
@@ -90,7 +89,7 @@ function renderToday() {
         <div class="ci-sub">${esc(stageName)}${trainDone ? '推荐都练过了 ✓' : ' · ' + leftText(planDone, plan.length, '项')}</div>
         ${dotsHTML(planDone, plan.length)}
       </div>
-      <button class="ci-action ${trainDone ? 'done' : ''}" data-go="train">${trainDone ? '已完成' : '去训练'}</button>
+      <button class="ci-action ${trainDone ? 'done' : ''}" data-go="train">${trainDone ? '查看动作' : '去训练'}</button>
     </div>
   </div>
 
@@ -113,12 +112,12 @@ function renderToday() {
 
 /* 训练条目公共 HTML（今日推荐 & 训练库共用）：行样式由 CSS 的 .ex-item 统一给，
    今天页在 .card 里、训练库在 #ex-list 分组卡里，都是"一卡多行"的分组列表 */
-function exItemHTML(e, done) {
+function exItemHTML(e, done, stageTag) {
   return `
   <div class="ex-item">
     <div class="ex-icon" aria-hidden="true">${e.icon}</div>
     <div class="ex-body">
-      <div class="ex-name">${e.name}</div>
+      <div class="ex-name">${e.name}${stageTag ? ` <span class="badge info ex-stage-tag">${esc(stageTag)}</span>` : ''}</div>
       <div class="ex-dose">${e.dose}</div>
       ${done ? '<div class="ex-done-mark">✓ 今日已完成</div>' : ''}
     </div>

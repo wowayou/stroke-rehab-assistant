@@ -33,7 +33,7 @@ assert(/cp -r[^\n]*\b_headers\b/.test(deploy), '部署包必须包含 Cloudflare
 /* 兼容老手机（v0.2.33）：运行时脚本的语法与 API 不超过 ES2018（Chrome 62 / iOS 11.3 能用）。
    超了不是"某个功能不好用"，而是整个文件解析失败、老手机白屏。真解析器核对方法见 DEVELOPMENT §6「兼容性」。 */
 const stripComments = src => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[ \t])\/\/[^\n]*/gm, '$1');
-const RUNTIME_JS = ['js/data-exercises.js', 'js/data-articles.js', 'js/storage.js', 'js/charts.js', 'js/games.js', 'js/figures.js', 'js/speech.js', ...APP_FILES];
+const RUNTIME_JS = ['sw.js', 'js/data-exercises.js', 'js/data-articles.js', 'js/storage.js', 'js/charts.js', 'js/games.js', 'js/figures.js', 'js/speech.js', ...APP_FILES];
 const TOO_NEW = [
   [/\?\.(?=[A-Za-z_$(\[])/, '可选链 ?.（Chrome 80 / iOS 13.4 才能解析）'],
   [/\?\?/, '空值合并 ??（Chrome 80 / iOS 13.4）'],

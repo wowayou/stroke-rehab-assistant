@@ -41,6 +41,16 @@
     <button class="btn ghost block" type="button">备份全部数据</button>
     <button class="btn ghost block" type="button">从备份恢复</button>
   </div>
+  <h2 class="section-label">今日任务与完成状态</h2>
+  <div class="card">
+    <div class="today-summary">今天的用药安排还差一次核对。</div>
+    <div class="check-item done"><span class="ci-icon" aria-hidden="true">🩺</span><div class="ci-body"><div class="ci-name">测量血压</div><div class="ci-sub">今天记好了 ✓</div></div><button class="ci-action" type="button">看血压记录</button></div>
+  </div>
+  <h2 class="section-label">选择分享范围</h2>
+  <div class="card report-options">
+    <button type="button" class="report-option" aria-labelledby="sample-standard" aria-describedby="sample-standard-hint"><span><strong id="sample-standard">导出记录给医生看</strong><span class="disclosure-hint" id="sample-standard-hint">用药、测量和训练记录</span></span></button>
+    <button type="button" class="report-option" aria-labelledby="sample-full" aria-describedby="sample-full-hint"><span><strong id="sample-full">查看交接档案</strong><span class="disclosure-hint" id="sample-full-hint">含上述记录，另附病史、照护提醒和待确认事项</span></span></button>
+  </div>
   <h2 class="section-label">反馈与表单</h2>
   <div class="notice">文件已生成，请到下载列表确认已保存。</div>
   <div class="notice danger">没有保存成功，原有记录未改变。请检查浏览器存储空间后重试。</div>

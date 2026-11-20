@@ -20,14 +20,14 @@ function renderLearn() {
     <h2 class="section-label">${esc(g)}</h2>
     <div class="list-group">
       ${ARTICLES.filter(a => a.group === g).map(a => `
-        <div class="art-item" data-art="${a.id}" role="button" tabindex="0">
-          <div class="art-icon" aria-hidden="true">${a.icon}</div>
-          <div class="art-body">
-            <div class="art-title">${a.title}</div>
-            <div class="art-sub">${a.sub}</div>
-          </div>
-          <div class="art-arrow" aria-hidden="true">›</div>
-        </div>`).join('')}
+        <button type="button" class="art-item" data-art="${a.id}" aria-labelledby="art-title-${a.id}" aria-describedby="art-sub-${a.id}">
+          <span class="art-icon" aria-hidden="true">${a.icon}</span>
+          <span class="art-body">
+            <strong class="art-title" id="art-title-${a.id}">${a.title}</strong>
+            <span class="art-sub" id="art-sub-${a.id}">${a.sub}</span>
+          </span>
+          <span class="art-arrow" aria-hidden="true">›</span>
+        </button>`).join('')}
     </div>
   `).join('')}
   <div class="disclaimer">内容参考国内卒中防治与康复指南整理，仅作健康教育用途，<br>不能替代医生的诊断和治疗建议。</div>`;
@@ -36,7 +36,7 @@ function renderLearn() {
 
   document.getElementById('btn-open-emergency').onclick = openEmergency;
   $view().querySelectorAll('[data-art]').forEach(elm => {
-    const open = () => {
+    elm.onclick = () => {
       const a = ARTICLES.find(x => x.id === elm.dataset.art);
       if (a) {
         const sb = speakBtnHTML('art-speak', '听这篇');
@@ -46,8 +46,6 @@ function renderLearn() {
         bindSpeak(node.querySelector('#art-speak'), () => articleSpeechText(a));
       }
     };
-    elm.onclick = open;
-    elm.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } };
   });
 }
 

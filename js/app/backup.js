@@ -8,6 +8,7 @@
    【区】从备份恢复（选文件/粘贴 → 解密 → 预览 → 确认，见 DESIGN-SYSTEM §5）
    ============================================================ */
 function openRestorePreview(parsed, fileName) {
+  const previewRevision = Store.revision;
   const s = Store.backupSummary(parsed.data);
   const confirmNode = nodeFromHTML(`
     <p class="muted" style="margin-bottom:0.5rem">备份文件：<b>${esc(fileName)}</b>${parsed.exportedAt ? '<br>导出时间：' + esc(parsed.exportedAt) : ''}</p>
@@ -15,13 +16,13 @@ function openRestorePreview(parsed, fileName) {
       <div class="card-title">恢复后将包含</div>
       <div class="guide-line">💊 药物 ${s.meds} 种　·　🩺 血压 ${s.bp} 条</div>
       <div class="guide-line">🩸 血糖 ${s.glucose} 条　·　⚖️ 体重 ${s.weight} 条</div>
-      <div class="guide-line">💪 训练打卡 ${s.checkinDays} 天</div>
+      <div class="guide-line">💪 训练打卡 ${s.checkinDays} 天　·　病情交接 ${s.handover} 条</div>
     </div>
     <div class="disclaimer" style="padding:0.2rem 0 0.6rem">恢复会用备份<b>覆盖本机现有全部数据</b>。应用会自动保留恢复前的数据，可在设置中撤销一次。</div>
     <button class="btn block" id="restore-confirm">确认恢复</button>`);
   const closeConfirm = openModal('从备份恢复', confirmNode, { center: true });
   confirmNode.querySelector('#restore-confirm').onclick = () => {
-    if (!Store.applyBackup(parsed.data)) {
+    if (!Store.applyBackup(parsed.data, previewRevision)) {
       showError(confirmNode, Store.backupError() || '恢复失败，原有数据未改变');
       renderStorageNotice();
       return;
@@ -90,7 +91,7 @@ function openBackupWarning() {
   const node = nodeFromHTML(`
     <div class="card">
       <div class="card-title">🔒 备份里有健康隐私</div>
-      <div class="guide-line">备份文件包含称呼、用药、血压、血糖、体重和训练记录，内容是可以直接阅读的。</div>
+      <div class="guide-line">备份文件包含称呼、病情交接、用药、血压、血糖、体重和训练记录，内容是可以直接阅读的。</div>
       <div class="guide-line">请保存在自己的设备或可信位置，不要发到群聊，也不要交给无关人员。</div>
     </div>
     ${IN_WECHAT ? '' : `<div class="notice">

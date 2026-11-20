@@ -505,6 +505,15 @@ assert(Store.resetAll() === false, '恢复点无法清理时不应报告清空�
 assert(JSON.stringify(Store.data) === beforeResetFailure, '恢复点无法清理时现有数据不得改变');
 assert(Store.hasRecoveryBackup() === true, '恢复点无法清理时应保留恢复点');
 failRemoveKey = '';
+const priorRecoveryText = localStorage.getItem('strokeRehab.recovery.v1');
+failWriteKey = 'strokeRehab.v1';
+assert(!Store.resetAll() && JSON.stringify(Store.data) === beforeResetFailure, '清空时主数据写失败，原有记录仍在');
+assert(localStorage.getItem('strokeRehab.recovery.v1') === priorRecoveryText, '清空时主数据写失败须放回原恢复点');
+failWriteKey = '';
+failWrites = true;
+assert(!Store.resetAll() && Store.storageStatus().message.includes('未能放回上次恢复点'), '双重写盘失败要如实告知恢复点状态');
+failWrites = false;
+localStorage.setItem('strokeRehab.recovery.v1', priorRecoveryText);
 assert(Store.resetAll() === true, '清空全部数据应成功');
 assert(Store.hasRecoveryBackup() === false, '清空全部数据后恢复点也必须清除');
 
@@ -1069,6 +1078,36 @@ v32Fresh();
   assert(!S.data.medLate['2026-10-09'], '同一动作跨过零点也不能把当日核对改成补记');
   S.toggleMed(midnightId, '08:00');
   assert(S.medTakenAt(midnightId, '08:00', '2026-10-10') === '00:00', '下一天的新动作记为新日期，不覆盖昨天');
+}
+
+/* 交接报告保留日期精度与消息来源，计划不会混进病史或服药安排。 */
+{
+  Store.resetAll();
+  const seed = { date: '2020-03', event: '复诊记录', source: '转述医生口头说明', care: '家人陪同', pending: '待领取正式报告' };
+  assert(Store.saveHandover('', seed), '可登记只有月份的病史');
+  const id = Store.data.handover[0].id;
+  Store.saveHandover('', { ...seed, date: '', event: '日期不详的记录' });
+  Store.saveHandover('', { ...seed, date: '2019', event: '旧药单记录', source: '据历史药单抄录' });
+  const intact = Store.exportBackup();
+  for (const patch of [{date: '2020-02-30'}, {date: '2020-13'}, {date: Store.addDays(t, 1)}, {source: '诊断'}, {event: ' '}, {care: '长'.repeat(601)}]) {
+    assert(Store.saveHandover(id, { ...seed, ...patch }) === false, '拒绝非法交接字段');
+  }
+  assert(Store.data.handover.length === 3 && Store.data.handover[0].event === seed.event, '失败写入保留原记录');
+  const dossier = Store.exportHandover();
+  const timeline = dossier.split('■ 已登记的病史时间线')[1].split('■ 附')[0];
+  assert(timeline.indexOf('2019〔据历史药单抄录〕旧药单记录') < timeline.indexOf('2020-03〔转述医生口头说明〕复诊记录') && timeline.endsWith('日期待核实〔转述医生口头说明〕日期不详的记录\n\n'), '时间线保留部分日期，日期不详另列');
+  assert(!timeline.includes('待领取正式报告') && dossier.includes('这次还要确认：待领取正式报告'), '待办不能被列为已发生事件');
+  assert(!Store.exportReport().includes('旧药单记录') && !Store.data.meds.length, '基础导出不含交接私密内容，旧药单不生成排期');
+  assert(Store.removeHandover(id) && Store.applyBackup(Store.parseBackup(intact).data), '删除后可从备份找回');
+  Store.load();
+  assert(Store.data.handover[0].id === id && Store.data.handover[0].pending === seed.pending, '备份恢复及重读保留交接事项');
+  assert(Store.saveHandover(id, { ...seed, pending: '' }) && !Store.data.handover[0].pending, '可更新已核实的待办');
+  assert(Store.parseBackup('{"meds":[]}').data.handover.length === 0, '旧备份不虚构病史');
+  for (const bad of [[null], [{ ...seed, event: '长'.repeat(601) }], Array(301).fill(seed)]) {
+    let rejected = false;
+    try { Store.parseBackup(JSON.stringify({ meds: [], handover: bad })); } catch (_) { rejected = true; }
+    assert(rejected, '拒绝损坏或超限记录，不静默截短病史');
+  }
 }
 
 if (failed) {

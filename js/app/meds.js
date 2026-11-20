@@ -155,7 +155,8 @@ function renderMeds() {
 
   let checkHTML;
   if (!meds.length) {
-    checkHTML = '<div class="empty-tip">还没有登记药物。<br>请按医生处方，点下方按钮添加。</div>';
+    checkHTML = `<div class="empty-tip">还没有登记药物。请按医生处方填写。</div>
+      <button class="btn block" id="btn-add-med">登记第一种药物</button>`;
   } else if (!todayItems.length) {
     checkHTML = '<div class="empty-tip">今天没有需要核对的药。<br>（清单里的药都已停用，或还没到开始服用的日期）</div>';
   } else {
@@ -166,7 +167,7 @@ function renderMeds() {
   const mp = Store.medProgressToday();
   const todayLine = mp.total
     ? (mp.done >= mp.total
-      ? `<div class="today-summary">今天该吃的 ${mp.total} 次都核对完了 ✓</div>`
+      ? `<div class="today-summary complete">今天该吃的 ${mp.total} 次都核对完了 ✓</div>`
       : `<div class="today-summary">今天一共 ${mp.total} 次，${leftText(mp.done, mp.total, '次还没核对')}${dotsHTML(mp.done, mp.total)}</div>`)
     : '';
 
@@ -190,7 +191,7 @@ function renderMeds() {
   let html = `
   ${pageHeading('用药核对', '按医生处方服药。吃完点一下，默认记下现在；不是刚吃的可以改时间。')}
   <div class="card">
-    <h2 class="card-title">今日服药核对 <span class="card-meta">吃完点一下</span></h2>
+    <h2 class="card-title">今日服药核对 ${meds.length ? '<span class="card-meta">吃完点一下</span>' : ''}</h2>
     ${todayLine}
     ${checkHTML}
   </div>
@@ -205,7 +206,7 @@ function renderMeds() {
     </details>
     <button class="btn ghost block" id="btn-med-hist" style="margin-top:0.7rem">📄 服药历史 · 补记（近14天）</button>
   </div>` : ''}
-  ${medListHTML()}`;
+  ${meds.length ? medListHTML() : '<p class="disclaimer">请严格按医生处方登记。任何加药、减药、停药都要先问医生。</p>'}`;
 
   $view().innerHTML = html;
 
@@ -243,7 +244,6 @@ function medListHTML() {
   <div class="card">
     <h2 class="card-title">我的药物清单</h2>
     ${active.map(m => medRowHTML(m, false)).join('')}
-    ${!active.length && !stopped.length ? '' : ''}
     <button class="btn ghost block" id="btn-add-med" style="margin-top:0.7rem">＋ 添加药物</button>
     <div class="muted" style="margin-top:0.5rem">请严格按医生处方登记。任何加药、减药、停药都要先问医生。</div>
   </div>

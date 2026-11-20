@@ -91,6 +91,14 @@ html[data-font="xlarge"] .btn-emergency { padding: 0 0.55rem; }
   border: none; border-radius: 12px;
   font-size: 1.05rem; font-weight: 700;
 }
+/* 紧凑顶栏为任务保留首屏空间，名称及两个操作始终可见。 */
+@media (max-width: 380px) {
+  .header-inner { padding: var(--space-2); }
+  .header-logo, .emergency-icon, .header-actions .btn-icon .ui-icon { display: none; }
+  .header-actions .btn-icon { padding: 0 var(--space-2); }
+  .header-actions .btn-icon-label { font-size: 1rem; }
+  .header-actions { gap: var(--space-1); }
+}
 .btn-emergency:active { background: #B92F2F; }
 
 /* ---------- 主容器 ---------- */
@@ -187,7 +195,7 @@ h1[tabindex="-1"]:focus { outline: none; }
 .check-item .ci-sub { font-size: 0.85rem; color: var(--text-2); }
 .check-item.done .ci-name { color: var(--green); }
 .ci-action { min-height: 48px; min-width: 88px; flex-shrink: 0; border-radius: var(--radius-control); border: none; font-size: 0.98rem; font-weight: 700; background: var(--primary-soft); color: var(--primary-dark); padding: 0 0.65rem; }
-.ci-action.done { background: var(--green-soft); color: var(--green); }
+.ex-stage-tag { font-size: 0.85rem; }
 
 .progress-bar { height: 12px; background: var(--surface-subtle); border-radius: 999px; overflow: hidden; margin: 0.4rem 0 0.2rem; }
 .progress-bar > div { height: 100%; background: var(--green); border-radius: 999px; transition: width 0.4s; }
@@ -202,10 +210,11 @@ h1[tabindex="-1"]:focus { outline: none; }
 .pg-dot.big { width: 20px; height: 20px; }
 /* 今日/用药页顶部的一句肯定的话 */
 .today-summary {
-  background: var(--green-soft); color: var(--green);
+  background: var(--surface-subtle); color: var(--text);
   border-radius: var(--radius-control); padding: 0.5rem 0.7rem; margin-bottom: 0.6rem;
   font-size: 0.98rem; line-height: 1.5;
 }
+.today-summary.complete { background: var(--green-soft); color: var(--green); }
 .ad-main { font-size: 1.08rem; font-weight: 700; line-height: 1.5; margin-bottom: 0.15rem; }
 .ad-main b { color: var(--green); font-size: 1.25rem; }
 
@@ -349,12 +358,26 @@ input, select { min-width: 0; max-width: 100%; }
 /* 设置页的日期输入在特大字号下整行放不下时，退化为独占一行（行内放得下时仍与标签同行） */
 input[type="date"].set-input { min-width: 9.5em; }
 .field label { display: block; font-size: 0.95rem; color: var(--text); font-weight: 600; margin-bottom: 0.3rem; }
-.field input, .field select {
+.field input, .field select, .handover-form textarea {
   width: 100%; min-height: 54px;
   border: 1.5px solid var(--control-border); border-radius: 12px;
   padding: 0 0.8rem; font-size: 1.25rem; background: var(--card); color: var(--text);
 }
-.field input:focus, .field select:focus { outline: 2px solid var(--primary); border-color: var(--primary); }
+.report-options { border-top: 1px solid var(--border); }
+.report-option {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  width: 100%; min-height: var(--touch-target); padding: var(--space-3) var(--space-1);
+  background: var(--card); color: var(--primary-dark); border: 0; text-align: left; font: inherit;
+}
+.report-option + .report-option { border-top: 1px solid var(--border); }
+.report-option:after { content: ''; width: 0.48em; height: 0.48em; flex: none; margin-right: var(--space-1); border: solid currentColor; border-width: 2px 2px 0 0; transform: rotate(45deg); }
+.report-option:active { background: var(--surface-hover); }
+.report-preview { display: block; width: 100%; height: 45vh; padding: var(--space-3); font: inherit; line-height: 1.6; color: var(--text); background: var(--card); border: 1px solid var(--control-border); border-radius: var(--radius-control); }
+.handover-card > *, .handover-form > * { margin-bottom: 0.6rem; }
+.handover-card .hist-day { color: var(--text); font: inherit; overflow-wrap: break-word; }
+.handover-card .hist-day span { max-width: 100%; white-space: pre-wrap; }
+.handover-form textarea { display: block; resize: vertical; padding: 0.5rem; line-height: 1.5; font-size: 1rem; }
+.field input:focus, .field select:focus, .handover-form textarea:focus { outline: 2px solid var(--primary); border-color: var(--primary); }
 
 /* ---- 表单次要信息行：标签左、控件右（与设置页同一行内语言）。
    主信息（如高压/低压）用大字段，次要信息（脉搏/记录时间）用紧凑行——紧凑而不拥挤 ---- */
@@ -367,7 +390,7 @@ input[type="date"].set-input { min-width: 9.5em; }
 }
 /* 记录时间/日期收敛成一个可点开的小条：默认"今天"，低频修改不占一级空间 */
 .dt-chip {
-  flex: 1; min-width: 0; min-height: 48px;
+  flex: 1 1 7em; min-width: 0; min-height: 48px;
   border: 1.5px solid var(--control-border); border-radius: 12px;
   padding: 0.35rem 0.65rem; font-size: 0.95rem; background: var(--card); color: var(--primary-dark);
   text-align: left;
@@ -597,6 +620,7 @@ input[aria-invalid="true"], select[aria-invalid="true"] { border: 2px solid var(
   box-shadow: var(--shadow); padding: 0.15rem 0.9rem;
 }
 .art-item {
+  width: 100%; background: var(--card); border: 0; font: inherit; text-align: left;
   display: flex; align-items: center; gap: 0.7rem;
   padding: 0.8rem 0.1rem;
   border-bottom: 1px solid var(--border);
@@ -605,7 +629,7 @@ input[aria-invalid="true"], select[aria-invalid="true"] { border: 2px solid var(
 .art-item .art-icon { font-size: 1.4rem; width: 2rem; flex-shrink: 0; text-align: center; }
 .art-item .art-body { flex: 1; min-width: 0; }
 .art-item .art-title { font-weight: 700; font-size: 1.02rem; }
-.art-item .art-sub { font-size: 0.86rem; color: var(--text-2); }
+.art-item .art-sub { display: block; font-size: 0.86rem; color: var(--text-2); }
 .art-item .art-arrow { color: var(--text-2); font-size: 1.2rem; }
 
 .article-view h2 { font-size: 1.3rem; margin-bottom: 0.6rem; }
@@ -820,6 +844,8 @@ body.overlay-open { overflow: hidden; }
   html[data-font="xlarge"] .mc-at { margin-left: calc(34px + 0.9rem); }
 }
 @media (max-width: 430px) {
+  html[data-font="xlarge"] .check-item { display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: var(--space-2) var(--space-3); }
+  html[data-font="xlarge"] .ci-action { grid-column: 2; justify-self: start; }
   html[data-font="large"] .med-line { flex-wrap: wrap; gap: 0; padding-bottom: var(--space-2); }
   html[data-font="large"] .med-line > .med-check { flex-basis: 100%; }
   html[data-font="large"] .mc-at { margin-left: calc(34px + 0.9rem); }
@@ -908,7 +934,7 @@ button.day-row:active, button.hist-day:active { background: var(--surface-hover)
 @media (hover: hover) and (pointer: fine) {
   .btn:not(:disabled):hover { box-shadow: inset 0 0 0 2px currentColor; }
   .btn-icon:hover, .modal-close:hover, .art-item:hover, .med-check:hover, .check-row:hover,
-  .action-list > .btn:hover, .disclosure summary:hover { background: var(--surface-hover); }
+  .report-option:hover, .action-list > .btn:hover, .disclosure summary:hover { background: var(--surface-hover); }
   .nav-item:not(.active):hover, .cat-tab:not(.active):hover, .rec-tab:not(.active):hover { background: var(--surface-hover); }
 }
 

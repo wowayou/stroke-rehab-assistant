@@ -81,7 +81,7 @@ check_view() {
 check_view today   "今日三件事" "今日推荐训练" "测量血压"
 check_view train   "当前康复阶段" "肢体运动" "十指交叉握手上举" "训练打卡记录"
 check_view records "记一次血压" "导出记录给医生看"
-check_view meds    "今日服药核对" "添加药物"
+check_view meds    "今日服药核对" "登记第一种药物"
 check_view learn   "拨打120" "防复发最重要的五件事"
 
 # 核心约束：不用服务器，直接双击 file:// 也必须能加载全部普通脚本。

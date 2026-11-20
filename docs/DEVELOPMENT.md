@@ -121,6 +121,10 @@ data-exercises.js → data-articles.js → storage.js → charts.js → games.js
 
 全局名清单：`EXERCISES` `EX_CATS` `STAGES` `DAILY_PLAN` `ARTICLES` `BEFAST` `Store` `Charts` `Games` `FIG` `POSES` `FIGURES` `Speech` `App`，外加 `js/app/` 各文件的顶层函数与变量。服药时间入口 `medScreenStale` / `openMedTimeEdit` 位于 `js/app/meds.js`，不新增脚本或改变加载顺序。
 
+`exItemHTML` 位于 `js/app/today.js`，今日推荐和训练库共用动作行，训练库可传入阶段标签。
+
+交接记录的编辑入口 `openHandoverEdit` 和报告预览 `openExport` 位于 `js/app/records.js`。
+
 `guardEdit` 位于 `js/app/core.js`，供记录、药物和设置表单复用编辑快照检查；脚本组成与加载顺序不变。
 
 **`js/app/` 是同一个程序切成的几段**（2026-10 由 2800 行的 app.js 拆出，纯搬移、逻辑未改）：普通 `<script>` 共用一个全局作用域，所以一个文件里的函数可以直接调用另一个文件里的函数（运行时都已加载）；但**文件顶层立即执行的代码只能用排在它前面的文件里的东西**——`boot.js` 的 `RENDERERS` 在加载时就引用各页的 `renderXxx`，所以它必须最后。代价是这些名字都成了全局名，两条护栏防止出事：`contracts.test.js` 查各文件顶层名字不重复（`let/const` 重复整页加载失败，`function` 重复会悄悄覆盖）；`compat.test.js` 在真实浏览器里查它们不与浏览器自带的全局名同名（同名会盖掉 `window` 上的东西）。为什么不用 ES Modules：会让 `file://` 白屏、老设备兼容更差（硬约定 2、17），而切文件已经拿到"一次只读一块"的主要好处。
@@ -144,6 +148,9 @@ data-exercises.js → data-articles.js → storage.js → charts.js → games.js
       bpSys: 140, bpDia: 90, gluFast: 7.0, gluPost: 10.0,
     },
   },
+  handover: [            // 最多 300 条；旧备份缺省为空。来源选项见 Store.handoverSources
+    { id, date, source, event, care, pending } // date 为 YYYY / YYYY-MM / YYYY-MM-DD / 空串；三段说明各限 600 字符
+  ],
   meds: [                // 药物清单
     // from = 开始吃的日期（新登记默认当天，避免把登记之前的日子算成漏服）
     // to   = 最后一次服药的日期（含当天），'' 表示还在吃
@@ -325,7 +332,7 @@ data-exercises.js → data-articles.js → storage.js → charts.js → games.js
 
 目标：**Chrome 62 / iOS 11.3 以上能用**。老人常用旧手机和系统自带浏览器（国内部分安卓系统 WebView 停在 Chrome 6x，iPhone 6/5s 最高 iOS 12）；安卓微信内置浏览器是 XWeb（Chromium 1xx），不是瓶颈。以前用了 `?.`/`??`，iOS 13.3 以下与 Chrome 79 以下整个文件解析失败、白屏。
 
-- **语法与 API 上限 ES2018**：静态护栏在 `contracts.test.js`（列出了禁用写法）。它只能扫已知写法；改了运行时脚本、拿不准时用**真解析器**核对：把 Node 8（V8 6.2≈Chrome 62）下载到临时目录，`node-v8.17.0-linux-x64/bin/node --check js/*.js` 全部通过才算数（下载地址 `https://nodejs.org/dist/v8.17.0/node-v8.17.0-linux-x64.tar.xz`，不要装进系统）。`sw.js` 不受此限（只在支持 Service Worker 的新浏览器里跑，解析失败即没有离线缓存）。
+- **语法与 API 上限 ES2018**：静态护栏在 `contracts.test.js`（列出了禁用写法）。它只能扫已知写法；改了运行时脚本、拿不准时用**真解析器**核对：把 Node 8（V8 6.2≈Chrome 62）下载到临时目录，`node-v8.17.0-linux-x64/bin/node --check js/*.js` 全部通过才算数（下载地址 `https://nodejs.org/dist/v8.17.0/node-v8.17.0-linux-x64.tar.xz`，不要装进系统）。`sw.js` 也走同一套静态语法和 API 护栏，离线功能另跑 `sw.test.js`。
 - **运行时兜底**：`boot-check.js`（ES5）在主程序解析失败或初始化出错时显示"这个浏览器打不开本应用"+ 换浏览器的办法 + BE-FAST 与拨 120，并藏起点了没反应的导航。`index.html` 另有 `<noscript>`。
 - **会降级、不会坏的**：iOS 14.1 / Chrome 84 以前不支持 flex `gap`，间距变紧（55 处，未逐一兜底）；`inert`、屏幕常亮、离线缓存、`:focus-visible` 不支持时静默跳过；无 Pointer Events（iOS 12）时图表改用 `click`。
 - **微信内置浏览器**：不能下载文件，记录存在微信自己的存储里（清理微信缓存可能被一起清掉）。检测到 `MicroMessenger` 时，首次指引与设置里说明并建议「在浏览器打开」后添加到桌面；备份改为「复制备份内容」（先同步 `execCommand`，再 Clipboard API，都不行就摆出来长按复制），所有浏览器都有「粘贴备份内容恢复」，走与选文件同一套校验、预览、恢复点。复制不算"下载了备份"，不更新上次备份日期。
@@ -333,6 +340,8 @@ data-exercises.js → data-articles.js → storage.js → charts.js → games.js
 ### sw.js（离线缓存，v0.2.32）
 
 只缓存本站运行文件，不碰健康数据、不向外发请求；只在 `https:` 注册（本地 http 预览加 `?sw=1` 才注册，否则改了 js 刷新会拿到缓存旧文件）。策略：页面联网优先，`SHELL_TIMEOUT`（4 秒）内没回来或连不上、5xx 就用缓存，网络那边到了再后台更新；带 `?ver=` 的 css/js 缓存优先（`deploy.sh` 每次部署盖新戳，同一 URL 内容不变），每拿到新页面按它实际引用的 URL 清掉旧版本；没带版本号的（`manifest.json`、`icon.svg`）先给缓存、后台取新。**安装时整套预缓存，取不到任何一个就整体失败——失败等于没有 sw.js，不会把站点弄坏**（`sw.test.js` 专门验）。
+
+根路径沿用既有缓存名，子目录安装按作用域路径单独命名。离线资源清理限于自己的缓存。已接管的页面遇到缓存读取失败时走网络，缓存写入失败时仍交付已经取得的联网资源。
 
 三条会咬人的约定：① `_headers` 里 `/sw.js` 的 `! Content-Security-Policy` 不能删——页面的 `connect-src 'none'` 套到 SW 上会拦掉它的全部 fetch；同名头多条规则是**逗号合并**（两条策略同时生效），所以只能摘、不能另加放宽的一条。② 新增运行文件若不是 `index.html` 里直接引用的（像 manifest 引用的 `icon.svg`），要加进 `EXTRA`，并且 `asset()` 只拦 `.js/.css/.svg/.json`，别的类型要一并加上。③ 部署后核对 `curl -sI <站点>/sw.js` 没有 `content-security-policy` 头、有 `cache-control: no-cache`。另：`registerOffline()` 顺带请求 `navigator.storage.persist()`（Safari 会清长期没打开的网站的 localStorage，持久化的不清；跳过会弹权限框的 Firefox）。
 
@@ -412,6 +421,17 @@ for f in js/*.js; do node --check "$f"; done
 ## 9. 已知限制与后续路线
 
 **优先级硬规则（2026-08-10 用户确认）**：先处理会影响患者能否正确、安全、持续完成康复的交互与信息准确性，再做有明确恢复收益的功能；备份、离线、平台迁移等便利性工作排在后面。医学内容必须先有权威依据和专业复核，不能用“功能更多”替代准确。
+
+### 2026-11-20 系统加固排期
+
+以下日期为建议验收窗口，真机日期取决于设备与家属空档。实际完成情况见 [HANDOVER](HANDOVER.md)。
+
+| 窗口 | 工作与执行人 | 验收条件 |
+|---|---|---|
+| 11 月 20 日 · 本地 | 开发者核对五页交互、报告导出范围、Store 写盘与恢复、离线缓存和旧浏览器兼容 | 复现的问题有针对性回归。使用合成记录跑模块、浏览器和五页冒烟测试。 |
+| 11 月 23 日 · 约半天 | 家属与开发者在安卓微信或系统浏览器、iPhone Safari 做交接和返回操作 | 按[真机专项清单](MANUAL-TEST.md)记录机型、系统版本、是否需要提示及失败步骤。覆盖报告选对、读屏、备份落地、离线重开。 |
+| 11 月 24 日 · 约半天 | 开发者复现真机反馈，优先修数据丢失、意外导出病史、无法退出或无法启动 | 每个阻断问题用可重复步骤或自动化断言复测。仍可复现则顺延发布。 |
+| 11 月 25 日起 · 发布候选 | 维护者汇总真机结果与交接文案的专业复核状态。经授权后按 HANDOVER 做备份和部署核验 | 从干净版本核对生产响应头、缓存版本与断网重开。升级前确认已备份，旧页面全部关闭。 |
 
 ### 2026-11-10 走查后的优化方案（已实施）
 

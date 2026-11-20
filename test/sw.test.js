@@ -138,16 +138,31 @@ function copyApp(dir, { ver = '1', marker = '' } = {}) {
 (async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rehab-sw-site-'));
   copyApp(dir);
+  // 只给合成探针模拟缓存不可读/磁盘满，其他资源仍走完整的真实缓存与网络路径。
+  fs.appendFileSync(path.join(dir, 'sw.js'), `
+    for (const [method, file] of [['match','cache-read.js'], ['put','cache-write.js']]) {
+      const original = Cache.prototype[method];
+      Cache.prototype[method] = function(request, ...args) {
+        if (request.url && new URL(request.url).pathname === '/' + file) return Promise.reject(new Error('模拟缓存故障'));
+        return original.call(this, request, ...args);
+      };
+    }
+    String.prototype.matchAll = undefined;
+  `);
+  for (const file of ['cache-read.js', 'cache-write.js']) fs.writeFileSync(path.join(dir, file), `window.cacheProbe = '${file}'`);
   const state = { mode: 'normal', hits: [], port: 0 };
   let server = await startServer(dir, state);
   const base = `http://127.0.0.1:${state.port}`;
   const { browser, cdp, profile } = await launch();
   try {
     /* ① 首次访问：注册、安装、接管；整套运行文件进缓存 */
+    await nav(cdp, `${base}/?view=today`);
+    await cdp.eval("caches.open('sibling-app').then(cache => cache.put('/sibling-item', new Response('保留')))");
     await nav(cdp, `${base}/?view=today&sw=1`);
     await waitFor(cdp, 'navigator.serviceWorker.controller || navigator.serviceWorker.ready.then(() => true)', '离线缓存安装', 15000);
     await nav(cdp, `${base}/?view=today&sw=1`);
     await waitFor(cdp, 'navigator.serviceWorker.controller', '页面被离线缓存接管', 15000);
+    assert(await cdp.eval("caches.match('/sibling-item').then(Boolean)"), '同源其他应用的缓存须保留');
     const listed = await cachedURLs(cdp);
     /* 期望值按 index.html 实际引用独立算一遍（不复用 sw.js 的解析），加了新脚本不用改这里 */
     const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
@@ -157,6 +172,14 @@ function copyApp(dir, { ver = '1', marker = '' } = {}) {
     assert.deepStrictEqual(listed, expected, '缓存里应正好是页面与它引用的全部运行文件');
     assert(await cdp.eval("document.querySelector('meta[http-equiv=\"Content-Security-Policy\"]') !== null"), '页面自身 CSP 仍在');
     console.log('PASS  首次访问后离线缓存安装，缓存内容正好是整套运行文件（在生产同款 CSP 下）');
+
+    for (const file of ['cache-read.js', 'cache-write.js']) {
+      assert(await cdp.eval(`new Promise(resolve => {
+        const s = document.createElement('script'); s.src = '${file}';
+        s.onload = () => resolve(window.cacheProbe === '${file}'); s.onerror = () => resolve(false);
+        document.head.appendChild(s);
+      })`), `${file} 缓存失败时应交付真实联网脚本`);
+    }
 
     /* ② 断网：两个入口都能打开，数据照常读写 */
     await cdp.eval("Store.data.profile.name = '离线测试'; Store.save()");

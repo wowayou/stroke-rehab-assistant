@@ -12,6 +12,7 @@ const Store = (() => {
   const BACKUP_LIMITS = Object.freeze({
     maxBytes: 5 * 1024 * 1024,
     maxEncryptedBytes: 8 * 1024 * 1024,
+    handover: 300,
     meds: 100,
     timesPerMed: 12,
     timesHistoryPerMed: 50,
@@ -39,6 +40,7 @@ const Store = (() => {
       },
     },
     meds: [],            // {id, name, dose, times:['08:00'], note, from, to, trackFrom, timesHistory, previousCourseId}
+    handover: [],        // {id, date, source, event, care, pending}；date 可精确到年/月/日，也可未知
     medLog: {},          // 'YYYY-MM-DD' -> { 'medId@time': true }
     medLate: {},         // 'YYYY-MM-DD' -> { 'medId@time': true }  事后补记标记（并行于 medLog，旧版读不到只丢标记）
     medAt: {},           // 'YYYY-MM-DD' -> { 'medId@time': 'HH:MM' }  实际服药时间（当天核对时记下、可改；补记/一键核对不记）
@@ -73,6 +75,7 @@ const Store = (() => {
   let data = defaults();
   let persistedJSON = JSON.stringify(data);
   let persistedRaw = null;
+  let revision = 0;  // 仅本页使用，防止整库恢复依据过期的预览。
   let storageIssue = null;
   let loadBlocked = false;
   let backupErrorMessage = '';
@@ -106,6 +109,49 @@ const Store = (() => {
   }
   function recentDateKeys(obj) {
     return Object.keys(obj).filter(validDate).sort().reverse().slice(0, BACKUP_LIMITS.logDays);
+  }
+
+  const handoverSources = Object.freeze(['来源待核实', '患者或家属描述', '转述医生口头说明', '据书面报告或病历抄录', '据历史药单抄录']);
+  function handoverProblem(n) {
+    if (!isObj(n) || !handoverSources.includes(n.source)) return '请选择这条记录的来源';
+    const date = n.date;
+    if (date !== '') {
+      const firstDay = typeof date === 'string' && /^\d{4}(?:-\d{2})?$/.test(date)
+        ? date + (date.length === 4 ? '-01-01' : '-01') : date;
+      if (!validDate(firstDay)) return '日期请填年、年-月或年-月-日，记不清可留空';
+    }
+    if (typeof n.event !== 'string' || !n.event.trim()) return '请写下当时发生的事';
+    if ([n.event, n.care, n.pending].some(s => typeof s !== 'string' || s.length > 600)) return '每个说明栏最多可写 600 个字';
+    return '';
+  }
+  function handoverNote(id, n) {
+    return { id, date: n.date, source: n.source, event: n.event.trim(), care: n.care.trim(), pending: n.pending.trim() };
+  }
+  function saveHandover(id, n) {
+    actionErrorMessage = '';
+    const problem = handoverProblem(n);
+    if (problem) return refuse(problem);
+    if (n.date > today()) return refuse('发生日期不能晚于今天，后续计划可写在待确认事项里');
+    const index = data.handover.findIndex(v => v.id === id);
+    if (id && index < 0) return refuse('找不到这条交接记录，请重新打开');
+    if (!id && data.handover.length >= BACKUP_LIMITS.handover) return refuse('交接记录已达到上限，请先备份并整理');
+    if (id) data.handover[index] = handoverNote(id, n);
+    else data.handover.push(handoverNote(cleanId('', new Set(data.handover.map(v => v.id))), n));
+    return save();
+  }
+  function removeHandover(id) {
+    actionErrorMessage = '';
+    const index = data.handover.findIndex(v => v.id === id);
+    if (index < 0) return refuse('找不到这条交接记录，请重新打开');
+    data.handover.splice(index, 1);
+    return save();
+  }
+  function handoverSorted() {
+    // 同一天保留登记顺序（旧浏览器的 sort 不保证稳定），日期不详另列在末尾。
+    return data.handover.map((n, i) => ({ n, i })).sort((a, b) => {
+      const x = a.n.date || '~', y = b.n.date || '~';
+      return x < y ? -1 : x > y ? 1 : a.i - b.i;
+    }).map(v => v.n);
   }
 
   /* 三类健康记录的清洗规则单一真源：normalizeState、addVital、updateVital 共用。
@@ -155,6 +201,10 @@ const Store = (() => {
       out.profile.targets = sanitizeTargets(p.targets);
     }
 
+    if (Array.isArray(raw.handover)) {
+      const ids = new Set();
+      out.handover = raw.handover.map(n => handoverNote(cleanId(n.id, ids), n));
+    }
     const medIds = new Set();
     if (Array.isArray(raw.meds)) {
       out.meds = raw.meds.slice(0, BACKUP_LIMITS.meds).filter(isObj).map(m => {
@@ -292,6 +342,7 @@ const Store = (() => {
   }
 
   function load() {
+    revision++;
     persistedRaw = null;
     storageIssue = null;
     loadBlocked = false;
@@ -347,6 +398,7 @@ const Store = (() => {
       const json = JSON.stringify(data);
       if (utf8Size(JSON.stringify(backupEnvelope(data))) > BACKUP_LIMITS.maxBytes) throw new Error('数据已超过备份容量，请先备份并请家人协助整理');
       localStorage.setItem(KEY, json);
+      if (json !== persistedRaw) revision++;
       persistedJSON = json;
       persistedRaw = json;
       storageIssue = null;
@@ -862,7 +914,33 @@ const Store = (() => {
   }
 
   /* ---------- 导出报告 ---------- */
+  function exportHandover() {
+    const notes = handoverSorted();
+    const dated = notes.filter(n => n.date);
+    const latest = dated[dated.length - 1];
+    const describe = n => `${n.date || '日期待核实'}〔${n.source}〕${n.event}`;
+    const lines = [`【${data.profile.name || '患者'}的病情交接档案】　整理于 ${today()}`,
+      '资料由患者或家属整理，供交接参考。诊断和治疗请与医生及正式病历核对。', '', '■ 30 秒摘要',
+      `登记的发病日期：${data.profile.strokeDate || '待核实'}`,
+      latest ? '按登记日期摘录：' + describe(latest) : '最近事件的日期待补充。'];
+    if (latest && latest.pending) lines.push('这次还要确认：' + latest.pending);
+    const bp = vitalsSorted('bp').slice(-1)[0];
+    if (bp) lines.push(`最近登记的血压：${bp.date} ${bp.time || ''}　${bp.sys}/${bp.dia} mmHg`);
+    lines.push('', '■ 交接时请留意（请核对现在是否仍适用）',
+      '若突然出现口角歪斜、一侧无力、说话不清或站立不稳，即使缓解也立即拨打 120。');
+    const care = notes.filter(n => n.care);
+    care.forEach(n => lines.push(`${n.date || '日期待核实'} 的交接留言：${n.care}`));
+    if (!care.length) lines.push('照护提醒待补充。');
+    lines.push('', '■ 待确认事项');
+    notes.filter(n => n.pending).forEach(n => lines.push(`${n.date || '日期待核实'} 的记录：${n.pending}`));
+    lines.push('交接时请核对最近一次就诊结论、最新处方及药物过敏史。', '', '■ 已登记的病史时间线');
+    notes.forEach(n => lines.push(describe(n)));
+    if (!notes.length) lines.push('病史待补充。');
+    lines.push('', '■ 附：本机用药、测量与训练记录', exportReport());
+    return lines.join('\n');
+  }
   function exportReport() {
+    if (loadBlocked) throw new Error(storageIssue.message);
     const lines = [];
     const name = data.profile.name || '患者';
     lines.push(`【${name} 的健康记录】 导出日期：${today()}`);
@@ -870,10 +948,11 @@ const Store = (() => {
     if (rd) lines.push(`康复第 ${rd} 天（发病日期 ${data.profile.strokeDate}）`);
     lines.push('');
 
-    lines.push('■ 目前用药');
+    lines.push('■ 本机登记的药物（尚未标记停用）');
+    lines.push('请用最新处方核对药名、剂量和时间。请勿据此自行调整或恢复用药。');
     const act = activeMeds(), stp = stoppedMeds();
     if (act.length) {
-      act.forEach(m => lines.push(`  ${m.name} ${m.dose || ''} 每日${(m.times || []).length}次(${(m.times || []).join('、')})${m.from ? ' 自' + m.from : ''} ${m.note || ''}`.replace(/\s+$/, '')));
+      act.forEach(m => lines.push(`  ${m.name} ${m.dose || '剂量待核实'} ${m.times.length ? `登记安排：${m.times.join('、')}` : '服药安排待核实'}${m.from ? ' 自' + m.from : ''} ${m.note || ''}`.replace(/\s+$/, '')));
       const ad = medAdherence(7);
       if (ad) lines.push(`  近7天服药完成率：${ad.pct}%（统计 ${ad.days} 天，登记前的日子不计入）${ad.late > 0 ? `，其中 ${ad.late} 次为事后补记` : ''}`);
     } else lines.push('  （未登记）');
@@ -881,7 +960,7 @@ const Store = (() => {
 
     /* 停用的药单独列：复诊时医生常问"这个药吃到什么时候" */
     if (stp.length) {
-      lines.push('■ 已停用的药');
+      lines.push('■ 已停用的药（按本机登记，请核对医嘱）');
       stp.forEach(m => lines.push(`  ${m.name} ${m.dose || ''} ${m.from || '?'} 至 ${m.to} 停用 ${m.note || ''}`.replace(/\s+$/, '')));
       lines.push('');
     }
@@ -1065,6 +1144,11 @@ const Store = (() => {
     const tooMany = (actual, max, label) => {
       if (actual > max) throw new Error(`${label}超过上限（最多 ${max}）`);
     };
+    if (raw.handover !== undefined) {
+      if (!Array.isArray(raw.handover)) throw new Error('交接记录格式有误');
+      tooMany(raw.handover.length, BACKUP_LIMITS.handover, '交接记录数量');
+      raw.handover.forEach(n => { const problem = handoverProblem(n); if (problem) throw new Error(problem); });
+    }
     if (Array.isArray(raw.meds)) {
       tooMany(raw.meds.length, BACKUP_LIMITS.meds, '药物数量');
       raw.meds.filter(isObj).forEach(m => {
@@ -1123,8 +1207,12 @@ const Store = (() => {
   }
 
   /* 覆盖前先保存一个恢复点；恢复点写不下时宁可拒绝，也不冒险覆盖原数据。 */
-  function applyBackup(state) {
+  function applyBackup(state, previewRevision) {
     backupErrorMessage = '';
+    if (previewRevision !== undefined && previewRevision !== revision) {
+      backupErrorMessage = '预览后本机记录有更新。请关闭预览，核对新记录后重新选择备份。';
+      return false;
+    }
     if (!checkCurrent()) { backupErrorMessage = storageIssue.message; return false; }
     try { validateBackupLimits(state); }
     catch (e) { backupErrorMessage = e.message; return false; }
@@ -1181,6 +1269,7 @@ const Store = (() => {
   /* 备份内容摘要（供恢复前预览） */
   function backupSummary(d) {
     return {
+      handover: d.handover.length,
       meds: d.meds.length,
       bp: d.vitals.bp.length,
       glucose: d.vitals.glucose.length,
@@ -1193,14 +1282,23 @@ const Store = (() => {
   function resetAll() {
     if (!checkCurrent(true)) return false;
     /* 先清理恢复点：若清理失败就不要让“清空成功”后仍能撤销出旧健康数据。 */
-    try { localStorage.removeItem(RECOVERY_KEY); }
-    catch (e) {
+    let priorRecovery;
+    try {
+      priorRecovery = localStorage.getItem(RECOVERY_KEY);
+      localStorage.removeItem(RECOVERY_KEY);
+    } catch (e) {
       backupErrorMessage = '无法清理恢复点，未清空现有数据。请检查浏览器存储权限后重试';
       return false;
     }
     data = defaults();
-    if (!save(true)) return false;
-    return true;
+    if (save(true)) return true;
+    if (priorRecovery !== null) {
+      try { localStorage.setItem(RECOVERY_KEY, priorRecovery); }
+      catch (_) {
+        storageIssue = { kind: 'write', message: '清空失败，原有记录仍在，但未能放回上次恢复点。请先备份现有记录。' };
+      }
+    }
+    return false;
   }
 
   /* 另一个页面（另一个标签、主屏图标和浏览器同时开着）写过数据时，重新读盘。
@@ -1220,6 +1318,7 @@ const Store = (() => {
     actionError: () => actionErrorMessage,
     get heightRange() { return HEIGHT_RANGE; },
     originalData: () => loadBlocked && persistedRaw !== null ? persistedRaw : null,
+    get revision() { return revision; },
     get data() { return data; },
     today, timeStr, addDays, weekdayCN, rehabDay, recentDates, daysBetween,
     logExercise, unlogExercise, exercisesDoneToday, isExDone, streak, bestStreak, lastExerciseDate,
@@ -1229,6 +1328,7 @@ const Store = (() => {
     stopMed, undoStopMed, restartMed, canUndoStop, isMedStopped, medsOn, activeMeds, stoppedMeds, medCountOn,
     medFullDays, medStatusOn, medHistory,
     addVital, removeVital, updateVital, vitalsSorted, bpToday, vitalDelta,
+    handoverSources, saveHandover, removeHandover, handoverSorted, exportHandover,
     exportReport, resetAll,
     exportBackup, parseBackup, applyBackup, backupSummary,
     encryptionSupported, isEncryptedBackup, exportEncryptedBackup, parseEncryptedBackup,

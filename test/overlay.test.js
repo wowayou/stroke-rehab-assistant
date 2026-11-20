@@ -464,6 +464,75 @@ async function runOptimizationRegression(cdp) {
   console.log('PASS  O1–O3 六宽度 × 三字号（训练双状态）：无溢出/裁剪、控件至少48px');
 }
 
+async function runHandoverRegression(cdp) {
+  await closeAll(cdp);
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 720, deviceScaleFactor: 1, mobile: true });
+  await cdp.eval("App.go('records'); document.documentElement.dataset.font='xlarge'");
+  assert(await cdp.eval(`(() => {
+    const title = document.querySelector('#header-app-name').getBoundingClientRect();
+    const settings = document.querySelector('#btn-settings').getBoundingClientRect();
+    const urgent = document.querySelector('#btn-emergency').getBoundingClientRect();
+    return title.width > 0 && title.right <= settings.left && title.top < urgent.bottom && title.bottom > urgent.top;
+  })()`), '320px 特大字号时产品名、设置和急救同排');
+  const reportTree = await cdp.send('Accessibility.getFullAXTree');
+  for (const [name, scope] of [['查看交接档案','病史'], ['导出记录给医生看','用药、测量和训练']]) {
+    assert(reportTree.nodes.some(n => !n.ignored && n.role?.value === 'button' && n.name?.value === name && n.description?.value.includes(scope)), '预览前能读出分享范围：' + name);
+  }
+  if (cliArgs.includes('--screenshots')) {
+    await cdp.eval("document.querySelector('.report-options').scrollIntoView({block:'center'})");
+    const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    fs.writeFileSync('/tmp/rehab-ui-report-options.png', Buffer.from(shot.data, 'base64'));
+  }
+  await click(cdp, '#add-handover');
+  await click(cdp, '#ho-save');
+  await waitFor(cdp, "document.querySelector('.save-feedback')?.textContent.includes('发生的事')", '交接必填项');
+  await cdp.eval(`document.querySelector('#ho-event').value='<b>家属记述</b>';
+    document.querySelector('#ho-date').value='2020-04'; document.querySelector('#ho-pending').value='取报告';`);
+  assert(await cdp.eval("document.querySelector('.modal-panel').scrollWidth<=document.querySelector('.modal-panel').clientWidth"), '小屏特大字交接表单无横向溢出');
+  await clickAndWait(cdp, '#ho-save', "!document.querySelector('.modal-mask')", '保存交接记录');
+  await click(cdp, '#btn-settings');
+  assert(await cdp.eval("document.querySelector('#backup-age').textContent.includes('备份')"), '仅登记病情也需要备份提醒');
+  await click(cdp, '#set-export');
+  assert(await cdp.eval("document.querySelector('#export-text').value === Store.exportReport() && !document.querySelector('#export-text').value.includes('家属记述')"), '设置的普通健康报告只导出用药和测量等基本记录');
+  await closeAll(cdp);
+  await click(cdp, '#handover-history summary');
+  assert(await cdp.eval("document.querySelector('[data-handover] span').textContent==='<b>家属记述</b>'"), '病情按纯文本呈现');
+  await click(cdp, '[data-handover]');
+  await cdp.eval(`const edited = Store.data.handover[0]; Store.saveHandover(edited.id, {...edited, pending:'以新报告为准'});`);
+  await click(cdp, '#ho-save');
+  await waitFor(cdp, "document.querySelector('.save-feedback')?.textContent.includes('别的页面')", '过期编辑拒绝覆盖');
+  await pressKey(cdp, 'Escape');
+  await waitFor(cdp, "!document.querySelector('.modal-mask')", '离开旧草稿');
+  await click(cdp, '#preview-handover');
+  assert(await cdp.eval("document.querySelector('#export-text').value.includes('以新报告为准')"), '实际预览使用新记录');
+  if (cliArgs.includes('--screenshots')) {
+    await delay(300);
+    const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    fs.writeFileSync('/tmp/rehab-handover-320.png', Buffer.from(shot.data, 'base64'));
+  }
+  await cdp.eval(`Object.defineProperty(navigator, 'clipboard', { configurable:true, value:{ writeText: async text => { window.__copiedHandover = text; } } });
+    const latest = Store.data.handover[0]; Store.saveHandover(latest.id, {...latest, pending:'带报告复诊'});`);
+  await click(cdp, '#copy-export');
+  assert(await cdp.eval("!window.__copiedHandover && document.querySelector('#export-text').value.includes('带报告复诊')"), '预览更新时先让家属核对，不复制旧档案');
+  await click(cdp, '#copy-export');
+  assert(await cdp.eval("window.__copiedHandover === document.querySelector('#export-text').value"), '确认后复制所见全文');
+  await cdp.eval("delete navigator.clipboard; delete window.__copiedHandover");
+  await closeAll(cdp);
+  await click(cdp, '[data-handover]');
+  await click(cdp, '#ho-delete');
+  await clickAndWait(cdp, '[data-confirm="yes"]', "!document.querySelector('#handover-history') && !document.querySelector('.modal-mask')", '确认删除最后一条交接记录');
+  await cdp.eval(`const beforePreview = Store.exportBackup();
+    openRestorePreview(Store.parseBackup(beforePreview), '合成资料');
+    const otherPage = JSON.parse(localStorage.getItem('strokeRehab.v1'));
+    otherPage.profile.name = '预览后新登记';
+    localStorage.setItem('strokeRehab.v1', JSON.stringify(otherPage)); refreshIfStale();`);
+  await click(cdp, '#restore-confirm');
+  assert(await cdp.eval("!!document.querySelector('#restore-confirm') && !!document.querySelector('.save-feedback') && Store.data.profile.name==='预览后新登记' && !Store.hasRecoveryBackup()"), '外页更新已同步，旧恢复预览也不得覆盖或产生恢复点');
+  await closeAll(cdp);
+  await cdp.eval("document.documentElement.dataset.font='normal'; App.go('today')");
+  console.log('PASS  病情交接录入、转义、过期编辑、预览与确认删除');
+}
+
 async function runUXRegression(cdp) {
   await closeAll(cdp);
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -1364,6 +1433,11 @@ async function runBackfillRegression(cdp) {
 (async () => {
   const { browser, cdp, profile } = await launch();
   try {
+    if (cliArgs.includes('--handover')) {
+      await runHandoverRegression(cdp);
+      assert.strictEqual(cdp.events.filter(event => event.method === 'Runtime.exceptionThrown').length, 0);
+      return;
+    }
     if (cliArgs.includes('--optimizations')) {
       await prepare(cdp, 'optimizations');
       await runOptimizationRegression(cdp);
@@ -1398,6 +1472,7 @@ async function runBackfillRegression(cdp) {
     await assertAppAlive(cdp, url, '完成加密备份');
     console.log('PASS  加密并下载后应用仍在当前页面');
 
+    await runHandoverRegression(cdp);
     await runUXRegression(cdp);
     await runOptimizationRegression(cdp);
     await runRecordsSummaryRegression(cdp);

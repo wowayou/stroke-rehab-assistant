@@ -13,7 +13,7 @@ else
   WRANGLER=(npx --yes wrangler@latest)
 fi
 
-if ! "${WRANGLER[@]}" whoami 2>&1 | grep -q "Account Name\|Account ID"; then
+if ! "${WRANGLER[@]}" whoami --json >/dev/null 2>&1; then
   echo "❌ wrangler 未登录。请先手动执行：npx wrangler login（交互式，需浏览器授权）"
   echo "   部署账号见 docs/HANDOVER.md §1.2（demoqqxu@gmail.com）"
   exit 1

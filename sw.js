@@ -12,16 +12,19 @@
    · 安装时把整套文件预先缓存好，任何一个取不到就整体安装失败——
      失败的结果是"没有离线缓存"，和没有这个文件时完全一样，不会把站点弄坏。
    ============================================================ */
-const CACHE = 'rehab-offline-v1';
 const SHELL_TIMEOUT = 4000;
 const SCOPE = new URL(self.registration.scope);
+// 保留生产根路径的缓存；同源的子目录安装各自维护一套。
+const CACHE = 'rehab-offline-v1' + (SCOPE.pathname === '/' ? '' : ':' + SCOPE.pathname);
 const SHELL_KEY = SCOPE.href;                   // 页面统一按站点根存一份
 const EXTRA = ['icon.svg'];                     // 页面里没直接引用、manifest 引用的
 
 /* 页面里引用的本站文件（script src / link href），用于预缓存和清理旧版本 */
 function assetsOf(html) {
   const urls = new Set(EXTRA.map(p => new URL(p, SCOPE).href));
-  for (const m of html.matchAll(/<(?:script|link)\b[^>]*?\b(?:src|href)="([^"]+)"/gi)) {
+  const references = /<(?:script|link)\b[^>]*?\b(?:src|href)="([^"]+)"/gi;
+  let m;
+  while ((m = references.exec(html)) !== null) {
     const u = new URL(m[1], SCOPE);
     if (u.origin === SCOPE.origin) urls.add(u.href);
   }
@@ -59,10 +62,7 @@ self.addEventListener('install', event => {
 });
 
 self.addEventListener('activate', event => {
-  event.waitUntil((async () => {
-    for (const key of await caches.keys()) if (key !== CACHE) await caches.delete(key);
-    await self.clients.claim();
-  })());
+  event.waitUntil(self.clients.claim());
 });
 
 function isShell(url) {
@@ -70,8 +70,11 @@ function isShell(url) {
 }
 
 async function shell(event) {
-  const cache = await caches.open(CACHE);
-  const cached = await cache.match(SHELL_KEY);
+  let cache, cached;
+  try {
+    cache = await caches.open(CACHE);
+    cached = await cache.match(SHELL_KEY);
+  } catch (_) { return fetch(event.request); }
   /* 页面一到就交给浏览器；更新缓存（要连带取新版 css/js）在后台做，不拖慢打开 */
   const network = fetch(event.request).then(res => {
     if (res.ok && res.type === 'basic') {
@@ -92,11 +95,16 @@ async function shell(event) {
    先给缓存、同时后台取新的，下次就是新的——不然改了它们会永远拿旧的。 */
 async function asset(event) {
   const { request } = event;
-  const cache = await caches.open(CACHE);
-  const hit = await cache.match(request);
+  let cache, hit;
+  try {
+    cache = await caches.open(CACHE);
+    hit = await cache.match(request);
+  } catch (_) { return fetch(request); }
   if (hit && new URL(request.url).searchParams.has('ver')) return hit;
   const refresh = fetch(request).then(res => {
-    if (res.ok && res.type === 'basic') return cache.put(request, res.clone()).then(() => res);
+    if (res.ok && res.type === 'basic') {
+      event.waitUntil(cache.put(request, res.clone()).catch(() => { /* 缓存写满时仍交付联网资源 */ }));
+    }
     return res;
   });
   if (!hit) return refresh;

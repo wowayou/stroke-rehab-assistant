@@ -160,7 +160,7 @@ function openSettings() {
   const voiceGuideBtn = node.querySelector('#set-voice-guide');
   if (voiceGuideBtn) voiceGuideBtn.onclick = openVoiceGuide;
   node.querySelector('#set-guide').onclick = () => openGuide({ review: true });
-  node.querySelector('#set-export').onclick = openExport;
+  node.querySelector('#set-export').onclick = () => openExport();
   node.querySelector('#set-backup').onclick = openBackupWarning;
   node.querySelector('#set-restore').onclick = () => { node.querySelector('#set-restore-input').click(); };
   node.querySelector('#set-restore-paste').onclick = openPasteRestore;
@@ -247,7 +247,7 @@ function openSettings() {
    家属打开设置时一眼能看到；超过 30 天且确有记录时提醒再下一份。不在今日页催患者。 */
 function backupAgeHTML() {
   const s = Store.backupSummary(Store.data);
-  const hasData = s.meds + s.bp + s.glucose + s.weight + s.checkinDays > 0;
+  const hasData = s.handover + s.meds + s.bp + s.glucose + s.weight + s.checkinDays > 0;
   const d = Store.lastBackupAt();
   if (!d) return hasData ? '<div class="muted backup-age due">这台设备上还没有下载过备份。</div>' : '';
   const n = Math.max(0, Store.daysBetween(d, Store.today()));

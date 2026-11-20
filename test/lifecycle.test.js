@@ -439,7 +439,7 @@ async function runTodayMedStates(port, pages) {
   await page.eval(`Store.toggleMed(Store.data.meds.find(m=>m.name==='当前示例').id,'08:00'); render('today');`);
   await check('还差 1 次没核对', '去核对', 2, 1);
   await page.eval(`Store.toggleMed(Store.data.meds.find(m=>m.name==='当前示例').id,'20:00'); render('today');`);
-  await check('今天该吃的都核对了', '已完成', 2, 2);
+  await check('今天该吃的都核对了', '看核对表', 2, 2);
   await page.eval(`Store.data.meds=Store.data.meds.filter(m=>m.name==='未来示例'); Store.save(); render('today'); __setVisible(false); __goto(2,10,0); __setVisible(true);`);
   await waitFor(page, "document.querySelector('[data-go=meds]').textContent==='去核对'", '未来疗程跨天成为今日安排');
   await check('1 次没核对，一项一项来', '去核对', 1, 0);
